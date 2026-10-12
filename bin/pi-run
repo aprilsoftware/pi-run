@@ -1,0 +1,733 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+
+set -euo pipefail
+umask 077
+
+usage() {
+    cat >&2 <<EOF
+Usage:
+  pi-run [--home <path>] [--profile <name>] <workspace> [pi arguments...]
+  pi-run [--home <path>] init
+  pi-run [--home <path>] home
+  pi-run version
+  pi-run machine-id
+  pi-run [--home <path>] [--profile <name>] doctor
+  pi-run upgrade [--check|vX.Y.Z]
+  pi-run [--home <path>] profile list
+  pi-run [--home <path>] profile default [<name>]
+  pi-run [--home <path>] profile create <name> [--from <profile>]
+  pi-run [--home <path>] [--profile <name>] skill list
+  pi-run [--home <path>] workspace list
+  pi-run [--home <path>] workspace link <workspace-id> <path>
+  pi-run [--home <path>] session list [<workspace-id>]
+  pi-run [--home <path>] resume [<profile> <workspace-id>]
+  pi-run [--home <path>] [--profile <name>] ssh-key list
+  pi-run [--home <path>] [--profile <name>] ssh-key add <user@host>
+  pi-run [--home <path>] [--profile <name>] ssh-key remove <user@host>
+  pi-run [--home <path>] snapshot
+  pi-run [--home <path>] snapshot <configure|status|create|list|check>
+  pi-run [--home <path>] snapshot auto <status|enable|disable>
+  pi-run [--home <path>] snapshot show <snapshot-id>
+  pi-run [--home <path>] snapshot diff <snapshot-id>
+  pi-run [--home <path>] snapshot delete <snapshot-id>
+  pi-run [--home <path>] snapshot recover <snapshot-id>
+  pi-run [--home <path>] snapshot restore <snapshot-id>
+
+Examples:
+  pi-run .
+  pi-run --profile default . -c
+  pi-run workspace list
+  pi-run session list
+  pi-run resume
+  pi-run --profile default ssh-key list
+  pi-run version
+  pi-run machine-id
+  pi-run doctor
+  pi-run upgrade
+  pi-run upgrade --check
+  pi-run upgrade v0.5.20
+  pi-run snapshot
+  pi-run home
+EOF
+    exit "${1:-1}"
+}
+
+fail() {
+    echo "pi-run: $*" >&2
+    exit 1
+}
+
+require_value() {
+    local option="$1"
+    local value="${2:-}"
+    [[ -n "${value}" ]] || fail "${option} requires a value"
+}
+
+validate_profile_name() {
+    local name="$1"
+    [[ "${name}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] \
+        || fail "invalid profile name: ${name}"
+}
+
+validate_skill_name() {
+    local name="$1"
+    (( ${#name} <= 64 )) \
+        || fail "skill name is longer than 64 characters: ${name}"
+    [[ "${name}" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]] \
+        || fail "invalid skill name: ${name}"
+    case "${name}" in
+        pi-run|profile-management)
+            fail "reserved core skill name: ${name}"
+            ;;
+    esac
+}
+
+SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
+SCRIPT_DIR="$(cd "$(dirname "${SCRIPT_PATH}")" && pwd)"
+INSTALL_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+VERSION_FILE="${INSTALL_ROOT}/VERSION"
+[[ -f "${VERSION_FILE}" ]] || fail "installation is missing VERSION: ${VERSION_FILE}"
+PI_RUN_VERSION="$(tr -d '\r\n' < "${VERSION_FILE}")"
+[[ "${PI_RUN_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+    || fail "installation has an invalid VERSION: ${VERSION_FILE}"
+DEFAULT_IMAGE="ghcr.io/aprilsoftware/pi-run:${PI_RUN_VERSION}"
+CA_BUNDLE="/etc/ssl/certs/ca-certificates.crt"
+PROFILE_TEMPLATE_ROOT="${INSTALL_ROOT}/templates/profiles"
+PI_RUN_LIB_ROOT="${INSTALL_ROOT}/lib/pi-run"
+
+validate_component() {
+    local path="$1"
+    [[ -f "${path}" && ! -L "${path}" && "$(realpath "${path}")" == "${path}" ]] \
+        || fail "Pi-Run component is missing or unsafe: ${path}"
+}
+
+validate_component "${PI_RUN_LIB_ROOT}/upgrade.sh"
+# shellcheck source=lib/pi-run/upgrade.sh
+source "${PI_RUN_LIB_ROOT}/upgrade.sh"
+validate_component "${PI_RUN_LIB_ROOT}/skills.sh"
+# shellcheck source=lib/pi-run/skills.sh
+source "${PI_RUN_LIB_ROOT}/skills.sh"
+validate_component "${PI_RUN_LIB_ROOT}/profiles.sh"
+# shellcheck source=lib/pi-run/profiles.sh
+source "${PI_RUN_LIB_ROOT}/profiles.sh"
+validate_component "${PI_RUN_LIB_ROOT}/workspaces.sh"
+# shellcheck source=lib/pi-run/workspaces.sh
+source "${PI_RUN_LIB_ROOT}/workspaces.sh"
+validate_component "${PI_RUN_LIB_ROOT}/snapshots.sh"
+# shellcheck source=lib/pi-run/snapshots.sh
+source "${PI_RUN_LIB_ROOT}/snapshots.sh"
+validate_component "${PI_RUN_LIB_ROOT}/restore.sh"
+# shellcheck source=lib/pi-run/restore.sh
+source "${PI_RUN_LIB_ROOT}/restore.sh"
+validate_component "${PI_RUN_LIB_ROOT}/sessions.sh"
+# shellcheck source=lib/pi-run/sessions.sh
+source "${PI_RUN_LIB_ROOT}/sessions.sh"
+validate_component "${PI_RUN_LIB_ROOT}/doctor.sh"
+# shellcheck source=lib/pi-run/doctor.sh
+source "${PI_RUN_LIB_ROOT}/doctor.sh"
+
+PROFILE="default"
+PROFILE_EXPLICIT=false
+HOME_OVERRIDE=""
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --home)
+            require_value "$1" "${2:-}"
+            HOME_OVERRIDE="$2"
+            shift 2
+            ;;
+        --profile)
+            require_value "$1" "${2:-}"
+            PROFILE="$2"
+            PROFILE_EXPLICIT=true
+            shift 2
+            ;;
+        -h|--help)
+            usage 0
+            ;;
+        --)
+            shift
+            break
+            ;;
+        -*)
+            fail "unknown launcher option: $1"
+            ;;
+        *)
+            break
+            ;;
+    esac
+done
+
+validate_profile_name "${PROFILE}"
+
+PI_RUN_HOME_INPUT="${HOME_OVERRIDE:-${PI_RUN_HOME:-${HOME}/Pi-Run}}"
+[[ -n "${PI_RUN_HOME_INPUT}" ]] || fail "Pi-Run home must not be empty"
+PI_RUN_HOME_RESOLVED="$(realpath -m "${PI_RUN_HOME_INPUT}")"
+
+HOME_LOCK_MODE=shared
+HOME_LOCK_ACQUIRED=false
+HOME_LOCK_FD=""
+
+acquire_home_lifecycle_lock() {
+    [[ "${HOME_LOCK_ACQUIRED}" == false ]] || return 0
+    command -v flock >/dev/null 2>&1 || fail "flock is required for Pi-Run home lifecycle locking"
+    exec {HOME_LOCK_FD}<"${PI_RUN_HOME_RESOLVED}" \
+        || fail "could not open Pi-Run home for lifecycle locking"
+    if [[ "${HOME_LOCK_MODE}" == exclusive ]]; then
+        flock -n -x "${HOME_LOCK_FD}" \
+            || fail "Pi-Run home is in use; this operation requires exclusive access"
+    else
+        flock -n -s "${HOME_LOCK_FD}" \
+            || fail "Pi-Run home is exclusively locked by another operation"
+    fi
+    HOME_LOCK_ACQUIRED=true
+}
+
+write_initial_readme() {
+    local destination="$1"
+    cat > "${destination}" <<'EOF'
+# Pi-Run
+
+This directory contains your Pi-Run profiles, configuration, skills, shared
+files, sessions, and other persistent data.
+
+Some files may contain credentials or private conversation history. Keep this
+directory private and include it in your backup strategy.
+
+Pi-Run upgrades and uninstall operations do not remove this directory.
+EOF
+}
+
+initialize_home() {
+    local home_dir="${PI_RUN_HOME_RESOLVED}"
+    local profiles_dir="${home_dir}/profiles"
+    local snapshots_dir="${home_dir}/snapshots"
+    local default_template="${PROFILE_TEMPLATE_ROOT}/default"
+    local default_profile="${profiles_dir}/default"
+    local directory applying="${snapshots_dir}/restore-staging/applying"
+    local transaction="${snapshots_dir}/restore-staging/apply-transaction.json" transaction_temp
+
+    if [[ -e "${home_dir}" || -L "${home_dir}" ]]; then
+        [[ -d "${home_dir}" && ! -L "${home_dir}" && "$(realpath "${home_dir}")" == "${home_dir}" ]] \
+            || fail "Pi-Run home must be a non-symlink directory: ${home_dir}"
+        transaction_temp="$(find "${snapshots_dir}/restore-staging" -mindepth 1 -maxdepth 1 \
+            -name '.apply-transaction.tmp.*' -print -quit 2>/dev/null || true)"
+        if [[ -e "${applying}" || -L "${applying}" || -e "${transaction}" || -L "${transaction}" ]]; then
+            HOME_LOCK_MODE=exclusive
+            acquire_home_lifecycle_lock
+            recover_interrupted_restore
+        elif [[ -n "${transaction_temp}" ]]; then
+            HOME_LOCK_MODE=exclusive
+            acquire_home_lifecycle_lock
+        fi
+    fi
+
+    for directory in \
+        "${profiles_dir}" \
+        "${home_dir}/skills" \
+        "${home_dir}/shared" \
+        "${home_dir}/workspaces" \
+        "${home_dir}/machines" \
+        "${snapshots_dir}" \
+        "${snapshots_dir}/metadata" \
+        "${snapshots_dir}/requests" \
+        "${snapshots_dir}/restore-staging"; do
+        if [[ -L "${directory}" || (-e "${directory}" && ! -d "${directory}") ]]; then
+            fail "Pi-Run data path must be a non-symlink directory: ${directory}"
+        fi
+    done
+
+    mkdir -p \
+        "${profiles_dir}" \
+        "${home_dir}/skills" \
+        "${home_dir}/shared" \
+        "${home_dir}/workspaces" \
+        "${home_dir}/machines" \
+        "${home_dir}/snapshots/metadata" \
+        "${home_dir}/snapshots/requests" \
+        "${home_dir}/snapshots/restore-staging"
+    chmod 0700 "${home_dir}" "${profiles_dir}"
+    acquire_home_lifecycle_lock
+    while IFS= read -r -d '' directory; do
+        [[ -f "${directory}" && ! -L "${directory}" ]] \
+            || fail "restore transaction staging path is unsafe: ${directory}"
+        rm -f -- "${directory}"
+    done < <(find "${snapshots_dir}/restore-staging" -mindepth 1 -maxdepth 1 \
+        -name '.apply-transaction.tmp.*' -print0)
+
+    if [[ ! -f "${home_dir}/README.md" ]]; then
+        write_initial_readme "${home_dir}/README.md"
+    fi
+
+    if [[ ! -f "${home_dir}/config.json" ]]; then
+        printf '%s\n' '{"schemaVersion":1,"defaultProfile":"default"}' \
+            > "${home_dir}/config.json"
+    fi
+
+    if [[ ! -f "${home_dir}/workspaces/registry.json" ]]; then
+        local registry_staging="${home_dir}/workspaces/.registry.json.tmp.$$"
+        printf '%s\n' '{"schemaVersion":1,"workspaces":[]}' > "${registry_staging}"
+        chmod 0600 "${registry_staging}"
+        mv "${registry_staging}" "${home_dir}/workspaces/registry.json"
+    fi
+
+    if [[ ! -e "${default_profile}" ]]; then
+        [[ -d "${default_template}" ]] \
+            || fail "installed default profile is missing: ${default_template}"
+        local staging="${profiles_dir}/.default.$$"
+        trap 'rm -rf "${staging:-}"' RETURN
+        mkdir "${staging}"
+        install -m 0600 "${default_template}/profile.json" "${staging}/profile.json"
+        install -m 0600 "${default_template}/AGENTS.md" "${staging}/AGENTS.md"
+        mkdir -m 0700 "${staging}/credentials" "${staging}/sessions" "${staging}/guardian" "${staging}/skills"
+        install -m 0600 "${default_template}/guardian/guardian.md" "${staging}/guardian/guardian.md"
+        mv "${staging}" "${default_profile}"
+        trap - RETURN
+    fi
+}
+
+require_jq() {
+    command -v jq >/dev/null 2>&1 \
+        || fail "jq is required by this development build"
+}
+
+read_home_default_profile() {
+    local config="${PI_RUN_HOME_RESOLVED}/config.json"
+    local value
+    [[ -f "${config}" && ! -L "${config}" ]] || return 1
+    [[ "$(stat -c %h "${config}" 2>/dev/null)" == 1 ]] || return 1
+    [[ "$(realpath "${config}" 2>/dev/null)" == "${config}" ]] || return 1
+    value="$(jq -er 'select(.schemaVersion == 1 and (.defaultProfile | type == "string")) | .defaultProfile' "${config}" 2>/dev/null)" \
+        || return 1
+    [[ "${value}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || return 1
+    printf '%s\n' "${value}"
+}
+
+resolve_configured_profile() {
+    local strict="$1"
+    local configured
+    [[ "${PROFILE_EXPLICIT}" == false ]] || return 0
+    if configured="$(read_home_default_profile)"; then
+        PROFILE="${configured}"
+    elif [[ "${strict}" == true ]]; then
+        fail "home configuration is missing, invalid, or unsafe: ${PI_RUN_HOME_RESOLVED}/config.json"
+    fi
+}
+
+pi_arguments_select_tui_mode() {
+    local argument
+    for argument in "${EXTRA_PI_ARGS[@]}"; do
+        case "${argument}" in
+            --tui-mode|--tui-mode=*) return 0 ;;
+        esac
+    done
+    return 1
+}
+
+settings_select_tui_mode() {
+    local settings
+    for settings in \
+        "${PROFILE_DIR}/settings.json" \
+        "${WORKSPACE}/.pi/settings.json"; do
+        [[ -f "${settings}" ]] || continue
+        if jq -e '.tuiMode == "regular" or .tuiMode == "fullscreen"' \
+            "${settings}" >/dev/null 2>&1; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+sanitize_display() {
+    local value="$1"
+    value="${value//$'\n'/ }"
+    value="${value//$'\r'/ }"
+    value="${value//$'\t'/ }"
+    printf '%s' "${value}"
+}
+
+RESUME_LAUNCH=false
+COMMAND="${1:-}"
+if [[ "${COMMAND}" == snapshot && "${2:-}" == restore ]]; then
+    HOME_LOCK_MODE=exclusive
+fi
+case "${COMMAND}" in
+    version)
+        [[ $# -eq 1 ]] || usage
+        printf 'pi-run v%s\nruntime %s\n' "${PI_RUN_VERSION}" "${PI_RUN_IMAGE:-${DEFAULT_IMAGE}}"
+        exit 0
+        ;;
+    machine-id)
+        [[ $# -eq 1 ]] || usage
+        machine_id
+        printf '\n'
+        exit 0
+        ;;
+    doctor)
+        [[ $# -eq 1 ]] || usage
+        resolve_configured_profile false
+        run_doctor
+        exit $?
+        ;;
+    upgrade)
+        resolve_upgrade_installation
+        if [[ $# -eq 1 ]]; then
+            run_latest_upgrade false
+        elif [[ $# -eq 2 && "$2" == --check ]]; then
+            run_latest_upgrade true
+        elif [[ $# -eq 2 ]]; then
+            run_upgrade_target "$2"
+        else
+            usage
+        fi
+        exit 0
+        ;;
+    home)
+        [[ $# -eq 1 ]] || usage
+        printf '%s\n' "${PI_RUN_HOME_RESOLVED}"
+        exit 0
+        ;;
+    init)
+        [[ $# -eq 1 ]] || usage
+        initialize_home
+        printf 'Initialized Pi-Run home: %s\n' "${PI_RUN_HOME_RESOLVED}"
+        exit 0
+        ;;
+    profile)
+        initialize_home
+        require_jq
+        case "${2:-}" in
+            list)
+                [[ $# -eq 2 ]] || usage
+                list_profiles
+                ;;
+            default)
+                if [[ $# -eq 2 ]]; then
+                    read_home_default_profile \
+                        || fail "home configuration is missing, invalid, or unsafe: ${PI_RUN_HOME_RESOLVED}/config.json"
+                elif [[ $# -eq 3 ]]; then
+                    set_default_profile "$3"
+                else
+                    usage
+                fi
+                ;;
+            create)
+                if [[ $# -eq 3 ]]; then
+                    create_profile "$3" default
+                elif [[ $# -eq 5 && "$4" == "--from" ]]; then
+                    create_profile "$3" "$5"
+                else
+                    usage
+                fi
+                ;;
+            *)
+                usage
+                ;;
+        esac
+        exit 0
+        ;;
+    skill)
+        initialize_home
+        require_jq
+        [[ "${2:-}" == list && $# -eq 2 ]] || usage
+        resolve_configured_profile true
+        list_skills
+        exit 0
+        ;;
+    workspace)
+        initialize_home
+        require_jq
+        case "${2:-}" in
+            list)
+                [[ $# -eq 2 ]] || usage
+                list_workspaces
+                ;;
+            link)
+                [[ $# -eq 4 ]] || usage
+                link_workspace "$3" "$4"
+                ;;
+            *)
+                usage
+                ;;
+        esac
+        exit 0
+        ;;
+    session)
+        [[ "${2:-}" == "list" ]] || usage
+        initialize_home
+        require_jq
+        if [[ $# -eq 2 ]]; then
+            list_session_groups
+        elif [[ $# -eq 3 ]]; then
+            list_workspace_sessions "$3"
+        else
+            usage
+        fi
+        exit 0
+        ;;
+    resume)
+        initialize_home
+        require_jq
+        if [[ $# -eq 1 ]]; then
+            select_resume_target
+        elif [[ $# -eq 3 ]]; then
+            select_resume_target "$2" "$3"
+        else
+            usage
+        fi
+        RESUME_LAUNCH=true
+        ;;
+    ssh-key)
+        initialize_home
+        require_jq
+        resolve_configured_profile true
+        case "${2:-}" in
+            list)
+                [[ $# -eq 2 ]] || usage
+                list_profile_ssh_keys
+                ;;
+            add)
+                [[ $# -eq 3 ]] || usage
+                add_profile_ssh_key "$3"
+                ;;
+            remove)
+                [[ $# -eq 3 ]] || usage
+                remove_profile_ssh_key "$3"
+                ;;
+            *) usage ;;
+        esac
+        exit 0
+        ;;
+    snapshot)
+        initialize_home
+        require_jq
+        case "${2:-}" in
+            "")
+                [[ $# -eq 1 ]] || usage
+                interactive_snapshot_menu
+                ;;
+            configure)
+                [[ $# -eq 2 ]] || usage
+                interactive_snapshot_configuration
+                ;;
+            status)
+                [[ $# -eq 2 ]] || usage
+                snapshot_status
+                ;;
+            create)
+                [[ $# -eq 2 ]] || usage
+                create_complete_snapshot
+                ;;
+            list)
+                [[ $# -eq 2 ]] || usage
+                list_snapshots
+                ;;
+            check)
+                [[ $# -eq 2 ]] || usage
+                check_snapshot_repository
+                ;;
+            auto)
+                [[ $# -eq 3 ]] || usage
+                case "$3" in
+                    status) snapshot_auto_status ;;
+                    enable) snapshot_auto_enable ;;
+                    disable) snapshot_auto_disable ;;
+                    *) usage ;;
+                esac
+                ;;
+            show)
+                [[ $# -eq 3 ]] || usage
+                show_snapshot "$3"
+                ;;
+            diff)
+                [[ $# -eq 3 ]] || usage
+                diff_snapshots "$3"
+                ;;
+            delete)
+                [[ $# -eq 3 ]] || usage
+                delete_snapshot "$3"
+                ;;
+            recover)
+                [[ $# -eq 3 ]] || usage
+                recover_snapshot "$3"
+                ;;
+            restore)
+                [[ $# -eq 3 ]] || usage
+                acquire_snapshot_operation_lock exclusive
+                restore_snapshot "$3"
+                ;;
+            *) usage ;;
+        esac
+        exit 0
+        ;;
+    "")
+        usage
+        ;;
+esac
+
+if [[ "${RESUME_LAUNCH}" == true ]]; then
+    WORKSPACE_INPUT="${RESUME_WORKSPACE_PATH}"
+    EXTRA_PI_ARGS=(--resume)
+else
+    WORKSPACE_INPUT="$1"
+    shift
+    EXTRA_PI_ARGS=("$@")
+fi
+
+[[ -d "${WORKSPACE_INPUT}" ]] \
+    || fail "workspace does not exist: ${WORKSPACE_INPUT}"
+WORKSPACE="$(realpath "${WORKSPACE_INPUT}")"
+
+initialize_home
+require_jq
+if [[ "${RESUME_LAUNCH}" == false ]]; then
+    resolve_configured_profile true
+fi
+WORKSPACE_ID="$(ensure_workspace_registered "${WORKSPACE}")"
+if [[ "${RESUME_LAUNCH}" == false ]]; then
+    maybe_reconnect_direct_resume "${WORKSPACE}" "${WORKSPACE_ID}"
+fi
+if [[ "${RESUME_LAUNCH}" == true && "${WORKSPACE_ID}" != "${RESUME_WORKSPACE_ID}" ]]; then
+    fail "workspace mapping changed during resume selection"
+fi
+
+PROFILE_DIR="$(resolve_profile_directory)"
+PROFILE_CONFIG="${PROFILE_DIR}/profile.json"
+[[ -f "${PROFILE_DIR}/AGENTS.md" ]] \
+    || fail "profile instructions are missing: ${PROFILE_DIR}/AGENTS.md"
+[[ -f "${PROFILE_DIR}/guardian/guardian.md" ]] \
+    || fail "Guardian policy is missing: ${PROFILE_DIR}/guardian/guardian.md"
+
+validate_profile_config "${PROFILE_DIR}" "${PROFILE}"
+validate_profile_definition_files "${PROFILE_DIR}"
+
+[[ -f "${CA_BUNDLE}" ]] || fail "CA bundle does not exist: ${CA_BUNDLE}"
+
+SESSION_DIR_HOST="${PROFILE_DIR}/sessions/${WORKSPACE_ID}"
+SESSION_DIR_CONTAINER="/profile/sessions/${WORKSPACE_ID}"
+mkdir -p "${SESSION_DIR_HOST}"
+prepare_snapshot_launch_request
+trap cleanup_snapshot_launch_request EXIT
+
+HOST_UID="$(id -u)"
+HOST_GID="$(id -g)"
+IMAGE="${PI_RUN_IMAGE:-${DEFAULT_IMAGE}}"
+
+DOCKER_ARGS=(
+    --rm
+    -it
+    --name "pi-${PROFILE}-$$"
+    --cap-drop=ALL
+    --cap-add=CHOWN
+    --cap-add=SETUID
+    --cap-add=SETGID
+    --cap-add=DAC_READ_SEARCH
+    --security-opt=no-new-privileges
+    --network host
+    --workdir /workspace
+    --mount "type=bind,src=${WORKSPACE},dst=/workspace"
+    --mount "type=bind,src=${PROFILE_DIR},dst=/profile"
+    --mount "type=bind,src=${SNAPSHOT_LAUNCH_REQUEST_DIR},dst=/run/pi-run-snapshot"
+    --mount "type=bind,src=${CA_BUNDLE},dst=/etc/ssl/certs/ca-certificates.crt,readonly"
+    --env NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt
+    --env GIT_CONFIG_GLOBAL=/profile/gitconfig
+    --env "HOST_UID=${HOST_UID}"
+    --env "HOST_GID=${HOST_GID}"
+    --env "PI_RUN_PROFILE=${PROFILE}"
+    --env PI_RUN_PROFILE_DIR=/profile
+    --env PI_CODING_AGENT_DIR=/profile
+    --env PI_RUN_SNAPSHOT_REQUEST_DIR=/run/pi-run-snapshot
+    --env "PI_RUN_SNAPSHOT_TOKEN=${SNAPSHOT_LAUNCH_REQUEST_TOKEN}"
+)
+
+SHARED_MODE="$(jq -r '.resources.shared' "${PROFILE_CONFIG}")"
+if [[ "${SHARED_MODE}" == "read-write" ]]; then
+    DOCKER_ARGS+=(
+        --mount "type=bind,src=${PI_RUN_HOME_RESOLVED}/shared,dst=/shared"
+    )
+fi
+
+PI_ARGS=(
+    --no-skills
+    --no-extensions
+    --extension /usr/local/lib/node_modules/pi-web-access/index.ts
+    --extension /usr/local/lib/node_modules/pi-okf/extensions/okf.ts
+    --extension /usr/local/lib/node_modules/plan-agent/plan-agent.ts
+    --extension /usr/local/lib/node_modules/guardian-agent/guardian-agent.ts
+    --extension /usr/local/lib/node_modules/snapshot-agent/snapshot-agent.ts
+    --no-prompt-templates
+    --skill /usr/local/share/pi-run/skills/pi-run
+    --skill /usr/local/share/pi-run/skills/profile-management
+    --session-dir "${SESSION_DIR_CONTAINER}"
+    --thinking high
+)
+
+if ! pi_arguments_select_tui_mode && ! settings_select_tui_mode; then
+    PI_ARGS+=(--tui-mode regular)
+fi
+
+declare -A PROFILE_SKILL_SET=()
+validate_profile_skills_directory "${PROFILE_DIR}"
+mapfile -t PROFILE_SKILLS < <(profile_skill_names "${PROFILE_DIR}")
+for SKILL in "${PROFILE_SKILLS[@]}"; do
+    PROFILE_SKILL_SET["${SKILL}"]=1
+    PI_ARGS+=(--skill "/profile/skills/${SKILL}")
+done
+
+validate_global_skills_directory
+validate_profile_global_skill_filter "${PROFILE_CONFIG}"
+mapfile -t GLOBAL_SKILLS < <(global_skill_names)
+for SKILL in "${GLOBAL_SKILLS[@]}"; do
+    global_skill_is_active "${PROFILE_CONFIG}" "${SKILL}" || continue
+    [[ -z "${PROFILE_SKILL_SET[${SKILL}]:-}" ]] \
+        || fail "skill exists in both active global and profile directories: ${SKILL}"
+    HOST_SKILL_DIR="${PI_RUN_HOME_RESOLVED}/skills/${SKILL}"
+    validate_skill_source "${HOST_SKILL_DIR}" "${SKILL}"
+    CONTAINER_SKILL_DIR="/skills/${SKILL}"
+    DOCKER_ARGS+=(
+        --mount "type=bind,src=${HOST_SKILL_DIR},dst=${CONTAINER_SKILL_DIR},readonly"
+    )
+    PI_ARGS+=(--skill "${CONTAINER_SKILL_DIR}")
+done
+
+echo "pi-run: home=${PI_RUN_HOME_RESOLVED}" >&2
+echo "pi-run: profile=${PROFILE} workspace=${WORKSPACE}" >&2
+echo "pi-run: Guardian loaded; review mode starts Off" >&2
+[[ "${SHARED_MODE}" == "read-write" ]] && echo "pi-run: shared=/shared (read-write)" >&2
+
+CURRENT_PI_ARGS=("${EXTRA_PI_ARGS[@]}")
+while true; do
+    set +e
+    docker run \
+        "${DOCKER_ARGS[@]}" \
+        "${IMAGE}" \
+        "${PI_ARGS[@]}" \
+        "${CURRENT_PI_ARGS[@]}"
+    DOCKER_STATUS=$?
+    set -e
+    if (( DOCKER_STATUS != 0 )); then
+        exit "${DOCKER_STATUS}"
+    fi
+    process_snapshot_launch_request
+    release_snapshot_operation_lock
+    if [[ "${SNAPSHOT_LAUNCH_REQUEST_HANDLED}" == false ]]; then
+        break
+    fi
+    if [[ -z "${SNAPSHOT_LAUNCH_RESTART_SESSION_FILE}" ]]; then
+        printf 'Snapshot operation complete. Starting a fresh Pi session because the previous session had no saved transcript.\n' >&2
+        CURRENT_PI_ARGS=()
+        continue
+    fi
+    validate_snapshot_restart_session \
+        "${SNAPSHOT_LAUNCH_RESTART_SESSION_ID}" "${SNAPSHOT_LAUNCH_RESTART_SESSION_FILE}"
+    printf 'Snapshot operation complete. Reopening Pi session %s (%s).\n' \
+        "${SNAPSHOT_LAUNCH_RESTART_SESSION_ID}" "${SNAPSHOT_LAUNCH_RESTART_SESSION_FILE}" >&2
+    CURRENT_PI_ARGS=(--session "${SESSION_DIR_CONTAINER}/${SNAPSHOT_LAUNCH_RESTART_SESSION_FILE}")
+done
+cleanup_snapshot_launch_request
+trap - EXIT
+if [[ "${SNAPSHOT_LAUNCH_REQUEST_HANDLED}" == false ]]; then
+    create_automatic_snapshot_on_exit
+fi

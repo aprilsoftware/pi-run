@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+
+set -euo pipefail
+umask 022
+
+fail() {
+    echo "build-release: $*" >&2
+    exit 1
+}
+
+SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
+SCRIPT_DIR="$(cd "$(dirname "${SCRIPT_PATH}")" && pwd)"
+ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+VERSION_FILE="${ROOT}/VERSION"
+
+[[ $# -le 1 ]] || fail "usage: scripts/build-release [output-directory]"
+[[ -f "${VERSION_FILE}" ]] || fail "missing VERSION"
+
+VERSION="$(tr -d '\r\n' < "${VERSION_FILE}")"
+[[ "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+    || fail "VERSION must contain a semantic version without a v prefix"
+
+OUTPUT_INPUT="${1:-${ROOT}/dist}"
+mkdir -p "${OUTPUT_INPUT}"
+OUTPUT="$(realpath "${OUTPUT_INPUT}")"
+ARCHIVE_NAME="pi-run-${VERSION}.tar.gz"
+CHECKSUM_NAME="${ARCHIVE_NAME}.sha256"
+PACKAGE_ROOT="pi-run-${VERSION}"
+STAGING="$(mktemp -d)"
+trap 'rm -rf "${STAGING}"' EXIT
+
+for required in bin/pi-run lib/pi-run/doctor.sh lib/pi-run/profiles.sh lib/pi-run/restore.sh lib/pi-run/sessions.sh lib/pi-run/skills.sh lib/pi-run/snapshots.sh lib/pi-run/upgrade.sh lib/pi-run/workspaces.sh install.sh LICENSE VERSION; do
+    [[ -f "${ROOT}/${required}" && ! -L "${ROOT}/${required}" ]] \
+        || fail "release input must be a regular non-symlink file: ${required}"
+done
+[[ -d "${ROOT}/templates" && ! -L "${ROOT}/templates" ]] \
+    || fail "release input must be a non-symlink directory: templates"
+[[ -d "${ROOT}/lib/pi-run" && ! -L "${ROOT}/lib/pi-run" ]] \
+    || fail "release input must be a non-symlink directory: lib/pi-run"
+grep -Fx "PI_RUN_DEFAULT_VERSION=${VERSION}" "${ROOT}/install.sh" >/dev/null \
+    || fail "install.sh default version does not match VERSION"
+
+if find "${ROOT}/templates" "${ROOT}/lib/pi-run" -mindepth 1 ! -type d ! -type f -print -quit | grep -q .; then
+    fail "release directories contain a symlink or special file"
+fi
+
+mkdir -p "${STAGING}/${PACKAGE_ROOT}/bin" "${STAGING}/${PACKAGE_ROOT}/lib"
+install -m 0755 "${ROOT}/bin/pi-run" "${STAGING}/${PACKAGE_ROOT}/bin/pi-run"
+install -m 0755 "${ROOT}/install.sh" "${STAGING}/${PACKAGE_ROOT}/install.sh"
+install -m 0644 "${ROOT}/LICENSE" "${STAGING}/${PACKAGE_ROOT}/LICENSE"
+install -m 0644 "${VERSION_FILE}" "${STAGING}/${PACKAGE_ROOT}/VERSION"
+cp -R "${ROOT}/templates" "${STAGING}/${PACKAGE_ROOT}/templates"
+cp -R "${ROOT}/lib/pi-run" "${STAGING}/${PACKAGE_ROOT}/lib/pi-run"
+find "${STAGING}/${PACKAGE_ROOT}/templates" "${STAGING}/${PACKAGE_ROOT}/lib/pi-run" \
+    -type d -exec chmod 0755 {} +
+find "${STAGING}/${PACKAGE_ROOT}/templates" "${STAGING}/${PACKAGE_ROOT}/lib/pi-run" \
+    -type f -exec chmod 0644 {} +
+
+ARCHIVE_TMP="${OUTPUT}/.${ARCHIVE_NAME}.tmp.$$"
+CHECKSUM_TMP="${OUTPUT}/.${CHECKSUM_NAME}.tmp.$$"
+rm -f "${ARCHIVE_TMP}" "${CHECKSUM_TMP}"
+
+tar \
+    --sort=name \
+    --mtime='UTC 1970-01-01' \
+    --owner=0 \
+    --group=0 \
+    --numeric-owner \
+    -C "${STAGING}" \
+    -czf "${ARCHIVE_TMP}" \
+    "${PACKAGE_ROOT}"
+
+mv "${ARCHIVE_TMP}" "${OUTPUT}/${ARCHIVE_NAME}"
+(
+    cd "${OUTPUT}"
+    sha256sum "${ARCHIVE_NAME}" > "${CHECKSUM_TMP}"
+)
+mv "${CHECKSUM_TMP}" "${OUTPUT}/${CHECKSUM_NAME}"
+
+printf '%s\n' "${OUTPUT}/${ARCHIVE_NAME}" "${OUTPUT}/${CHECKSUM_NAME}"

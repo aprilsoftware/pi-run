@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "name": "default",
+  "skills": null,
+  "resources": {
+    "shared": "read-write"
+  }
+}
