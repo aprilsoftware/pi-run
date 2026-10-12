@@ -43,9 +43,12 @@ Doctor checks daemon reachability and local image presence, not the active
 Docker context's locality, host-network behavior, container-visible permissions,
 locking, or restore durability. Distribution-local Engine host networking
 shares WSL networking; Windows service access needs separate verification.
-Real integration testing is pending, and WSL diagnostics explicitly warn that
-the configuration is experimental. ARM64, WSL1, and native Windows execution
-remain outside the target.
+WSL-specific diagnostics have automated coverage, but the maintainer does not
+currently have a Windows computer for end-to-end testing. Real integration
+testing is therefore pending, and diagnostics explicitly warn that the
+configuration is experimental. Feedback and test reports are welcome through
+[GitHub Issues](https://github.com/aprilsoftware/pi-run/issues). ARM64, WSL1,
+and native Windows execution remain outside the target.
 
 ## Select a release
 

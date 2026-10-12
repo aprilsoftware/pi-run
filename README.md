@@ -93,9 +93,19 @@ not by itself guarantee data sovereignty.
 
 ## Install and start
 
-Pi-Run currently requires Linux/amd64, Bash, Docker, `curl`, `jq`, and standard
-GNU command-line tools. Install the latest published public release, initialize
-your Pi-Run environment, and open the current directory:
+Pi-Run targets Linux/amd64 and requires Bash, Docker, `curl`, `jq`, and standard
+GNU command-line tools. On x86-64 Windows, it can run in an experimental
+[WSL2 configuration](docs/installation.md#windows-via-wsl2-ubuntu-or-debian)
+with Ubuntu or Debian, Docker Engine inside the distribution, and Linux-side
+storage. WSL1, Windows ARM64, and native Windows execution are outside this
+configuration. Run `pi-run doctor` after installation to check the selected
+environment. WSL-specific diagnostics have automated coverage, but the
+maintainer does not currently have a Windows computer for end-to-end testing,
+so this path remains experimental. Feedback is welcome through
+[GitHub Issues](https://github.com/aprilsoftware/pi-run/issues).
+
+Install the latest published public release, initialize your Pi-Run environment,
+and open the current directory:
 
 ```bash
 curl -fsSL https://github.com/aprilsoftware/pi-run/releases/latest/download/install.sh | sh

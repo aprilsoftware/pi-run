@@ -24,8 +24,11 @@ socket into normal Pi sessions; see [Security and isolation](security.md).
 This configuration runs the existing Linux launcher and image. It needs an
 x86-64 Windows machine, WSL2, and Docker Engine **inside the distribution**.
 Docker Desktop is not required. WSL1, Windows ARM64, and native PowerShell/Git
-Bash execution are outside this configuration. Real WSL integration validation
-is still pending; diagnostic success is not certification.
+Bash execution are outside this configuration. WSL-specific diagnostics have
+automated coverage, but the maintainer does not currently have a Windows
+computer for end-to-end testing, so real integration validation is still
+pending and diagnostic success is not certification. Feedback and test reports
+are welcome through [GitHub Issues](https://github.com/aprilsoftware/pi-run/issues).
 
 ### Prepare WSL and Docker Engine
 
