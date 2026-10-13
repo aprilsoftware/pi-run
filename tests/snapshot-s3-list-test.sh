@@ -70,11 +70,11 @@ export SNAPSHOT_METADATA
 output="$(env PATH="${TMP}/fake-bin:${PATH}" PI_RUN_HOME="${HOME_DIR}" \
     DOCKER_LOG="${DOCKER_LOG}" REMOTE_MARKER="${REMOTE_MARKER}" SNAPSHOT_METADATA="${SNAPSHOT_METADATA}" \
     "${ROOT}/bin/pi-run" snapshot list)"
-[[ "$(awk 'NR==2 {print $1}' <<< "${output}")" == "${LATEST:0:12}" &&
-   "$(awk 'NR==3 {print $1}' <<< "${output}")" == "${OLDER:0:12}" ]] \
-    || fail "S3 snapshots were not listed newest first"
-[[ "$(awk 'NR==2 {print $3}' <<< "${output}")" == fedcba9876543210 &&
-   "$(awk 'NR==3 {print $3}' <<< "${output}")" == '-' &&
+[[ "$(awk 'NR==2 {print $1}' <<< "${output}")" == "${OLDER:0:12}" &&
+   "$(awk 'NR==3 {print $1}' <<< "${output}")" == "${LATEST:0:12}" ]] \
+    || fail "S3 snapshots were not listed oldest first"
+[[ "$(awk 'NR==2 {print $3}' <<< "${output}")" == '-' &&
+   "$(awk 'NR==3 {print $3}' <<< "${output}")" == fedcba9876543210 &&
    "${output}" != *'REQUEST'* && "${output}" != *'22222222-2222-4222-8222-222222222222'* ]] \
     || fail "S3 machine provenance or request-column suppression is incorrect"
 for argument in '--network' bridge '--no-lock' snapshots '--json' '--tag' pi-run \

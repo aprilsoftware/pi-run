@@ -88,8 +88,8 @@ paths, and exclusions. Restic metadata also records Pi-Run tags and the
 originating machine ID.
 
 Purposes are `manual`, `automatic`, and `pre-restore`. Older metadata can display
-`-`. Lists include only Pi-Run snapshots, newest first, with a 12-character ID,
-UTC time, machine, scope, and purpose.
+`-`. Lists include only Pi-Run snapshots, oldest first and newest last, with a
+12-character ID, UTC time, machine, scope, and purpose.
 
 Commands taking an ID accept 12 or 64 lowercase hexadecimal characters and
 require a unique Pi-Run snapshot. `show` validates the embedded manifest against

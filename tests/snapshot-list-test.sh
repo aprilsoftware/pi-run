@@ -85,15 +85,15 @@ LIST_RESPONSE="$(jq -nc '[
 export LIST_RESPONSE
 list_output="$(PATH="${TMP}/fake-bin:${PATH}" PI_RUN_HOME="${HOME_DIR}" \
     "${ROOT}/bin/pi-run" snapshot list)"
-[[ "$(printf '%s\n' "${list_output}" | sed -n '2p' | awk '{print $1}')" == cccccccccccc ]] \
-    || fail "snapshots were not listed newest first"
-[[ "$(printf '%s\n' "${list_output}" | sed -n '3p' | awk '{print $1}')" == bbbbbbbbbbbb ]] \
-    || fail "older snapshot was not listed second"
+[[ "$(printf '%s\n' "${list_output}" | sed -n '2p' | awk '{print $1}')" == bbbbbbbbbbbb ]] \
+    || fail "snapshots were not listed oldest first"
+[[ "$(printf '%s\n' "${list_output}" | sed -n '3p' | awk '{print $1}')" == cccccccccccc ]] \
+    || fail "newest snapshot was not listed last"
 [[ "${list_output}" == *'MACHINE'* && "${list_output}" == *'PURPOSE'* &&
    "${list_output}" == *'0123456789abcdef'* &&
-   "$(printf '%s\n' "${list_output}" | awk 'NR==2 {print $5}')" == 'pre-restore' &&
-   "$(printf '%s\n' "${list_output}" | awk 'NR==3 {print $3}')" == '-' &&
-   "$(printf '%s\n' "${list_output}" | awk 'NR==3 {print $5}')" == '-' &&
+   "$(printf '%s\n' "${list_output}" | awk 'NR==3 {print $5}')" == 'pre-restore' &&
+   "$(printf '%s\n' "${list_output}" | awk 'NR==2 {print $3}')" == '-' &&
+   "$(printf '%s\n' "${list_output}" | awk 'NR==2 {print $5}')" == '-' &&
    "${list_output}" == *'complete'* ]] || fail "snapshot provenance, scope, or purpose is missing"
 [[ "${list_output}" != *'22222222-2222-4222-8222-222222222222'* &&
    "${list_output}" != *'REQUEST'* ]] || fail "default snapshot list exposed internal request IDs"

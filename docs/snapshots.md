@@ -68,7 +68,8 @@ pi-run snapshot create
 pi-run snapshot list
 ```
 
-The list is newest first and provides the snapshot ID needed by other commands.
+The list is oldest first and newest last, keeping the latest snapshot near the
+returned terminal prompt. It provides the snapshot ID needed by other commands.
 To inspect one snapshot or compare it with the newest Pi-Run snapshot:
 
 ```bash

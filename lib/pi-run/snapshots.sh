@@ -1054,7 +1054,7 @@ list_snapshots() {
     rows="$(jq -r '
         def tag_value($prefix):
             [.tags[] | select(startswith($prefix)) | ltrimstr($prefix)][0];
-        sort_by(.time) | reverse[] |
+        sort_by(.time)[] |
         (if (.hostname // "pi-run") | test("^[0-9a-f]{16}$") then .hostname else "-" end) as $machine |
         ([.tags[] | select(startswith("purpose=")) | ltrimstr("purpose=")][0] // "-") as $purpose |
         [.id[0:12], .time, $machine, tag_value("scope="), $purpose] | @tsv
