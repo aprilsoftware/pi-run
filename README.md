@@ -40,8 +40,9 @@ Guardian adds another layer without requiring a human click for every covered
 command. When enabled, a separate evidence-aware Pi reviewer examines acting-agent
 `bash` and `run` calls against the current request and applicable instructions. It
 can release supported actions, ask when authorization or consequences need human
-judgment, or uphold an existing user restriction. Guardian's mode, reviewer, and
-policy are profile-configurable, and review starts Off until enabled.
+judgment, or uphold an existing user restriction. Reviewer preferences and policy
+are profile-configurable; activation is session-scoped and every new session
+starts Off.
 
 Guardian is not a sandbox or an infallible security decision-maker. The temporary
 container narrows filesystem exposure, but selected mounts remain writable and

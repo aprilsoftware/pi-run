@@ -29,8 +29,8 @@ const MAX_EVIDENCE_CALLS = 10;
 const MAX_EVIDENCE_BYTES = 32 * 1024;
 const LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 export type Thinking = typeof LEVELS[number];
-export type GuardianConfig = { schemaVersion: 1; mode: "on" | "off"; model: string | null; thinking: Thinking | null };
-export type GuardianConfigPatch = Partial<Pick<GuardianConfig, "mode" | "model" | "thinking">>;
+export type GuardianConfig = { schemaVersion: 2; model: string | null; thinking: Thinking | null };
+export type GuardianConfigPatch = Partial<Pick<GuardianConfig, "model" | "thinking">>;
 type Json = Record<string, unknown>;
 export type ReviewMessage = { id: string; role: "user" | "assistant" | "toolResult"; text: string; order: number };
 export type ReviewInstruction = { id: string; path: string; scope: string; text: string };
@@ -131,16 +131,16 @@ async function readText(path: string, signal?: AbortSignal, maxBytes=MAX_FILE_BY
 
 const GUARDIAN_CONFIG_BYTES = 16 * 1024;
 export function defaultGuardianConfig(): GuardianConfig {
-  return { schemaVersion: 1, mode: "off", model: null, thinking: null };
+  return { schemaVersion: 2, model: null, thinking: null };
 }
 export function parseGuardianConfig(text: string): GuardianConfig {
-  const value=plain(JSON.parse(text));
-  const keys=Object.keys(value).sort();
-  if(keys.join(",")!=="mode,model,schemaVersion,thinking"||value.schemaVersion!==1||
-    !["on","off"].includes(value.mode as string)||
+  const value=plain(JSON.parse(text)),keys=Object.keys(value).sort().join(",");
+  const current=value.schemaVersion===2&&keys==="model,schemaVersion,thinking";
+  const legacy=value.schemaVersion===1&&keys==="mode,model,schemaVersion,thinking"&&["on","off"].includes(value.mode as string);
+  if((!current&&!legacy)||
     !(value.model===null||(typeof value.model==="string"&&value.model.length<=512&&/^[^\s/]+\/[^\s]+$/.test(value.model)))||
     !(value.thinking===null||LEVELS.includes(value.thinking as Thinking)))throw new Error("Invalid Guardian configuration");
-  return {schemaVersion:1,mode:value.mode as "on"|"off",model:value.model as string|null,thinking:value.thinking as Thinking|null};
+  return {schemaVersion:2,model:value.model as string|null,thinking:value.thinking as Thinking|null};
 }
 export async function loadGuardianConfig(stateDir: string): Promise<GuardianConfig> {
   const resolvedState=await realpath(stateDir),dir=join(stateDir,"guardian");
@@ -1736,6 +1736,17 @@ export function isGuardedCommandTool(toolName: string): boolean {
   return GUARDED_COMMAND_TOOLS.includes(toolName);
 }
 
+const GUARDIAN_MODE_ENTRY="guardian-mode";
+type GuardianSessionMode="on"|"off";
+function restoredGuardianMode(ctx:ExtensionContext):{mode:GuardianSessionMode;source:"default"|"session"}{
+  let mode:GuardianSessionMode="off",source:"default"|"session"="default";
+  for(const entry of ctx.sessionManager.getEntries())if(entry.type==="custom"&&entry.customType===GUARDIAN_MODE_ENTRY){
+    const candidate=(entry.data as {mode?:unknown}|undefined)?.mode;
+    if(candidate==="on"||candidate==="off"){mode=candidate;source="session";}
+  }
+  return {mode,source};
+}
+
 export function createGuardianExtension(factory: ReviewerFactory = createPiReviewerBinding) {
   return function guardian(pi: ExtensionAPI) {
     const stateDir = resolve(process.env.PI_RUN_PROFILE_DIR || "/profile");
@@ -1783,10 +1794,10 @@ export function createGuardianExtension(factory: ReviewerFactory = createPiRevie
     const block = (reason: string) => ({ block: true as const, reason });
     const tell = (ctx: ExtensionContext, message: string, kind: "info" | "warning" | "error" = "info") => ctx.ui.notify(visible(message), kind);
     async function updateConfig(ctx: ExtensionContext, patch: GuardianConfigPatch): Promise<void> {
-      const candidate:GuardianConfig={...config,...patch,schemaVersion:1};
+      const candidate:GuardianConfig={...config,...patch,schemaVersion:2};
       if(!configNeedsWrite&&JSON.stringify(candidate)===JSON.stringify(config))return;
       await saveGuardianConfig(stateDir,candidate);
-      invalidate();config=candidate;configNeedsWrite=false;enabled=config.mode==="on";statusOwner++;last=undefined;refreshStatus(ctx);
+      invalidate();config=candidate;configNeedsWrite=false;statusOwner++;last=undefined;refreshStatus(ctx);
     }
 
     const binding = factory({ pi, changed: invalidate, config:()=>config, updateConfig, tell, log: ctx => sink(ctx) });
@@ -1809,17 +1820,18 @@ export function createGuardianExtension(factory: ReviewerFactory = createPiRevie
       let configSource="default";
       try{config=await loadGuardianConfig(stateDir);configNeedsWrite=false;configSource="file";}
       catch(e){if((e as NodeJS.ErrnoException).code!=="ENOENT"){
-        tell(ctx,`Guardian configuration unavailable; starting Off: ${errorText(e)}`,"warning");
+        tell(ctx,`Guardian configuration unavailable; starting with default reviewer preferences: ${errorText(e)}`,"warning");
         sink(ctx)("ERROR","config_unavailable","Guardian configuration rejected; safe defaults applied",{error:errorText(e)});
       }}
-      enabled=config.mode==="on";statusOwner++;status(ctx,enabled?"On":"Off");
+      const restored=restoredGuardianMode(ctx);enabled=restored.mode==="on";statusOwner++;status(ctx,enabled?"On":"Off");
       sink(ctx)("SESSION_START", "session_started", "Guardian ready; logs are diagnostic only", {
         logPath: logger.path, maxBytes: MAX_LOG_BYTES, backups: LOG_BACKUPS,
-        configPath:join(stateDir,"guardian","config.json"),configSource,mode:config.mode,model:config.model??"conversation",thinking:config.thinking??"conversation",
+        configPath:join(stateDir,"guardian","config.json"),configSource,mode:restored.mode,modeSource:restored.source,
+        model:config.model??"conversation",thinking:config.thinking??"conversation",
         reviewScope: "command_execution", toolNames: [...GUARDED_COMMAND_TOOLS],
       });
     });
-    pi.on("session_tree", (_e, ctx) => { invalidate(); paused = false; store.clear(); statusOwner++; last = undefined; status(ctx, enabled ? "On" : "Off"); });
+    pi.on("session_tree", (_e, ctx) => { invalidate(); paused=false;store.clear();const restored=restoredGuardianMode(ctx);enabled=restored.mode==="on";statusOwner++;last=undefined;status(ctx,enabled?"On":"Off"); });
     pi.on("model_select", (_e,ctx)=>refreshStatus(ctx));
     pi.on("thinking_level_select", (_e,ctx)=>refreshStatus(ctx));
     pi.on("session_shutdown", async (_event, ctx) => {
@@ -2106,12 +2118,13 @@ export function createGuardianExtension(factory: ReviewerFactory = createPiRevie
     async function setMode(ctx: ExtensionContext, next: boolean): Promise<void> {
       try{
         const previous=enabled,interrupted=active.size;
-        await updateConfig(ctx,{mode:next?"on":"off"});
-        if(previous!==enabled)sink(ctx)("INFO","mode_changed","User changed the saved Guardian mode",{
-          previous:previous?"on":"off",mode:enabled?"on":"off",interruptedReviews:interrupted,pendingInvocationReleased:false,
-        });
-        status(ctx,enabled?"On":"Off");tell(ctx,`Guardian: ${enabled?"On":"Off"} (saved).`);
-      }catch(e){tell(ctx,oneLine(`Guardian preference was not saved: ${errorText(e)}`,240),"error");}
+        if(previous!==next){pi.appendEntry(GUARDIAN_MODE_ENTRY,{mode:next?"on":"off"});invalidate();enabled=next;statusOwner++;last=undefined;
+          sink(ctx)("INFO","mode_changed","User changed Guardian mode for this session",{
+            previous:previous?"on":"off",mode:enabled?"on":"off",interruptedReviews:interrupted,pendingInvocationReleased:false,
+          });
+        }
+        status(ctx,enabled?"On":"Off");tell(ctx,`Guardian: ${enabled?"On":"Off"} (this session).`);
+      }catch(e){tell(ctx,oneLine(`Guardian session mode was not changed: ${errorText(e)}`,240),"error");}
     }
     async function modeCommand(args: string, ctx: ExtensionContext): Promise<void> {
       let value = args.trim().toLowerCase();

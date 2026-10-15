@@ -30,8 +30,8 @@ it does not replace them.
 
 ## Check and enable review
 
-Guardian is loaded for every profile, but a profile without saved preferences
-starts with review **Off**. Check the current mode and reviewer:
+Guardian is loaded for every profile, and every new session starts with review
+**Off**. Check the current mode and reviewer:
 
 ```text
 /guardian status
@@ -49,13 +49,15 @@ Enable command review directly:
 /guardian-mode on
 ```
 
-The mode is saved in the selected profile and applies to later sessions. Use
-`/guardian-mode off` only when you deliberately want covered commands to proceed
-without Guardian review. Check status after changing profiles or after a startup
-warning rather than assuming an old setting still applies.
+Mode belongs to the current session. Resuming that session restores its mode,
+and branch navigation keeps the same session-wide setting. Every new session
+starts Off, even when another session in the selected profile has Guardian On.
+Use `/guardian-mode off` when you deliberately want covered commands in the
+current session to proceed without Guardian review.
 
 By default, Guardian follows the conversation model and thinking level. The menu
-can select a different configured reviewer model or thinking level. Reviewer
+can select a different configured reviewer model or thinking level; those
+preferences are saved in the profile and apply to later sessions. Reviewer
 calls can add latency and provider cost, and may send commands, instructions,
 selected conversation context, and inspected file excerpts to that provider.
 Choose settings appropriate for the workspace's privacy requirements.
@@ -139,7 +141,7 @@ the [Guardian reference](reference/guardian.md#retained-review-logs).
 
 ## Essential boundaries
 
-- Review starts Off when no valid preferences have been saved.
+- Every new session starts with review Off; resumed sessions restore their mode.
 - Only acting-agent `bash` and `run` calls enter this gate.
 - “Run once” applies to one invocation, not the surrounding task or plan.
 - A declined invocation did not execute and is never replayed automatically.

@@ -7,19 +7,26 @@ and retained-log behavior. For normal setup and decisions, start with the
 ## Preferences and startup
 
 Guardian is loaded for every Pi-Run profile. Saved preferences live in the
-selected profile's private `guardian/config.json` and include mode, optional
-reviewer model, and optional reviewer thinking level. Changes made through the
-Guardian commands apply to later sessions, not only the current branch.
+selected profile's private `guardian/config.json` and include only the optional
+reviewer model and thinking level. Those preferences apply to later sessions.
+Legacy schema-1 files remain readable, but their saved mode is ignored and is
+removed when preferences are next written.
 
-No preference file means review starts Off. An unreadable or invalid file also
-produces a warning and starts Off rather than failing into a restrictive mode.
-A failed preference write leaves the previous settings in effect. Profile
-creation does not copy Guardian preferences, even though it copies the profile's
-review policy.
+Activation is session-scoped. Every new session starts Off. `/guardian-mode on`
+or `off` appends private extension state to the current session; it is not sent
+to the model. Resuming that session restores the latest mode. Mode is operational
+session state rather than conversational authority, so branch navigation retains
+the latest setting from anywhere in that session. Another session using the same
+profile still starts Off.
+
+An unreadable or invalid preference file produces a warning and uses default
+reviewer preferences without changing session mode. A failed preference write
+leaves the previous model and thinking settings in effect. Profile creation does
+not copy Guardian preferences, even though it copies the profile's review policy.
 
 Use `/guardian status` to inspect effective mode, reviewer, thinking, and log
 path. `/guardian` opens the settings menu. `/guardian-mode`, with no argument,
-opens a selector; `on` and `off` select and save a mode. `/guardian on` and
+opens a selector; `on` and `off` change the current session. `/guardian on` and
 `/guardian off` are aliases.
 
 ## Reviewer model and thinking

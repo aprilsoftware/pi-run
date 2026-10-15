@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, writeFile, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext, ExtensionUIContext, ToolCallEventResult } from "@earendil-works/pi-coding-agent";
-import { createGuardianExtension, type ReviewDecision } from "../docker/extensions/guardian-agent.ts";
+import { createGuardianExtension, parseGuardianConfig, type ReviewDecision } from "../docker/extensions/guardian-agent.ts";
 
 type Outcome = ReviewDecision["outcome"] | "unavailable";
 type Answer = boolean | undefined;
@@ -26,18 +26,20 @@ async function runScenario(name: Scenario, realUI?: ExtensionUIContext): Promise
   const scenario = scenarios[name];
   const root = await mkdtemp(join(tmpdir(), "guardian-flow-"));
   const profile = join(root, "profile"), workspace = join(root, "workspace");
-  const handlers = new Map<string, Handler>();
+  const handlers = new Map<string, Handler>(), commands = new Map<string, {handler:(args:string,ctx:ExtensionContext)=>Promise<void>}>();
   const dialogs: Dialog[] = [], calls: string[] = [], reviewedIds: string[] = [];
-  let outcome: Outcome = scenario.outcome, answer: Answer = scenario.answer;
+  let outcome: Outcome = scenario.outcome, answer: Answer = scenario.answer, sessionId = "guardian-flow-test";
   let reviews = 0, aborts = 0;
-  const branch = [{ type: "message", id: "user-1", message: { role: "user", content: "Synthetic test direction; no action may execute." } }];
+  const userEntry = { type: "message", id: "user-1", message: { role: "user", content: "Synthetic test direction; no action may execute." } };
+  const entries:any[] = [{ type: "custom", id: "mode-1", customType: "guardian-mode", data: { mode: "on" } }, userEntry];
+  let branch:any[] = entries;
   // Only confirm is forwarded to Pi. Test status/widgets cannot disturb live Guardian.
   const ctx = {
     cwd: workspace, hasUI: name !== "no-ui", hasPendingMessages: () => false,
     abort: () => { aborts++; },
     sessionManager: {
-      getSessionId: () => "guardian-flow-test", getCwd: () => workspace,
-      getLeafId: () => branch.at(-1)!.id, getBranch: () => branch, getEntries: () => branch,
+      getSessionId: () => sessionId, getCwd: () => workspace,
+      getLeafId: () => branch.at(-1)?.id, getBranch: () => branch, getEntries: () => entries,
     },
     ui: {
       setStatus() {}, setWidget() {}, notify() {},
@@ -73,7 +75,10 @@ async function runScenario(name: Scenario, realUI?: ExtensionUIContext): Promise
     await writeFile(join(profile, "guardian", "config.json"), config, { mode: 0o600 });
     const api = {
       on: (name: string, handler: Handler) => { handlers.set(name, handler); },
-      registerCommand() {},
+      registerCommand: (name:string, command:{handler:(args:string,ctx:ExtensionContext)=>Promise<void>}) => { commands.set(name,command); },
+      appendEntry: (customType:string,data:unknown) => {
+        const entry={type:"custom",id:`mode-${entries.length+1}`,customType,data};entries.push(entry);if(branch!==entries)branch.push(entry);
+      },
       getAllTools: () => [{ name: "bash", description: "Synthetic command; this harness has no executor." }],
     } as unknown as ExtensionAPI;
     // Guardian captures this directory synchronously; restore the environment before any await.
@@ -109,6 +114,21 @@ async function runScenario(name: Scenario, realUI?: ExtensionUIContext): Promise
       assert.match(dialogs[0].message, /synthetic invocation, never executed/);
       assert.match(dialogs[0].message, name === "unavailable" ? /Run once without review\?/ : /Run once\?/);
       assert.equal(dialogs[0].answer === true, scenario.answer === true, "Unexpected human answer; rerun with the instructed choice");
+    }
+    if(name==="allow"&&!realUI){
+      branch=[userEntry];await dispatch("session_tree",{type:"session_tree"});
+      assert.equal((await invoke())?.block,undefined,"Branch navigation must retain session-wide mode");
+      assert.equal(reviews,2);
+      await commands.get("guardian-mode")!.handler("off",ctx);
+      assert.equal(await invoke(),undefined,"Turning Guardian off must bypass review in this session");
+      assert.equal(reviews,2);
+      await commands.get("guardian-mode")!.handler("on",ctx);
+      assert.equal((await invoke())?.block,undefined,"Turning Guardian on must restore review in this session");
+      assert.equal(reviews,3);
+      entries.splice(0,entries.length,userEntry);branch=entries;sessionId="guardian-flow-new-session";
+      await dispatch("session_start",{type:"session_start"});
+      assert.equal(await invoke(),undefined,"A new session must start Off despite legacy profile mode");
+      assert.equal(reviews,3);
     }
     if (name === "approve" && !realUI) {
       answer = false;
@@ -153,10 +173,13 @@ async function runScenario(name: Scenario, realUI?: ExtensionUIContext): Promise
 }
 
 export async function runAutomatedTests(): Promise<void> {
+  assert.deepEqual(parseGuardianConfig(JSON.stringify({schemaVersion:1,mode:"on",model:null,thinking:"low"})),
+    {schemaVersion:2,model:null,thinking:"low"},"Legacy profile mode must migrate out of preferences");
   for (const name of Object.keys(scenarios) as Scenario[]) {
     await runScenario(name);
     console.log(`PASS guardian-flow: ${name}`);
   }
+  console.log("PASS guardian-flow: session-scoped mode and legacy preference migration");
 }
 
 /** Opt-in Pi extension; registers a command only, never a tool or live Guardian hook. */

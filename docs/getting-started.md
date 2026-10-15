@@ -108,8 +108,8 @@ For operations, state the exact target, effect, and limits. A reachable service
 or available credential is not permission to use it.
 
 [Planning](planning.md) can structure a larger goal. [Guardian](guardian.md) can
-review covered commands when enabled, but starts Off without saved preferences
-and is not a sandbox. Continue to inspect commands and changed files yourself.
+review covered commands when enabled, but every new session starts Off and it is
+not a sandbox. Continue to inspect commands and changed files yourself.
 
 ## 6. Name, leave, and continue your session
 
