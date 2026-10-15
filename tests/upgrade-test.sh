@@ -378,9 +378,10 @@ for rejected in 0.5.6 0.5.5 v0.5.5 0.5.4 v0.5 01.0.0; do
     [[ ${status} -ne 0 ]] || fail "accepted invalid upgrade target: ${rejected}"
 done
 
-# Selection uses the highest semantic version, includes prereleases, ignores
+# Selection uses the highest stable semantic version, ignores prereleases,
 # drafts and ordering, and still refuses a list whose newest installable release
-# would be a downgrade.
+# would be a downgrade. Exact-tag upgrades were exercised above and remain
+# available for explicitly selected candidates.
 write_releases \
     "$(release_json v0.5.4)" \
     "$(release_json v9.0.0 true false)" \
@@ -388,7 +389,7 @@ write_releases \
     "$(release_json v0.5.5)"
 output="$(PATH="${TMP}/fake-bin:${PATH}" HOME="${HOME_DIR}" GH_AVAILABLE=false \
     PI_RUN_RELEASES_URL="${RELEASES_URL}" "${BIN_DIR}/pi-run" upgrade --check)"
-assert_contains "${output}" "update available: v0.5.6 (installed: v0.5.5)"
+assert_contains "${output}" "up to date: v0.5.5"
 
 write_releases "$(release_json v0.5.4)"
 set +e

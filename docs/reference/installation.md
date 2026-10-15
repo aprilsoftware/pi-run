@@ -177,10 +177,9 @@ symlink, reads the recorded executable directory, and uses the installer stored
 in that active release.
 
 `pi-run upgrade --check` and `pi-run upgrade` query up to 100 published GitHub
-releases and choose the highest numeric canonical `vX.Y.Z` version that is not a
-draft and has exactly one uploaded installer, archive, and checksum. This is not
-GitHub's separate Latest designation. A release marked prerelease remains
-eligible when its tag and assets satisfy those rules.
+releases and choose the highest numeric canonical `vX.Y.Z` version that is neither
+a draft nor a prerelease and has exactly one uploaded installer, archive, and
+checksum. This is independent of GitHub's separate Latest designation.
 
 An already-current check or upgrade succeeds without reinstalling. If the
 highest installable published version is older than the installed version, the
@@ -194,7 +193,9 @@ pi-run upgrade vX.Y.Z
 
 The tag must be canonical and newer than the installed version. Exact upgrade
 uses the active release's retained installer for the target version, including
-checksum, archive, image, and destination validation.
+checksum, archive, image, and destination validation. It can install an explicitly
+selected published prerelease even though automatic upgrade selection ignores
+prereleases.
 
 Authentication is resolved from `GH_TOKEN`, then `GITHUB_TOKEN`, then an
 available authenticated `gh` session. The token is passed to the installer but

@@ -4,7 +4,7 @@
 set -eu
 umask 022
 
-PI_RUN_DEFAULT_VERSION=0.5.20
+PI_RUN_DEFAULT_VERSION=0.5.21
 REPOSITORY=aprilsoftware/pi-run
 
 fail() {

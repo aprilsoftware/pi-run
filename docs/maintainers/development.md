@@ -137,11 +137,21 @@ scope; a successful local archive build is not publication approval.
 
 ## Release workflow
 
-Publishing a GitHub Release triggers `.github/workflows/release.yml`. The
-workflow verifies that its tag matches `VERSION`, builds the application
-archive, builds and pushes the matching Linux/amd64 runtime image, and uploads
-`LICENSE`, `install.sh`, the archive, and its checksum to that release. It does
-not publish a mutable `latest` image.
+Publishing a GitHub Release, including a prerelease, triggers
+`.github/workflows/release.yml`. The workflow verifies that its tag matches
+`VERSION`, builds the application archive, builds and pushes the matching
+Linux/amd64 runtime image, and uploads `LICENSE`, `install.sh`, the archive, and
+its checksum to that release. It does not publish a mutable `latest` image.
+
+For candidate testing, publish the intended canonical tag as a prerelease and
+install it by exact tag (`pi-run upgrade vX.Y.Z`). Automatic upgrade discovery
+ignores prereleases. After testing the built assets and image, promote that same
+release without moving its tag or changing its contents. The current
+`published`-only workflow builds on initial prerelease publication and does not
+rebuild when that prerelease is promoted. If candidate testing requires a code
+change, publish a new version rather than rewriting the tested tag. Clients from
+before prerelease filtering may still discover candidates, so establish the
+stable filtering release before relying on this channel for a wider audience.
 
 Before publication, verify the intended public coordinates, release notes,
 asset access, container-package access, and actual supported platform. For

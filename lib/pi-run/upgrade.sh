@@ -125,7 +125,7 @@ query_latest_release_version() {
             [.assets[]? | select(.name == $name and .state == "uploaded")] | length == 1;
         [
             .[]
-            | select(type == "object" and .draft == false)
+            | select(type == "object" and .draft == false and .prerelease == false)
             | .tag_name as $tag
             | select($tag | type == "string" and test("^v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"))
             | ($tag[1:] | split(".") | map(tonumber)) as $parts
