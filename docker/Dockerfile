@@ -71,6 +71,9 @@ RUN apt-get update \
         netcat-openbsd \
         traceroute \
         \
+        # Infrastructure automation
+        ansible \
+        \
         # Java
         openjdk-21-jdk-headless \
         maven \
@@ -245,6 +248,12 @@ RUN set -eux; \
     mvn --version; \
     python3 --version; \
     pip3 --version; \
+    ansible --version; \
+    ansible-playbook --version; \
+    ansible-galaxy --version; \
+    ANSIBLE_LOCAL_TEMP=/tmp/ansible-local ANSIBLE_REMOTE_TEMP=/tmp/ansible-remote \
+        ansible localhost -i localhost, -c local -m ansible.builtin.ping; \
+    rm -rf /tmp/ansible-local /tmp/ansible-remote; \
     gcc --version; \
     g++ --version; \
     clang --version; \

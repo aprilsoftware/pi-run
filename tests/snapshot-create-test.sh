@@ -90,8 +90,8 @@ manifest="$(printf '%s\n' "${create_output}" | awk '/^Manifest: / { sub(/^Manife
     || fail "snapshot manifest is missing or has unsafe permissions"
 jq -e '
     .schemaVersion == 1 and .scope == "complete" and .purpose == "manual" and
-    .piRunVersion == "0.5.21" and .piVersion == "1.1.0" and
-    .runtimeImage == "ghcr.io/aprilsoftware/pi-run:0.5.21" and
+    .piRunVersion == "0.6.0" and .piVersion == "1.1.0" and
+    .runtimeImage == "ghcr.io/aprilsoftware/pi-run:0.6.0" and
     (.requestId | test("^[0-9a-f-]{36}$")) and
     (.includedPaths | index("profiles")) and
     (.excludedPaths | index("machines")) and

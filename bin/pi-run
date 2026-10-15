@@ -46,7 +46,7 @@ Examples:
   pi-run doctor
   pi-run upgrade
   pi-run upgrade --check
-  pi-run upgrade v0.5.21
+  pi-run upgrade v0.6.0
   pi-run snapshot
   pi-run home
 EOF
