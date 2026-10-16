@@ -41,8 +41,8 @@ for command_name in bash dirname readlink realpath tr; do
     ln -s "${command_path}" "${TMP}/minimal-bin/${command_name}"
 done
 version_output="$(PATH="${TMP}/minimal-bin" PI_RUN_HOME="${TMP}/never-created" "${PI_RUN}" version)"
-assert_contains "${version_output}" "pi-run v0.6.0"
-assert_contains "${version_output}" "runtime ghcr.io/aprilsoftware/pi-run:0.6.0"
+assert_contains "${version_output}" "pi-run v0.6.1"
+assert_contains "${version_output}" "runtime ghcr.io/aprilsoftware/pi-run:0.6.1"
 [[ ! -e "${TMP}/never-created" ]] || fail "version created Pi-Run home"
 
 if [[ -s /etc/machine-id ]]; then
@@ -62,7 +62,7 @@ output="$(PATH="${TMP}/fake-bin:${PATH}" PI_RUN_HOME="${TMP}/uninitialized" "${P
 assert_contains "${output}" "WARN  Pi-Run home is not initialized"
 assert_contains "${output}" "Doctor: PASS"
 [[ ! -e "${TMP}/uninitialized" ]] || fail "doctor initialized Pi-Run home"
-[[ "$(cat "${TMP}/image")" == "ghcr.io/aprilsoftware/pi-run:0.6.0" ]] \
+[[ "$(cat "${TMP}/image")" == "ghcr.io/aprilsoftware/pi-run:0.6.1" ]] \
     || fail "doctor inspected the wrong default image"
 
 # An initialized home and an image override pass validation.

@@ -63,24 +63,20 @@ run_client_check scp scp -F "${config}" -o "${proxy_option}" \
 run_client_check sftp sftp -F "${config}" -o "${proxy_option}" \
     -b /dev/null server.example.test
 
-if command -v ansible >/dev/null 2>&1; then
-    printf '[servers]\nserver.example.test\n' > "${TMP}/inventory"
-    capture="${TMP}/capture-ansible"
-    set +e
-    HOME="${RUNTIME_HOME}" CAPTURE="${capture}" ANSIBLE_HOST_KEY_CHECKING=True \
-        ANSIBLE_SSH_COMMON_ARGS="-o 'ProxyCommand=${PROXY} %r %h'" \
-        ansible -i "${TMP}/inventory" servers -m ping >"${TMP}/ansible.log" 2>&1
-    status=$?
-    set -e
-    (( status != 0 )) || fail "Ansible unexpectedly connected through the failing proxy"
-    [[ -f "${capture}" ]] || fail "Ansible did not invoke OpenSSH for the inventory hostname"
-    mapfile -t proxy_args < "${capture}"
-    [[ "${proxy_args[*]}" == "deploy server.example.test" ]] \
-        || fail "Ansible did not use the inferred SSH user: ${proxy_args[*]}"
-    echo "Ansible OpenSSH configuration check passed"
-else
-    echo "Ansible OpenSSH configuration check skipped: ansible is unavailable"
-fi
+printf '[servers]\nserver.example.test\n' > "${TMP}/inventory"
+capture="${TMP}/capture-ansible"
+set +e
+HOME="${RUNTIME_HOME}" CAPTURE="${capture}" ANSIBLE_HOST_KEY_CHECKING=True \
+    ANSIBLE_SSH_COMMON_ARGS="-F '${config}' -o 'ProxyCommand=${PROXY} %r %h'" \
+    ansible -i "${TMP}/inventory" servers -m ping >"${TMP}/ansible.log" 2>&1
+status=$?
+set -e
+(( status != 0 )) || fail "Ansible unexpectedly connected through the failing proxy"
+[[ -f "${capture}" ]] || fail "Ansible did not invoke OpenSSH for the inventory hostname"
+mapfile -t proxy_args < "${capture}"
+[[ "${proxy_args[*]}" == "deploy server.example.test" ]] \
+    || fail "Ansible did not use the inferred SSH user: ${proxy_args[*]}"
+echo "Ansible OpenSSH configuration check passed"
 
 after="$(find "${SSH_DIR}" -type f -printf '%P ' -exec sha256sum {} \; | sort)"
 [[ "${before}" == "${after}" ]] || fail "integration checks modified stored credentials"

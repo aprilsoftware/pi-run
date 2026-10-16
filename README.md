@@ -36,13 +36,15 @@ profiles stay outside the container, but everything in the selected profile is
 available to the run. Credentials stored in the workspace or optional shared
 mount, and access offered by reachable services, are outside this boundary.
 
-Guardian adds another layer without requiring a human click for every covered
+Guardian adds another layer without requiring human interaction for every covered
 command. When enabled, a separate evidence-aware Pi reviewer examines acting-agent
 `bash` and `run` calls against the current request and applicable instructions. It
-can release supported actions, ask when authorization or consequences need human
-judgment, or uphold an existing user restriction. Reviewer preferences and policy
-are profile-configurable; activation is session-scoped and every new session
-starts Off.
+releases supported actions; otherwise it permanently cancels the invocation and
+opens a dispute. The acting agent can inspect bounded file evidence and submit a
+structured position, which Guardian reassesses without granting authority or
+releasing the action. The human provides the final direction. Reviewer preferences
+and policy are profile-configurable; activation is session-scoped and every new
+session starts Off.
 
 Guardian is not a sandbox or an infallible security decision-maker. The temporary
 container narrows filesystem exposure, but selected mounts remain writable and
@@ -131,7 +133,12 @@ run and explains writable resources before you begin.
 
 ## Design background
 
-These essays describe the ideas that motivated Pi-Run:
+Start with
+[Beyond Permission Prompts: Building a Workstation for AI Agents](https://medium.com/@cedric.nanni/pi-run-building-a-durable-workstation-for-ai-agents-bc47c42105eb),
+which brings the ideas together in Pi-Run: short prediction horizons, explicit
+authority, portable knowledge, command review, and layered recovery.
+
+These earlier essays develop the ideas that led to it:
 
 - [AI Coding in YOLO Mode](https://medium.com/@cedric.nanni/ai-coding-in-yolo-mode-0765d9dd0d54)
   — move human gates from routine commands to consequential development

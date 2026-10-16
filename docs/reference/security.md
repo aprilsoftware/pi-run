@@ -154,7 +154,9 @@ isolation:
 
 - instructions describe authorization and workflow;
 - Planning changes the objective while leaving tools selected;
-- Guardian gates only acting-agent `bash` and `run` calls when enabled;
+- Guardian normally gates acting-agent `bash` and `run` calls; an open dispute
+  withholds every acting-agent tool except bounded native reads and its structured
+  justification handoff;
 - project trust controls supported project resources rather than tool access;
 - transcripts and Guardian logs are bounded records, not tamper-proof audits;
 - tool success is not independent verification of filesystem or remote effects.

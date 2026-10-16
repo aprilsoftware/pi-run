@@ -1,6 +1,6 @@
 # Guardian behavior reference
 
-This reference records Guardian preference, reviewer, evidence, confirmation,
+This reference records Guardian preference, reviewer, evidence, dispute,
 and retained-log behavior. For normal setup and decisions, start with the
 [Guardian task guide](../guardian.md).
 
@@ -68,22 +68,30 @@ Guardian owns a muted row below Pi's editor, for example:
 guard · reviewing · 4s                       reviewer-model · high
 ```
 
-The left side reports Off, On, Reviewing, Needs approval, Paused, or a temporary
-interruption state. The right side reports reviewer model and effective thinking,
-or that the reviewer is unavailable. Elapsed time appears only during active
-review; completed durations remain in retained logs.
+The left side reports Off, On, Reviewing, Dispute, or a temporary interruption
+state. The right side reports reviewer model and effective thinking, or that the
+reviewer is unavailable. Elapsed time appears only during active review;
+completed durations remain in retained logs.
 
-Needs approval means a confirmation dialog is pending. After an allowed,
-withheld, or approved invocation, the row returns to On. Declining or dismissing
-a confirmation leaves covered commands Paused until later user input reopens
-normal review.
+Dispute reports `investigating` while the acting agent may make bounded native
+file reads, `assessing` during automatic justification review, or `awaiting you`
+after assessment, settlement, or read-budget exhaustion. A genuine user message
+or `/guardian-resume` returns the row to On; neither event grants authority merely
+by clearing the latch.
 
 ## Review scope and evidence
 
-Only acting-agent calls whose tool name is exactly `bash` or `run` are guarded.
-Aliases, shell-looking arguments to another tool, and host-terminal commands do
-not extend coverage. When mode is Off, those calls skip assessment, but the
-agent's instructions and authorization obligations still apply.
+During normal operation, only acting-agent calls whose tool name is exactly
+`bash` or `run` are reviewed. Aliases, shell-looking arguments to another tool,
+and host-terminal commands do not extend normal coverage. When mode is Off,
+those calls skip assessment, but the agent's instructions and authorization
+obligations still apply.
+
+An open dispute is a separate stop state. It permits at most six direct native
+`read` calls during the same agent run and withholds every other acting-agent
+tool, including normally uncovered tools, except Guardian's model-only
+`guardian_justify` handoff. After justification or settlement, every tool is
+blocked until human feedback clears the dispute.
 
 A review considers the proposed invocation, working directory, current user
 request, relevant conversation history, profile policy, and applicable
@@ -100,33 +108,56 @@ Evidence tools do not execute the proposed action. A path mentioned by a command
 is not proof that the reviewer inspected it, and available evidence does not
 guarantee correct interpretation.
 
-## Review outcomes and confirmation lifecycle
+## Review outcomes and dispute lifecycle
 
-A valid decision can allow the invocation, request one-time confirmation, or
-withhold it because of an existing restriction. Guardian does not ask the user
-to approve against an explicit applicable restriction.
+A valid decision either allows the invocation or withholds it. `ASK` and
+`USER_REFUSED` both open a human-arbitrated dispute; the latter records that an
+applicable user restriction already exists. Guardian never releases either case
+through a confirmation dialog.
 
-Long actions require opening the complete action before a Run once choice is
-offered. Confirmation applies to the displayed invocation only. Conversation,
-settings, branch, action, or proposal changes can invalidate a pending review or
-dialog and never release the old invocation automatically.
+The blocked invocation is permanently cancelled. Guardian records and displays
+its reason independently, cancels sibling command reviews, and enters the
+`investigating` phase. The acting agent can use only the bounded native read
+allowance to check file evidence. It then calls `guardian_justify` with a
+`retract`, `narrow`, or `contest` position, a bounded explanation, and up to eight
+bounded evidence references. Tool variants, edits, writes, commands, nested
+tools, and unknown tools cannot route around the latch.
 
-A declined or dismissed dialog withholds that call, aborts other in-flight
-covered review work, and pauses later `bash`/`run` calls in the same run. The
-acting agent can still respond with text, and uncovered tools remain outside the
-gate. Turning Guardian Off does not replay the cancelled invocation.
+The justification tool is active only while that submission is pending. After
+submission it is removed, status changes to `assessing`, and Guardian starts a
+fresh bounded reviewer pass over the original blocked action, current authority,
+its original concern, and the structured position. The agent's explanation and
+references remain untrusted claims. The same source validation, evidence limits,
+time limits, and fail-closed transport behavior apply to this pass.
 
-A later genuine user message clears the runtime pause for new review. No special
-phrase or new session is required. Earlier restrictions still apply unless the
-user actually changes them, and the cancelled invocation remains cancelled.
+The assessment classifies the position as **Concern resolved** (`ALLOW`),
+**Concern remains** (`ASK`), **User restriction remains** (`USER_REFUSED`), or
+**Assessment unavailable**. These labels are advisory: none releases or replays
+the action. The custom transcript rendering shows the original concern, agent
+position, assessment, and reason. Its result uses Pi's terminate signal so the
+acting agent cannot automatically continue after submission.
+
+After assessment—or when an agent turn settles without a submission—the dispute
+changes to `awaiting-user`. The active branch stores
+the open or resolved dispute and any submitted position as private extension
+state, excluded from model context. A completed or unavailable assessment is
+stored with the position; a cancelled or late assessment cannot be attached
+after human feedback resolves the dispute. Resume and branch navigation
+reconstruct that branch's state; Guardian mode itself remains session-wide.
+
+A later genuine user message resolves the latch before starting a fresh turn.
+`/guardian-resume` also resolves it, but deliberately contributes no authority
+and triggers no model turn. Earlier restrictions still apply unless the user
+actually changes them. Turning Guardian Off resolves the latch and disables
+future review, but never replays the cancelled invocation.
 
 ## Unavailable and interrupted review
 
 Missing provider access, timeout, invalid reviewer output, missing instructions,
-or another reviewer failure produces no AI decision. With interactive
-confirmation, Guardian asks “Run once without review?” and records any approval
-as a human bypass of incomplete review. Without confirmation UI, the action is
-withheld.
+or another reviewer failure produces no AI decision. During initial review,
+Guardian withholds the action and opens a dispute regardless of UI mode. During
+justification assessment, it records **Assessment unavailable** and still waits
+for the human. It never offers a bypass that releases an unreviewed invocation.
 
 Cancellation caused by session, branch, settings, or action changes does not
 become approval. Use status and logs to identify the interruption before
@@ -166,21 +197,21 @@ Guardian was Off and raw diagnostic-only records do not appear as reviews.
 | Escape | Return from details or close the list |
 | `Q` or Ctrl+C | Close the browser, not the acting agent |
 
-Summary separates review outcome and basis, human confirmation, Guardian release
-or withholding, and execution result. Command and evidence are bounded,
-best-effort-redacted previews; they may omit fields, suffixes, output, or
-original messages. Timeline records meaningful model, evidence, decision,
-confirmation, release, and result events.
+Summary separates review outcome and basis, Guardian release or withholding,
+and execution result. Historical traces can still show confirmation fields from
+older Guardian versions. Command and evidence are bounded, best-effort-redacted
+previews; they may omit fields, suffixes, output, or original messages. Timeline
+records meaningful model, evidence, decision, dispute, release, and result events.
 
-The browser cannot run or approve commands, change mode, fetch missing
-conversation content, or reconstruct data no longer retained. It requires Pi's
-terminal UI. An execution confirmation takes priority and closes or prevents the
-log browser.
+The browser cannot run or approve commands, change mode, resolve a dispute, fetch
+missing conversation content, or reconstruct data no longer retained. It
+requires Pi's terminal UI. Opening a dispute closes the log browser so its reason
+is not obscured.
 
 Logs use `guardian/guardian.log` plus two rotated backups, `.1` and `.2`, at
 about 1 MiB each. Rotation, partial writes, process interruption, display limits,
 missing tool results, and logging failures can create gaps. Logging failure does
-not alter a review decision or confirmation choice.
+not alter a review decision or dispute state.
 
 Treat logs as private. They can contain commands, paths, selected conversation
 text, evidence excerpts, model details, and errors. Redaction is best effort,

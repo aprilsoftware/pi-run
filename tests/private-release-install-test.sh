@@ -17,11 +17,11 @@ cat > "${TMP}/release/metadata.json" <<'EOF'
 {
   "assets": [
     {
-      "name": "pi-run-0.6.0.tar.gz",
+      "name": "pi-run-0.6.1.tar.gz",
       "url": "https://api.github.test/releases/assets/1"
     },
     {
-      "name": "pi-run-0.6.0.tar.gz.sha256",
+      "name": "pi-run-0.6.1.tar.gz.sha256",
       "url": "https://api.github.test/releases/assets/2"
     }
   ]
@@ -55,21 +55,21 @@ done
 [ -n "$destination" ] && [ -n "$url" ] && [ "$authorized" = true ] || exit 2
 printf '%s\n' "$url" >> "${CURL_LOG:?}"
 case "$url" in
-    https://api.github.com/repos/aprilsoftware/pi-run/releases/tags/v0.6.0)
+    https://api.github.com/repos/aprilsoftware/pi-run/releases/tags/v0.6.1)
         cp "${FIXTURE_RELEASE:?}/metadata.json" "$destination"
         ;;
     https://api.github.test/releases/assets/1)
-        cp "${FIXTURE_RELEASE:?}/pi-run-0.6.0.tar.gz" "$destination"
+        cp "${FIXTURE_RELEASE:?}/pi-run-0.6.1.tar.gz" "$destination"
         ;;
     https://api.github.test/releases/assets/2)
-        cp "${FIXTURE_RELEASE:?}/pi-run-0.6.0.tar.gz.sha256" "$destination"
+        cp "${FIXTURE_RELEASE:?}/pi-run-0.6.1.tar.gz.sha256" "$destination"
         ;;
     *) exit 3 ;;
 esac
 EOF
 cat > "${TMP}/fake-bin/docker" <<'EOF'
 #!/bin/sh
-[ "$1" = pull ] && [ "$2" = ghcr.io/aprilsoftware/pi-run:0.6.0 ]
+[ "$1" = pull ] && [ "$2" = ghcr.io/aprilsoftware/pi-run:0.6.1 ]
 EOF
 chmod 0755 "${TMP}/fake-bin/curl" "${TMP}/fake-bin/docker"
 
@@ -93,9 +93,9 @@ for component in doctor.sh upgrade.sh; do
        ! -L "${TMP}/application/current/lib/pi-run/${component}" ]] \
         || fail "private install did not activate component: ${component}"
 done
-[[ "$(cat "${TMP}/application/current/VERSION")" == 0.6.0 ]] \
+[[ "$(cat "${TMP}/application/current/VERSION")" == 0.6.1 ]] \
     || fail "private install selected the wrong release"
-grep -Fx 'https://api.github.com/repos/aprilsoftware/pi-run/releases/tags/v0.6.0' \
+grep -Fx 'https://api.github.com/repos/aprilsoftware/pi-run/releases/tags/v0.6.1' \
     "${TMP}/curl.log" >/dev/null
 grep -Fx 'https://api.github.test/releases/assets/1' "${TMP}/curl.log" >/dev/null
 grep -Fx 'https://api.github.test/releases/assets/2' "${TMP}/curl.log" >/dev/null

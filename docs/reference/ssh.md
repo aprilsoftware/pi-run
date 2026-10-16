@@ -95,9 +95,8 @@ inferred user and must identify the intended account.
 Ordinary `ssh`, `scp`, and `sftp` use the generated configuration. Git SSH
 remotes also use it unless their URL supplies a different user.
 
-Ansible is not installed in the runtime image. When an environment supplies it
-separately and uses the OpenSSH connection plugin, an inventory can use only the
-configured hostname:
+Ansible is installed in the runtime image and uses its OpenSSH connection plugin
+by default. An inventory can use only the configured hostname:
 
 ```ini
 [servers]

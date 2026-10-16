@@ -83,8 +83,9 @@ access. See [Pi's security guidance](https://pi.dev/docs/latest/security/).
 - Instructions define expected authorization and workflow; they do not reduce
   operating-system access.
 - Planning changes the objective, not tool permissions, and is not read-only.
-- Guardian reviews only acting-agent calls named `bash` and `run` when enabled;
-  it is not a sandbox.
+- Guardian normally reviews acting-agent calls named `bash` and `run`; while a
+  dispute is open, it withholds every acting-agent tool except bounded native
+  reads and its structured justification handoff. It is not a sandbox.
 - Project trust does not constrain tool access after startup.
 - A visible or successful command result is not independent verification.
 - Available credentials, clients, skills, and network paths are not permission to

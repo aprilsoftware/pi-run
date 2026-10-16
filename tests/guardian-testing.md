@@ -28,26 +28,30 @@ From the host, launch this checkout with the test extension explicitly selected:
 ```
 
 Alternatively, inside the container: `pi --extension /workspace/tests/guardian-flow.ts`.
-No model request is needed: enter commands directly while Pi is idle.
-Dialogs are labelled **TEST ONLY**. Even choosing Yes cannot execute anything.
-Each command reports PASS or FAIL and removes its temporary state.
+No model request is needed: enter commands directly while Pi is idle. No
+confirmation dialog appears and no synthetic invocation can execute. Each command
+reports PASS or FAIL and removes its temporary state.
 
-| Command | Your action / expected result |
+| Command | Expected result |
 |---|---|
-| `/guardian-test allow` | No dialog; release decision |
-| `/guardian-test approve` | Choose Yes; release once |
-| `/guardian-test refuse` | Choose No; withhold and pause further commands |
-| `/guardian-test dismiss` | Escape; withhold and pause further commands |
-| `/guardian-test reopen` | Choose No; simulate fresh user input and review a new invocation, never replay the old one |
-| `/guardian-test user-refused` | Existing user restriction; withhold without a dialog |
-| `/guardian-test unavailable` | Explicit run-without-review dialog; choose Yes |
-| `/guardian-test no-ui` | Simulated missing UI; withhold without a dialog |
+| `/guardian-test allow` | Release decision; no dispute |
+| `/guardian-test ask` | Submit a contest, assess the concern as resolved, but still require human arbitration |
+| `/guardian-test user-refused` | Assess that an existing user restriction remains |
+| `/guardian-test unavailable` | Keep the invocation withheld when both initial review and assessment are unavailable |
+| `/guardian-test no-ui` | Assess that the concern remains without confirmation UI |
+| `/guardian-test fallback` | Omit justification, exhaust reads, and settle without an assessment call |
+| `/guardian-test cancel-assessment` | Simulate user feedback during assessment and reject the late result |
 
-Automated approval tests additionally check that a second forced ASK needs its own
-confirmation. Decline tests check that extension-generated input cannot clear the
-pause and that the acting agent is not aborted. Logs must not invent execution
-results. A wrong manual choice reports FAIL; rerun with the instructed choice.
-Manual display/keyboard checks are separate from automated flow assertions.
+Automated tests check the six-read allowance, effectful and unknown tool blocking,
+active-branch persistence, extension input isolation, `awaiting you` status,
+`/guardian-resume` without authorization, genuine user reopening, and fresh review.
+They also validate the bounded justification schema, dispute-only tool activation,
+automatic resolved/remaining/restricted/unavailable assessments, persisted panel
+data, terminate signal, and removal on every resolution path. Cancellation tests
+ensure that user feedback invalidates the assessment and no late result is
+persisted. The acting agent is not aborted, and logs must not invent execution
+results or confirmation events. Manual display checks are separate from automated
+assertions.
 
 ## Reviewer protocol robustness
 
@@ -63,15 +67,20 @@ Temporary evidence files and workspaces are removed afterward.
 
 ## Model-judgment regression tests
 
-`guardian-model-cases.json` defines 21 synthetic cases. The original operational
-cases cover local diagnosis, authorized and unauthorized restarts, unknown targets,
-current refusal, later authorization, unrelated newer messages, conditional
-prohibitions, and scope without sequencing. Development cases cover investigation,
-implementation approval, covered validation, dependency expansion, and the meaning
-of “continue” after completion. Retained-review scenarios cover bounded inventory,
-log analysis, offline versus prohibited live validation, truncated authorization,
-and later restrictions. Expectations are defined before review; the runner checks
-completed outcomes, not exact wording or proof of semantic safety.
+`guardian-model-cases.json` defines 21 synthetic action-review cases. The original
+operational cases cover local diagnosis, authorized and unauthorized restarts,
+unknown targets, current refusal, later authorization, unrelated newer messages,
+conditional prohibitions, and scope without sequencing. Development cases cover
+investigation, implementation approval, covered validation, dependency expansion,
+and the meaning of “continue” after completion. Retained-review scenarios cover
+bounded inventory, log analysis, offline versus prohibited live validation,
+truncated authorization, and later restrictions.
+
+`guardian-dispute-cases.json` adds four structured-justification assessments:
+existing authority overlooked, technical necessity without authority, a current
+user restriction, and narrower claimed intent that cannot change the frozen action.
+Expectations are defined before review; the runner checks completed outcomes, not
+exact wording or proof of semantic safety.
 
 The two refusal-continuity cases both expect `USER_REFUSED`:
 
@@ -101,12 +110,21 @@ Offline fixture and request validation (Node only; no SDK discovery or credentia
 bash tests/guardian-model-test.sh
 ```
 
-Explicitly opt into one live assessment of every case using the selected profile's
-saved model, thinking level, instructions, and provider configuration:
+Explicitly opt into one live action review using the selected profile's saved
+model, thinking level, instructions, and provider configuration:
 
 ```bash
 GUARDIAN_LIVE_TESTS=1 bash tests/guardian-model-test.sh
 ```
+
+Dispute assessments use a separate opt-in and exercise the runtime's
+`ReviewRequest.dispute` shape without running the original action:
+
+```bash
+GUARDIAN_DISPUTE_LIVE_TESTS=1 bash tests/guardian-model-test.sh
+```
+
+Set both variables to run both suites.
 
 A bounded comparison can override the model, thinking level, selected cases, and
 repetition count without changing saved configuration:
@@ -120,18 +138,18 @@ GUARDIAN_TEST_REPETITIONS=3 \
 bash tests/guardian-model-test.sh
 ```
 
-Specify one to four comma-separated models, exact comma-separated case IDs, and one
-to ten repetitions. Omitted overrides use the saved model and thinking level, all
-cases, and one repetition.
+Specify one to four comma-separated models, exact comma-separated case IDs from
+the enabled suite or suites, and one to ten repetitions. Omitted overrides use the
+saved model and thinking level, all enabled cases, and one repetition.
 
 Run inside Pi-Run, or set `PI_RUN_PROFILE_DIR` and optionally `PI_PACKAGE_DIR`.
 Model and thinking preferences must be explicitly saved. Guardian mode is ignored:
-the reviewer runs directly, without changing mode or showing execution dialogs.
+the reviewer runs directly without loading the runtime execution gate.
 Live tests send synthetic requests and profile instructions to the configured
 provider and may incur charges. Authentication storage is read-only (OAuth refresh
 requiring a storage write can fail); model catalog refresh is disabled.
-Evidence roots contain only a temporary workspace with inspectable copies of
-`guardian-model-test.sh` and `guardian-model-cases.json`. No scenario command can
+Evidence roots contain only a temporary workspace with an inspectable copy of
+the runner and the fixture file for each enabled suite. No scenario command can
 execute, and no actual session history is read. The workspace is removed afterward.
 JSON lines report model, case, repetition, decisions, explanations, durations,
 request counts, evidence calls, and validation errors; no raw thinking or credentials
@@ -152,9 +170,11 @@ not proof of reliability. The runner does not modify Guardian.
 - `ALLOW`: material effects and authorization must still be established; its requirements
   are unchanged. A scope gap never becomes automatic permission.
 
-Both ASK and USER_REFUSED withhold automatic execution. Only ASK offers a confirmation;
-a genuine current prohibition is respected without asking again. The diagnosis-only and
-current-refusal fixtures keep their original expectations (`ASK` and `USER_REFUSED`).
+Both ASK and USER_REFUSED withhold automatic execution and open a dispute in the
+runtime gate. The semantic distinction remains visible to the human arbiter: ASK
+identifies missing authority or uncertainty, while USER_REFUSED identifies a current
+restriction. The diagnosis-only and current-refusal fixtures keep their original
+expectations (`ASK` and `USER_REFUSED`).
 
 ## Instruction-reference checks
 

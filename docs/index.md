@@ -28,12 +28,14 @@ optional shared mount, and access offered by reachable services, remain outside
 this profile boundary.
 
 When enabled, Guardian uses a separate evidence-aware reviewer for acting-agent
-`bash` and `run` calls. It can release supported actions without interrupting the
-user and ask when authority or consequences require human judgment. Guardian
-starts Off and is not a sandbox. The container narrows exposure, but selected
-mounts remain writable and normal sessions use host networking. Profiles,
-credentials, and external permissions bound authority; instructions, Guardian,
-and human review reduce the likelihood of harmful actions.
+`bash` and `run` calls. It releases supported actions without interruption;
+otherwise it cancels the invocation and opens a human-arbitrated dispute. The
+agent's structured position receives an advisory reassessment but cannot grant
+itself authority or release the action. Guardian starts Off and is not a sandbox.
+The container narrows exposure, but selected mounts remain writable and normal
+sessions use host networking. Profiles, credentials, and external permissions
+bound authority; instructions, Guardian, and human review reduce the likelihood
+of harmful actions.
 
 These controls assume something unexpected can still pass. Git history can
 recover committed project content, while an independent workspace backup can
@@ -88,7 +90,7 @@ guides to understand each boundary.
 
 - [Planning inside Pi](planning.md): discuss, save, inspect, export, and approve
   a plan without bypassing execution checkpoints.
-- [Guardian command review](guardian.md): configure review, handle confirmations,
+- [Guardian command review](guardian.md): configure review, arbitrate disputes,
   and inspect private diagnostics while understanding its limits.
 - [Workspaces and sessions](workspaces-and-sessions.md): identity, continuation,
   saved-session discovery, and reconnection.

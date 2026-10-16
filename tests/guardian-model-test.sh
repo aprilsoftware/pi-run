@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # SDK discovery and credentials are unnecessary for the default offline check.
-if [[ "${GUARDIAN_LIVE_TESTS:-}" == 1 ]]; then
+if [[ "${GUARDIAN_LIVE_TESTS:-}" == 1 || "${GUARDIAN_DISPUTE_LIVE_TESTS:-}" == 1 ]]; then
     export PI_PACKAGE_DIR="${PI_PACKAGE_DIR:-$(npm root -g)/@earendil-works/pi-coding-agent}"
 fi
 
@@ -15,12 +15,15 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 const root = process.argv[2];
-const cases = JSON.parse(await readFile(join(root, 'tests', 'guardian-model-cases.json'), 'utf8'));
-assert.ok(Array.isArray(cases) && cases.length === 21, 'Expected twenty-one model-judgment fixtures');
+const actionCases = JSON.parse(await readFile(join(root, 'tests', 'guardian-model-cases.json'), 'utf8'));
+const disputeCases = JSON.parse(await readFile(join(root, 'tests', 'guardian-dispute-cases.json'), 'utf8'));
+assert.ok(Array.isArray(actionCases) && actionCases.length === 21, 'Expected twenty-one action-review fixtures');
+assert.ok(Array.isArray(disputeCases) && disputeCases.length === 4, 'Expected four dispute-assessment fixtures');
+const cases=[...actionCases.map(test=>({...test,suite:'action'})),...disputeCases.map(test=>({...test,suite:'dispute'}))];
 const ids = new Set();
 for (const test of cases) {
   assert.ok(test && typeof test === 'object' && !Array.isArray(test));
-  assert.ok(Object.keys(test).every(k => ['id', 'description', 'expected', 'userMessages', 'messages', 'command', 'notes'].includes(k)));
+  assert.ok(Object.keys(test).every(k => ['id', 'description', 'expected', 'userMessages', 'messages', 'command', 'notes', 'dispute', 'suite'].includes(k)));
   assert.match(test.id, /^[a-z]+(?:-[a-z]+)*$/);
   assert.ok(!ids.has(test.id), `Duplicate fixture: ${test.id}`); ids.add(test.id);
   assert.ok(['ALLOW', 'ASK', 'USER_REFUSED'].includes(test.expected));
@@ -35,8 +38,22 @@ for (const test of cases) {
     ['user', 'assistant'].includes(message.role) && typeof message.text === 'string' &&
     message.text.trim() && message.text.length <= 8192));
   assert.ok(test.notes === undefined || (typeof test.notes === 'string' && test.notes.length <= 4096));
+  assert.equal(test.suite==='dispute',test.dispute!==undefined,`${test.id}: dispute data must match its suite`);
+  if(test.dispute!==undefined){
+    assert.ok(test.dispute&&typeof test.dispute==='object'&&!Array.isArray(test.dispute));
+    assert.ok(Object.keys(test.dispute).every(k=>['guardianReason','originalOutcome','justification'].includes(k)));
+    assert.ok(typeof test.dispute.guardianReason==='string'&&test.dispute.guardianReason.trim()&&test.dispute.guardianReason.length<=4096);
+    assert.ok(['ASK','USER_REFUSED'].includes(test.dispute.originalOutcome));
+    const justification=test.dispute.justification;
+    assert.ok(justification&&typeof justification==='object'&&!Array.isArray(justification));
+    assert.ok(Object.keys(justification).every(k=>['position','explanation','evidence'].includes(k)));
+    assert.ok(['retract','narrow','contest'].includes(justification.position));
+    assert.ok(typeof justification.explanation==='string'&&justification.explanation.trim()&&justification.explanation.length<=4000);
+    assert.ok(justification.evidence===undefined||(Array.isArray(justification.evidence)&&justification.evidence.length<=8&&
+      justification.evidence.every(value=>typeof value==='string'&&value.trim()&&value.length<=500)));
+  }
 }
-console.log('PASS guardian-model: twenty-one fixture definitions');
+console.log('PASS guardian-model: twenty-one action and four dispute fixture definitions');
 function fixtureConversation(test) {
   const messages = test.messages ?? test.userMessages.map(text => ({ role: 'user', text }));
   let users = 0, assistants = 0;
@@ -47,6 +64,7 @@ function fixtureConversation(test) {
 function makeRequest(test, { workspace, profile, instructions }) {
   return {
     action: { toolName: 'bash', toolCallId: 'synthetic-neutral-action', input: { command: test.command, timeout: 30 }, cwd: workspace },
+    ...(test.dispute?{dispute:structuredClone(test.dispute)}:{}),
     instructions: structuredClone(instructions), priorEffects: [],
     conversation: fixtureConversation(test),
     toolDescription: 'Execute a bash command in the current working directory; optionally specify a timeout in seconds.',
@@ -62,19 +80,24 @@ for (const test of cases) {
   assert.deepEqual(request.action.input, { command: test.command, timeout: 30 });
   assert.deepEqual(request.conversation, fixtureConversation(test));
   assert.ok(![request.action.toolCallId, ...request.conversation.map(row => row.id)].some(id => id.includes(test.id)));
+  assert.ok(!JSON.stringify(request).includes(test.id),`${test.id}: scenario identifier leaked into the model request`);
   assert.equal(Object.hasOwn(request, 'expected'), false);
   assert.equal(Object.hasOwn(request, 'description'), false);
   assert.equal(Object.hasOwn(request, 'case'), false);
+  assert.equal(Object.hasOwn(request, 'suite'), false);
+  if(test.dispute)assert.deepEqual(request.action.input,{command:test.command,timeout:30},`${test.id}: justification must not mutate the frozen action`);
 }
-console.log('PASS guardian-model: neutral source/action IDs; commands, messages, roles, and ordering preserved');
-if (process.env.GUARDIAN_LIVE_TESTS !== '1') {
-  console.log('SKIP live reviews: explicitly set GUARDIAN_LIVE_TESTS=1 to call the configured provider');
+console.log('PASS guardian-model: neutral source/action IDs; commands, messages, roles, ordering, and frozen actions preserved');
+const runAction=process.env.GUARDIAN_LIVE_TESTS==='1',runDispute=process.env.GUARDIAN_DISPUTE_LIVE_TESTS==='1';
+if (!runAction&&!runDispute) {
+  console.log('SKIP live reviews: explicitly enable action or dispute live tests to call the configured provider');
   process.exit(0);
 }
+const eligibleCases=cases.filter(test=>(test.suite==='action'&&runAction)||(test.suite==='dispute'&&runDispute));
 const requestedCaseIds = (process.env.GUARDIAN_TEST_CASES || '').split(',').map(value => value.trim()).filter(Boolean);
 assert.equal(new Set(requestedCaseIds).size, requestedCaseIds.length, 'Duplicate requested case');
-const selectedCases = requestedCaseIds.length ? cases.filter(test => requestedCaseIds.includes(test.id)) : cases;
-assert.equal(selectedCases.length, requestedCaseIds.length || cases.length, 'Requested model case is unavailable');
+const selectedCases = requestedCaseIds.length ? eligibleCases.filter(test => requestedCaseIds.includes(test.id)) : eligibleCases;
+assert.equal(selectedCases.length, requestedCaseIds.length || eligibleCases.length, 'Requested model case is unavailable in the enabled suite');
 const repetitions = Number(process.env.GUARDIAN_TEST_REPETITIONS || 1);
 assert.ok(Number.isSafeInteger(repetitions) && repetitions >= 1 && repetitions <= 10, 'Repetitions must be an integer from 1 to 10');
 const runs = Array.from({ length: repetitions }, (_, index) =>
@@ -90,7 +113,8 @@ alias['@earendil-works/pi-ai'] = join(piDir, 'node_modules', '@earendil-works', 
 const g = await createJiti(import.meta.url, { alias, fsCache: false }).import(join(root, 'docker', 'extensions', 'guardian-agent.ts'));
 const safe = value => g.parseGuardianLogChunks([{ name: 'memory', text: JSON.stringify({ event: 'model_test', details: value }) + '\n' }]).entries[0].details;
 const sdkImport = path => import(pathToFileURL(join(piDir, 'dist', path)).href);
-const { ModelRuntime, ModelRegistry } = await sdkImport('index.js');
+const { ModelRuntime } = await sdkImport('core/model-runtime.js');
+const { ModelRegistry } = await sdkImport('core/model-registry.js');
 const { ReadOnlyAuthStorage } = await sdkImport('core/auth-storage.js');
 const { InMemoryCodingAgentModelsStore } = await sdkImport('core/models-store.js');
 const profile = resolve(process.env.PI_RUN_PROFILE_DIR || '/profile');
@@ -118,12 +142,12 @@ const selected = requestedModels.map(name => {
   return { name, model };
 });
 console.log(JSON.stringify(safe({ event: 'suite_started', models: requestedModels, thinking: requestedThinking,
-  cases: selectedCases.map(test => test.id), repetitions, reviewsPerModel: runs.length,
+  suites:[...(runAction?['action']:[]),...(runDispute?['dispute']:[])],cases: selectedCases.map(test => test.id), repetitions, reviewsPerModel: runs.length,
   commandExecution: false, credentials: 'read-only', catalogNetwork: false, modeIgnored: true })));
 const workspace = await mkdtemp(join(tmpdir(), 'guardian-model-'));
 await mkdir(join(workspace, 'tests'));
-await Promise.all(['guardian-model-test.sh', 'guardian-model-cases.json'].map(name =>
-  copyFile(join(root, 'tests', name), join(workspace, 'tests', name))));
+const fixtureFiles=['guardian-model-test.sh',...(runAction?['guardian-model-cases.json']:[]),...(runDispute?['guardian-dispute-cases.json']:[])];
+await Promise.all(fixtureFiles.map(name => copyFile(join(root, 'tests', name), join(workspace, 'tests', name))));
 const results = [];
 try {
   for (const { name: modelName, model } of selected) {

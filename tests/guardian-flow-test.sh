@@ -38,23 +38,21 @@ assert.equal(loaded.extensions[0].tools.size, 0, 'Test extension must register n
 assert.equal(loaded.extensions[0].handlers.size, 0, 'Test extension must register no live event hooks');
 console.log('PASS guardian-flow: Pi extension loading (command only)');
 const command = loaded.extensions[0].commands.get('guardian-test');
-for (const [name, answer] of [['approve', true], ['refuse', false], ['dismiss', false], ['reopen', false], ['unavailable', true]]) {
-  const notices = [], titles = [];
+for (const name of ['allow', 'ask', 'user-refused', 'unavailable', 'no-ui']) {
+  const notices = [];
   const ctx = { hasUI: true, isIdle: () => true, ui: {
     notify: (message, kind) => notices.push({ message, kind }),
-    confirm: async title => { titles.push(title); return answer; },
+    confirm: async () => { throw new Error('Dispute flow must not request confirmation'); },
   } };
   await command.handler(name, ctx);
   assert.ok(notices.some(n => n.message.startsWith(`PASS guardian-flow: ${name}.`)), JSON.stringify(notices));
-  assert.equal(titles.length, 1);
-  assert.ok(titles[0].startsWith('TEST ONLY · Guardian'));
 }
-console.log('PASS guardian-flow: interactive command wiring (scripted UI, not manual display)');
+console.log('PASS guardian-flow: interactive dispute wiring (scripted UI, no confirmation)');
 const failures = [];
-await command.handler('approve', { hasUI: true, isIdle: () => true, ui: {
-  notify: (message, kind) => { if (kind === 'error') failures.push(message); }, confirm: async () => false,
+await command.handler('unknown', { hasUI: true, isIdle: () => true, ui: {
+  notify: (message, kind) => { if (kind === 'error') failures.push(message); },
 } });
-assert.ok(failures.some(message => message.startsWith('FAIL guardian-flow: approve:')), 'Wrong manual choice must fail, not silently pass');
+assert.equal(failures.length, 0, 'Usage errors must not run a scenario');
 assert.equal(process.env.PI_RUN_PROFILE_DIR, profileDir, 'Active profile environment must be restored');
 assert.deepEqual((await readdir(tmpdir())).filter(name => name.startsWith('guardian-flow-')), [], 'All temporary fixture state must be removed');
 NODE
