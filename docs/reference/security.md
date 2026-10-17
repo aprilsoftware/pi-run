@@ -53,9 +53,10 @@ to the invoking host UID/GID, updates its container home when needed, configures
 profile SSH credentials, and executes Pi through `gosu node`.
 
 This limits runtime privilege but does not make writable mounts disposable. The
-container shares the host kernel and normal sessions share host networking, so
-it is neither a virtual machine nor protection against every kernel or container
-runtime vulnerability.
+container shares the host kernel, and the default backend shares host networking,
+so it is neither a virtual machine nor protection against every kernel or
+container runtime vulnerability. Alternate network backends narrow routes, not
+the shared-kernel or writable-mount boundary.
 
 The host user must have Docker-daemon access to launch Pi-Run. That access is
 itself highly privileged. Pi-Run deliberately withholds the Docker socket from

@@ -123,8 +123,8 @@ sh ./install.sh
 The downloaded installer is bound to its release version. It downloads the
 matching archive and checksum, verifies the archive, pulls the matching runtime
 and egress images, and activates the application only after both pulls succeed.
-The egress image is installed ahead of the restricted backend becoming a normal
-launcher option.
+The egress image supports the experimental `docker-restricted` launcher backend;
+the default remains `docker-host`.
 
 A checksum detects an archive mismatch; it is not a signature or independent
 verification of the installer you chose to run. Obtain the installer from a

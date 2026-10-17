@@ -31,20 +31,60 @@ workspace mappings, snapshot repositories and recovery secrets, or the Docker
 socket. Technical mounts and operation-specific management containers are
 listed in the [security reference](reference/security.md#normal-session-mounts).
 
-## Account for host networking
+## Choose session networking
 
-Normal sessions use host networking. From Pi-Run, `localhost` can reach services
-on the Docker host, and LAN, internet, cloud, cluster, or database endpoints may
-also be reachable.
+Pi-Run has three per-invocation network backends:
 
-Filesystem exposure can therefore be narrow while network authority is broad.
-A credential can turn a reachable endpoint into real access. Do not assume a
-service is disposable because it is called local, dev, or runs in a container.
-Name the actual host, account, cluster, namespace, database, operation, and
-intended effect for administrative work.
+| Backend | Session-container network |
+| --- | --- |
+| `docker-host` | Default host networking, including Docker-host loopback and surrounding routes |
+| `docker-offline` | Docker `--network none`; loopback remains but there is no external interface |
+| `docker-restricted` | Experimental default-deny sidecar allowing exact HTTPS hostnames on port 443 |
 
-Pi-Run does not provide a per-session network allowlist. Enforce stronger
-network separation outside Pi-Run when a task requires it.
+Select a non-default backend before the workspace or `resume` command:
+
+```bash
+pi-run --network docker-offline .
+pi-run --network docker-restricted --allow-host example.com .
+pi-run --network docker-restricted \
+  --allow-host api.example.com \
+  --allow-host packages.example.net \
+  .
+```
+
+Restricted mode accepts repeated exact lowercase DNS hostnames—not URLs, paths,
+ports, wildcards, IP literals, or single-label names. Clients that honor
+`HTTPS_PROXY` can use CONNECT through the sidecar. Direct IP, alternate DNS,
+private-address, IPv6, and arbitrary TCP bypasses are default-denied. Pi-Run
+does not inspect TLS, HTTP methods, or paths, and an allowed HTTPS endpoint can
+receive arbitrary uploaded data.
+
+Provider login, model APIs, package managers, source hosts, CDNs, and web tools
+may each require several changing hostnames. Restricted mode fails closed rather
+than silently restoring host networking, so incomplete lists cause operations to
+fail. It is experimental and is not a compatibility promise for every tool or
+provider.
+
+The backend and hostname list apply only to that invocation and any
+snapshot-triggered Pi restart. They are not saved in the profile or session. A
+later launch or resume returns to `docker-host` unless another backend is
+selected explicitly. The launcher reports the effective backend and, for
+restricted mode, every allowed `hostname:443`; stop if they differ from your
+intent.
+
+These modes constrain Pi session containers, not every host-managed operation.
+Snapshot and SSH management may use their separately documented network modes.
+Offline and restricted modes also do not make mounts read-only, hide credentials
+inside the selected profile, revoke remote authority, or turn the shared-kernel
+container into a sandbox or VM.
+
+With the default backend, `localhost` can reach services on the Docker host, and
+LAN, internet, cloud, cluster, or database endpoints may also be reachable.
+Filesystem exposure can therefore be narrow while network authority is broad. A
+credential can turn a reachable or allowed endpoint into real access. Do not
+assume a service is disposable because it is called local, dev, or runs in a
+container. Name the actual host, account, cluster, namespace, database,
+operation, and intended effect for administrative work.
 
 ## Treat mounted data as exposed
 
@@ -101,13 +141,15 @@ human review as control layers while keeping technical exposure small.
    workspace mode.
 2. **Use a purpose-specific profile.** Keep unrelated provider accounts, remote
    credentials, sessions, and private skills elsewhere.
-3. **Disable optional resources.** Turn off shared access and filter global
+3. **Choose session networking.** Use offline mode when no remote access is
+   needed, or an exact-host restricted list when its compatibility limits fit.
+4. **Disable optional resources.** Turn off shared access and filter global
    skills. Restart after changing exposure.
-4. **Review the runtime and project.** Use a trusted image and inspect unfamiliar
+5. **Review the runtime and project.** Use trusted images and inspect unfamiliar
    instructions, extensions, and skill packages.
-5. **State operational boundaries.** Name targets, effects, sequencing, and
+6. **State operational boundaries.** Name targets, effects, sequencing, and
    prohibitions. Reachability and credentials do not grant blanket authority.
-6. **Prepare recovery.** Commit or back up workspace source and use
+7. **Prepare recovery.** Commit or back up workspace source and use
    [encrypted snapshots](snapshots.md) for portable Pi-Run state.
 
 Useful host-side checks are:

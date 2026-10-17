@@ -48,10 +48,12 @@ session starts Off.
 
 Guardian is not a sandbox or an infallible security decision-maker. The temporary
 container narrows filesystem exposure, but selected mounts remain writable and
-normal sessions use host networking. Profiles, credentials, Unix permissions,
-RBAC, database roles, and network controls bound authority; instructions,
-Guardian, protected workflows, and human review reduce the likelihood of a
-harmful action.
+the default network backend uses host networking. Explicit offline and
+experimental exact-host HTTPS modes can narrow session networking; they do not
+hide mounted credentials or make writes disposable. Profiles, credentials, Unix
+permissions, RBAC, database roles, and network controls bound authority;
+instructions, Guardian, protected workflows, and human review reduce the
+likelihood of a harmful action.
 
 Pi-Run also assumes those controls can miss something. Git status and diffs make
 repository changes visible, while committed history or an independent workspace
@@ -63,7 +65,8 @@ resources, and other infrastructure need their own recovery mechanisms.
 ## What Pi-Run provides
 
 - **Ready-to-use environment:** Pi, language toolchains, diagnostics, service
-  clients, web access, and baseline extensions come in one matching image.
+  clients, web access, and baseline extensions come in one matching runtime
+  image.
 - **Purpose-specific exposure:** only the selected profile is mounted, providing
   its instructions, provider access, credentials, settings, skills, Guardian
   policy, and conversations while leaving other profiles out of view.
@@ -77,6 +80,8 @@ resources, and other infrastructure need their own recovery mechanisms.
 - **Encrypted state recovery:** manual or optional successful-exit snapshots
   protect portable Pi-Run state and support guarded restore. They complement Git,
   workspace backups, and infrastructure recovery rather than replacing them.
+- **Selectable session networking:** retain default host networking, choose an
+  explicit offline container, or experiment with an exact-host HTTPS allowlist.
 - **Understandable boundaries:** the workspace and profile are writable, but the
   host home, other profiles, and Docker socket are not mounted into a normal
   session.

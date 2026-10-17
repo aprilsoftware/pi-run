@@ -40,9 +40,10 @@ The initial profile is `default`. Purpose-specific profiles help keep unrelated
 accounts, sessions, and instructions out of a run.
 
 The workspace and profile are real writable host data. The default profile also
-exposes writable shared files at `/shared`, and normal sessions use host
-networking. Containerization does not make files, localhost services, or remote
-systems disposable. Open only the directory and access needed for the task; see
+exposes writable shared files at `/shared`, and the default `docker-host` backend
+uses host networking. Containerization and alternate network modes do not make
+files, credentials, localhost services, or remote systems disposable. Open only
+the directory and access needed for the task; see
 [Security and isolation](security.md).
 
 ## 3. Open a workspace
@@ -53,9 +54,23 @@ Change to the directory you want Pi to use, then run:
 pi-run .
 ```
 
+Choose a narrower session network explicitly when the task supports it:
+
+```bash
+pi-run --network docker-offline .
+pi-run --network docker-restricted --allow-host example.com .
+```
+
+Offline mode has no external interface. Experimental restricted mode permits
+HTTPS on port 443 only for repeated exact lowercase `--allow-host` values. It
+may break `/login`, model APIs, package managers, web tools, and other clients
+until every required hostname is listed. The choice applies only to that
+invocation and is not saved with the profile or session.
+
 You can pass another existing directory instead of `.`. Pi-Run reports the data
-home, selected profile, workspace, Guardian state, and enabled optional mounts,
-then opens Pi's interactive terminal interface. The normal terminal mode keeps
+home, selected profile, workspace, network backend, Guardian state, and enabled
+optional mounts, then opens Pi's interactive terminal interface. Restricted mode
+also reports each allowed `hostname:443`. The normal terminal mode keeps
 standard scrollback.
 
 The first launch also initializes a missing data home and registers this
