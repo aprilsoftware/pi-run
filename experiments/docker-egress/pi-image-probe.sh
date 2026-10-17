@@ -136,6 +136,14 @@ docker exec \
     || fail "allowed HTTPS hostname failed"
 echo "PASS allowed: example.com:443"
 
+docker exec \
+    -e HTTPS_PROXY=http://127.0.0.1:3128 \
+    -e NODE_USE_ENV_PROXY=1 \
+    "${WORKLOAD}" node --input-type=module -e \
+    'const response = await fetch("https://example.com/", {signal: AbortSignal.timeout(15000)}); if (!response.ok) throw new Error(`HTTP ${response.status}`); await response.arrayBuffer();' \
+    || fail "allowed Node fetch through HTTPS proxy failed"
+echo "PASS allowed: Node fetch through example.com:443"
+
 expect_blocked "unlisted hostname" docker exec \
     -e HTTPS_PROXY=http://127.0.0.1:3128 "${WORKLOAD}" \
     curl -fsS --max-time 5 https://example.org/

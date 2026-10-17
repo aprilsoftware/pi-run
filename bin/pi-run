@@ -72,6 +72,12 @@ validate_profile_name() {
         || fail "invalid profile name: ${name}"
 }
 
+path_is_within() {
+    local path="${1%/}" root="${2%/}"
+    [[ -n "${root}" ]] || root=/
+    [[ "${root}" == / || "${path}" == "${root}" || "${path}" == "${root}/"* ]]
+}
+
 validate_allowed_hostname() {
     local hostname="$1" label
     local -a labels
@@ -704,6 +710,9 @@ case "${NETWORK_BACKEND}" in
     docker-host) DOCKER_NETWORK_MODE=host ;;
     docker-offline) DOCKER_NETWORK_MODE=none ;;
     docker-restricted)
+        if path_is_within /tmp "${WORKSPACE}"; then
+            fail "restricted runtime policy staging would overlap workspace: ${WORKSPACE}"
+        fi
         SIDECAR_NAME="pi-egress-${PROFILE}-$$"
         DOCKER_NETWORK_MODE="container:${SIDECAR_NAME}"
         EGRESS_POLICY_DIR="$(mktemp -d /tmp/pi-run-egress.XXXXXX)"
@@ -747,6 +756,7 @@ if [[ "${NETWORK_BACKEND}" == docker-restricted ]]; then
     DOCKER_ARGS+=(
         --env HTTPS_PROXY=http://127.0.0.1:3128
         --env https_proxy=http://127.0.0.1:3128
+        --env NODE_USE_ENV_PROXY=1
     )
 fi
 

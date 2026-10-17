@@ -77,12 +77,17 @@ container interface.
 
 Experimental `docker-restricted` requires one or more exact hostnames supplied
 with repeated `--allow-host` options. The launcher writes the validated list to
-a private temporary host file, mounts that copy read-only into a version-matched
-egress sidecar, and never mounts it into Pi. The sidecar receives `NET_ADMIN`;
-Pi retains its normal dropped-capability set and shares the sidecar's network
-namespace. The launcher waits for firewall and proxy readiness before starting
-Pi, sets loopback `HTTPS_PROXY` variables, and reports every allowed
-`hostname:443`.
+a private temporary host file and mounts that copy read-only into a
+version-matched egress sidecar. It refuses restricted mode when the selected
+workspace would include the `/tmp` staging area, such as workspace `/` or
+`/tmp`, so Pi cannot reach the policy or sidecar control file through
+`/workspace`.
+
+The sidecar receives `NET_ADMIN`; Pi retains its normal dropped-capability set
+and shares the sidecar's network namespace. The launcher waits for firewall and
+proxy readiness before starting Pi, sets loopback `HTTPS_PROXY` variables,
+enables Node 24's environment-proxy routing for built-in fetch and HTTP clients,
+and reports every allowed `hostname:443`.
 
 The restricted firewall defaults to deny for IPv4 and IPv6. Squid permits HTTPS
 CONNECT only to an exact listed hostname on port 443. Direct IP, alternate DNS,

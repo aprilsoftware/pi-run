@@ -76,6 +76,10 @@ done
 grep -F -- '--cap-drop ALL' "$DOCKER_LOG" >/dev/null || fail "capabilities were not dropped"
 grep -F 'dst=/workspace' "$DOCKER_LOG" >/dev/null || fail "workspace was not mounted"
 grep -F 'dst=/profile' "$DOCKER_LOG" >/dev/null || fail "selected profile was not mounted"
+grep -F -- '-e NODE_USE_ENV_PROXY=1' "$DOCKER_LOG" >/dev/null \
+    || fail "Node environment proxy support was not exercised"
+grep -F 'node --input-type=module -e' "$DOCKER_LOG" >/dev/null \
+    || fail "Node fetch was not exercised"
 for contract in 'pi --version' "/profile/sessions/\${PI_RUN_PROBE_SESSION_ID}" \
     'test ! -e /policy' 'CapEff:' 'expect_blocked "unlisted hostname"' \
     'expect_blocked "direct public IP"'; do

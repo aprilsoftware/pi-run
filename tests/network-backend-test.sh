@@ -148,6 +148,8 @@ grep -Fx 'HTTPS_PROXY=http://127.0.0.1:3128' "${DOCKER_LOG}" >/dev/null \
     || fail "Pi did not receive the HTTPS proxy"
 grep -Fx 'https_proxy=http://127.0.0.1:3128' "${DOCKER_LOG}" >/dev/null \
     || fail "Pi did not receive the lowercase HTTPS proxy"
+grep -Fx 'NODE_USE_ENV_PROXY=1' "${DOCKER_LOG}" >/dev/null \
+    || fail "Node environment proxy support was not enabled"
 ready_line="$(grep -n '/tmp/pi-run-egress-ready' "${DOCKER_LOG}" | head -1 | cut -d: -f1)"
 runtime_line="$(grep -n 'ghcr.io/aprilsoftware/pi-run:0.6.3' "${DOCKER_LOG}" | head -1 | cut -d: -f1)"
 (( ready_line < runtime_line )) || fail "Pi started before sidecar readiness"
@@ -225,6 +227,19 @@ set -e
 [[ ${status} -ne 0 ]] || fail "sidecar cleanup failure was hidden"
 grep -F 'warning: could not remove restricted egress sidecar' "${TMP}/stderr" >/dev/null \
     || fail "sidecar cleanup failure had no diagnostic"
+
+# A broad workspace cannot expose the private /tmp runtime policy staging area.
+: > "${DOCKER_LOG}"
+set +e
+PATH="${TMP}/fake-bin:${PATH}" PI_RUN_HOME="${HOME_DIR}" \
+    "${PI_RUN}" --network docker-restricted --allow-host example.com /tmp \
+    >"${TMP}/stdout" 2>"${TMP}/stderr"
+status=$?
+set -e
+[[ ${status} -ne 0 ]] || fail "restricted backend accepted an overlapping workspace"
+grep -F 'restricted runtime policy staging would overlap workspace: /tmp' \
+    "${TMP}/stderr" >/dev/null || fail "overlapping workspace had no clear diagnostic"
+[[ ! -s "${DOCKER_LOG}" ]] || fail "overlapping workspace reached Docker"
 
 # Invalid selections and policy combinations fail before Docker.
 for backend in invalid docker-restricted; do
