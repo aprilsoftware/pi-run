@@ -57,7 +57,7 @@ assert.equal(marker.complete, false);
 assert.equal(marker.totalCharacters, text.length);
 assert.ok(marker.text.length <= 4200);
 assert.equal(truncated.evidence.complete('M2'), false);
-assert.throws(() => g.normalizeDecision({ outcome: 'ALLOW', basis: 'explicit_authorization', reason: 'Synthetic decision', userMessageIds: ['M2'] }, truncated.evidence), /Read the complete user source/);
+assert.throws(() => g.normalizeDecision({ outcome: 'ALLOW', basis: 'explicit_authorization', reason: 'Synthetic decision', userMessageIds: ['M2'] }, truncated.evidence), /User source M2 is incomplete.*citable complete user source IDs: M1/);
 const rest = await truncated.evidence.call('history_read', { sourceId: marker.id, offset: marker.endOffset, limit: 12000, question: 'Read the omitted portion of the newest user direction.' });
 assert.equal(rest.source.text, text.slice(marker.endOffset));
 assert.equal(rest.nextOffset, null);

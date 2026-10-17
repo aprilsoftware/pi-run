@@ -588,6 +588,9 @@ export class EvidenceService {
     const row=this.history.get(id),spans=[...(this.supplied.get(id)??[])].sort((a,b)=>a[0]-b[0]);let end=0;
     for(const [a,b] of spans){if(a>end)return false;end=Math.max(end,b);}return end>=row.text.length&&spans.length>0;
   }
+  citableUserSourceIds(): string[] {
+    return this.request.conversation.filter(row=>row.role==="user"&&this.complete(row.id)).map(row=>row.id);
+  }
   missingChangesAfter(id: string): ReviewMessage[] {const row=this.history.get(id);return this.request.conversation.filter(r=>r.role==="user"&&r.order>row.order&&!this.complete(r.id));}
   initial(): Json {
     const rows=this.request.conversation, users=rows.map((r,i)=>r.role==="user"?i:-1).filter(i=>i>=0);
@@ -884,7 +887,13 @@ export function normalizeDecision(input:unknown,evidence:EvidenceService):Decisi
   const ids=list(d.userMessageIds,12);
   const reason=d.reason==null?undefined:textArg(d.reason,"reason",2400);
   if((outcome==="USER_REFUSED"||basis==="explicit_authorization"||basis==="covered_work")&&!ids.length)throw new EvidenceGap("Cite the original applicable user message, not an assistant claim.");
-  for(const id of ids){const row=evidence.history.get(id);if(row.role!=="user")throw new Error("Only actual user messages supply authority");if(!evidence.complete(id))throw new EvidenceGap(`Read the complete user source ${id} with guardian_history_read.`);}
+  for(const id of ids){
+    const row=evidence.history.get(id);if(row.role!=="user")throw new Error("Only actual user messages supply authority");
+    if(!evidence.complete(id)){
+      const citable=evidence.citableUserSourceIds();
+      throw new EvidenceGap(`User source ${id} is incomplete and cannot be cited. Currently citable complete user source IDs: ${citable.length?citable.join(", "):"(none)"}. Read ${id} completely before citing it, omit it if the decision does not rely on it, or ASK if a material gap remains.`);
+    }
+  }
   if(ids.length&&(outcome==="ALLOW"||outcome==="USER_REFUSED")){
     const first=ids.map(id=>evidence.history.get(id)).sort((a,b)=>a.order-b.order)[0];
     const missing=evidence.missingChangesAfter(first.id);
@@ -1051,6 +1060,8 @@ export class PiAgentReviewer implements GuardianReviewer {
             // Keep request context compatible with both legacy and transcript-based Pi.
             // Never rewrite an already-issued tool-call/result pair.
             if(send.tools && final)send.tools=send.tools.filter((t:any)=>t.name==="guardian_decide");
+            const citableUserSourceIds=evidence.citableUserSourceIds();
+            send.messages.push({role:"system",timestamp:Date.now(),content:`Harness evidence status (not user authority): only these complete original user source IDs may appear in userMessageIds: ${JSON.stringify(citableUserSourceIds)}. Do not cite any incomplete source. If an incomplete source is material and cannot be completed, ASK rather than inventing authority.`});
             if(final&&send.messages?.[0]?.role==="system")send.messages.push({role:"system",timestamp:Date.now(),content:"Final review response: no further evidence tools.",toolsRemoved:definitions.map(d=>({name:d.name}))});
             if(final)send.messages.push({role:"user",timestamp:Date.now(),content:"Harness budget: final response. Decide now from available evidence; ASK if a material gap remains. Do not investigate further."});
             const bytes=Buffer.byteLength(JSON.stringify(send));metrics.inputBytes+=bytes;

@@ -137,7 +137,7 @@ assert_pair --env RESTIC_REPOSITORY=/snapshots/repository
 assert_pair --env RESTIC_PASSWORD_FILE=/snapshots/secrets
 grep -F "type=bind,src=${SNAPSHOT_ROOT},dst=/snapshots,readonly" "${DOCKER_LOG}" >/dev/null \
     || fail "status did not use a read-only snapshots mount"
-grep -Fx 'ghcr.io/aprilsoftware/pi-run:0.6.1' "${DOCKER_LOG}" >/dev/null \
+grep -Fx 'ghcr.io/aprilsoftware/pi-run:0.6.2' "${DOCKER_LOG}" >/dev/null \
     || fail "status used the wrong runtime image"
 
 UNSAFE_HOME="${TMP}/unsafe home"

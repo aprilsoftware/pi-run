@@ -106,7 +106,7 @@ try {
   assert.ok(requests.every(event => event.details.requestBytes <= 96 * 1024));
   console.log('PASS guardian-reviewer: evidence budget preserves a final decision-only request');
 
-  async function assess(streamForRequest, deadlineMs = 1000) {
+  async function assess(streamForRequest, deadlineMs = 1000, scenarioRequest = request) {
     const scenarioController = new AbortController();
     let scenarioRequests = 0;
     const scenarioReviewer = new g.PiAgentReviewer({
@@ -119,11 +119,11 @@ try {
     const scenarioEmit = (level, event, message, details) => scenarioEvents.push({ level, event, message, details });
     const scenarioTrace = new g.ReviewTrace(scenarioEmit, scenarioController.signal, deadlineAt);
     const scenarioStep = (name, details, work, timeout) => scenarioTrace.step(name, details, work, timeout);
-    const scenarioEvidence = new g.EvidenceService(request, scenarioController.signal, scenarioEmit, scenarioStep);
+    const scenarioEvidence = new g.EvidenceService(scenarioRequest, scenarioController.signal, scenarioEmit, scenarioStep);
     const scenarioServices = { signal: scenarioController.signal, deadlineAt, evidence: scenarioEvidence, step: scenarioStep,
       report: event => scenarioEmit(event.level, event.event, event.message, event.details) };
     try {
-      return { result: g.validateReviewResult(await scenarioReviewer.review(request, scenarioServices), request),
+      return { result: g.validateReviewResult(await scenarioReviewer.review(scenarioRequest, scenarioServices), scenarioRequest),
         events: scenarioEvents, requests: scenarioRequests };
     } finally {
       scenarioTrace.close();
@@ -146,6 +146,43 @@ try {
   assert.ok(corrected.events.some(event => event.event === 'decision_validation_failed' &&
     String(event.details?.error).includes('contradicts outcome')));
   console.log('PASS guardian-reviewer: contradictory decision is rejected and corrected');
+
+  const citationRequest = {
+    ...request,
+    conversation: [
+      { id: 'U-LARGE', role: 'user', text: `${'log output '.repeat(3000)}\nPlease investigate this status.`, order: 0 },
+      { id: 'A-PROPOSAL', role: 'assistant', text: 'I propose a bounded read-only source search.', order: 1 },
+      { id: 'U-APPROVAL', role: 'user', text: 'I approve it.', order: 2 },
+    ],
+  };
+  const citationCorrected = await assess((round, context) => {
+    const guidance = context.messages.filter(message => message.role === 'system' &&
+      typeof message.content === 'string' && message.content.includes('Harness evidence status')).at(-1)?.content ?? '';
+    assert.match(guidance, /U-APPROVAL/, `Missing complete-source guidance in round ${round}`);
+    assert.doesNotMatch(guidance, /U-LARGE/, `Incomplete source was advertised as citable in round ${round}`);
+    if (round === 1) return streamed(assistant([{ type: 'toolCall', id: 'tail', name: 'guardian_history_read', arguments: {
+      sourceId: 'U-LARGE', offset: 28_000, limit: 2_000, question: 'Read the request at the end of the large user paste.',
+    } }]));
+    if (round === 2) return streamed(assistant([{ type: 'toolCall', id: 'changes', name: 'guardian_user_changes', arguments: {
+      afterId: 'U-APPROVAL', question: 'Check for a later user restriction.',
+    } }]));
+    if (round === 3) return streamed(assistant([{ type: 'toolCall', id: 'incomplete-citation', name: 'guardian_decide', arguments: {
+      outcome: 'ALLOW', basis: 'explicit_authorization', reason: 'Synthetic decision with an incomplete extra citation.',
+      userMessageIds: ['U-LARGE', 'U-APPROVAL'], instructionRefs: [],
+    } }]));
+    return streamed(assistant([{ type: 'toolCall', id: 'citation-corrected', name: 'guardian_decide', arguments: {
+      outcome: 'ALLOW', basis: 'explicit_authorization', reason: 'The complete approval covers the proposed bounded search.',
+      userMessageIds: ['U-APPROVAL'], instructionRefs: [],
+    } }]));
+  }, 1000, citationRequest);
+  assert.equal(citationCorrected.result.status, 'completed');
+  assert.equal(citationCorrected.result.decision.outcome, 'ALLOW');
+  assert.deepEqual(citationCorrected.result.decision.userMessageIds, ['U-APPROVAL']);
+  assert.equal(citationCorrected.requests, 4);
+  assert.ok(citationCorrected.events.some(event => event.event === 'decision_validation_failed' &&
+    String(event.details?.error).includes('Currently citable complete user source IDs: U-APPROVAL')));
+  assert.equal(citationCorrected.events.filter(event => event.event === 'model_request').at(-1)?.details?.finalDecisionOnly, true);
+  console.log('PASS guardian-reviewer: final correction identifies and uses only complete user sources');
 
   const interrupted = await assess(() => streamed({
     ...assistant([{ type: 'toolCall', id: 'partial-decision', name: 'guardian_decide', arguments: {
