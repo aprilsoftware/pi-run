@@ -591,6 +591,15 @@ export class EvidenceService {
   citableUserSourceIds(): string[] {
     return this.request.conversation.filter(row=>row.role==="user"&&this.complete(row.id)).map(row=>row.id);
   }
+  decisionReadyUserSourceIds(): string[] {
+    const ready:string[]=[];let laterIncomplete=false;
+    for(let i=this.request.conversation.length-1;i>=0;i--){
+      const row=this.request.conversation[i];if(row.role!=="user")continue;
+      const complete=this.complete(row.id);if(complete&&!laterIncomplete)ready.push(row.id);
+      if(!complete)laterIncomplete=true;
+    }
+    return ready.reverse();
+  }
   missingChangesAfter(id: string): ReviewMessage[] {const row=this.history.get(id);return this.request.conversation.filter(r=>r.role==="user"&&r.order>row.order&&!this.complete(r.id));}
   initial(): Json {
     const rows=this.request.conversation, users=rows.map((r,i)=>r.role==="user"?i:-1).filter(i=>i>=0);
@@ -897,7 +906,10 @@ export function normalizeDecision(input:unknown,evidence:EvidenceService):Decisi
   if(ids.length&&(outcome==="ALLOW"||outcome==="USER_REFUSED")){
     const first=ids.map(id=>evidence.history.get(id)).sort((a,b)=>a.order-b.order)[0];
     const missing=evidence.missingChangesAfter(first.id);
-    if(missing.length)throw new EvidenceGap(`Check later user directions with guardian_user_changes afterId=${first.id}; ${missing.length} sources remain unread. Cite the most directly relevant current request rather than unrelated old approvals.`);
+    if(missing.length){
+      const ready=evidence.decisionReadyUserSourceIds();
+      throw new EvidenceGap(`User source ${first.id} is not decision-ready because ${missing.length} later user sources remain unread. Currently decision-ready user source IDs: ${ready.length?ready.join(", "):"(none)"}. Continue guardian_user_changes afterId=${first.id} by following nextCursor, omit the old source if it is unnecessary, or ASK if a material gap remains.`);
+    }
   }
   return {outcome,basis:basis as Decision["basis"],reason,userMessageIds:ids,
     ...(d.effects==null?{}:{effects:textArg(d.effects,"effects",1000)}),
@@ -1060,8 +1072,8 @@ export class PiAgentReviewer implements GuardianReviewer {
             // Keep request context compatible with both legacy and transcript-based Pi.
             // Never rewrite an already-issued tool-call/result pair.
             if(send.tools && final)send.tools=send.tools.filter((t:any)=>t.name==="guardian_decide");
-            const citableUserSourceIds=evidence.citableUserSourceIds();
-            send.messages.push({role:"system",timestamp:Date.now(),content:`Harness evidence status (not user authority): only these complete original user source IDs may appear in userMessageIds: ${JSON.stringify(citableUserSourceIds)}. Do not cite any incomplete source. If an incomplete source is material and cannot be completed, ASK rather than inventing authority.`});
+            const decisionReadyUserSourceIds=evidence.decisionReadyUserSourceIds();
+            send.messages.push({role:"system",timestamp:Date.now(),content:`Harness evidence status (not user authority): only these decision-ready original user source IDs may appear in userMessageIds for ALLOW or USER_REFUSED: ${JSON.stringify(decisionReadyUserSourceIds)}. A complete older source is not decision-ready until all later user directions have been read. Do not cite an incomplete or non-ready source; omit an unnecessary old source, follow guardian_user_changes nextCursor until complete, or ASK if a material gap remains.`});
             if(final&&send.messages?.[0]?.role==="system")send.messages.push({role:"system",timestamp:Date.now(),content:"Final review response: no further evidence tools.",toolsRemoved:definitions.map(d=>({name:d.name}))});
             if(final)send.messages.push({role:"user",timestamp:Date.now(),content:"Harness budget: final response. Decide now from available evidence; ASK if a material gap remains. Do not investigate further."});
             const bytes=Buffer.byteLength(JSON.stringify(send));metrics.inputBytes+=bytes;

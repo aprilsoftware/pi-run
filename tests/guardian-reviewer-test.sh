@@ -184,6 +184,45 @@ try {
   assert.equal(citationCorrected.events.filter(event => event.event === 'model_request').at(-1)?.details?.finalDecisionOnly, true);
   console.log('PASS guardian-reviewer: final correction identifies and uses only complete user sources');
 
+  const chronologyConversation = [
+    { id: 'U-OLD', role: 'user', text: 'Earlier diagnostic request that is not needed for the current action.', order: 0 },
+    ...Array.from({ length: 30 }, (_, index) => ({
+      id: `U-MID-${index + 1}`, role: 'user', text: `Intervening user direction ${index + 1}.`, order: index + 1,
+    })),
+    { id: 'A-CURRENT', role: 'assistant', text: 'I propose the current bounded read-only diagnostic.', order: 31 },
+    { id: 'U-CURRENT', role: 'user', text: 'Run that current diagnostic.', order: 32 },
+  ];
+  const chronologyRequest = { ...request, conversation: chronologyConversation };
+  const chronologyCorrected = await assess((round, context) => {
+    const guidance = context.messages.filter(message => message.role === 'system' &&
+      typeof message.content === 'string' && message.content.includes('Harness evidence status')).at(-1)?.content ?? '';
+    assert.match(guidance, /U-CURRENT/, `Missing current decision-ready source in round ${round}`);
+    assert.doesNotMatch(guidance, /U-OLD/, `Old source with unread later directions was advertised as decision-ready in round ${round}`);
+    if (round === 1) return streamed(assistant([{ type: 'toolCall', id: 'old-source', name: 'guardian_history_read', arguments: {
+      sourceId: 'U-OLD', question: 'Read the earlier user source before deciding.',
+    } }]));
+    if (round === 2) return streamed(assistant([{ type: 'toolCall', id: 'stale-citation', name: 'guardian_decide', arguments: {
+      outcome: 'ALLOW', basis: 'explicit_authorization', reason: 'Synthetic decision with an unnecessary old citation.',
+      userMessageIds: ['U-OLD', 'U-CURRENT'], instructionRefs: [],
+    } }]));
+    if (round === 3) return streamed(assistant([{ type: 'toolCall', id: 'partial-chronology', name: 'guardian_user_changes', arguments: {
+      afterId: 'U-OLD', question: 'Check later user directions after the old source.',
+    } }]));
+    return streamed(assistant([{ type: 'toolCall', id: 'chronology-corrected', name: 'guardian_decide', arguments: {
+      outcome: 'ALLOW', basis: 'explicit_authorization', reason: 'The complete current request directly covers the diagnostic.',
+      userMessageIds: ['U-CURRENT'], instructionRefs: [],
+    } }]));
+  }, 1000, chronologyRequest);
+  assert.equal(chronologyCorrected.result.status, 'completed');
+  assert.equal(chronologyCorrected.result.decision.outcome, 'ALLOW');
+  assert.deepEqual(chronologyCorrected.result.decision.userMessageIds, ['U-CURRENT']);
+  assert.equal(chronologyCorrected.requests, 4);
+  assert.ok(chronologyCorrected.events.some(event => event.event === 'decision_validation_failed' &&
+    String(event.details?.error).includes('Currently decision-ready user source IDs:') &&
+    String(event.details?.error).includes('U-CURRENT')));
+  assert.equal(chronologyCorrected.events.filter(event => event.event === 'model_request').at(-1)?.details?.finalDecisionOnly, true);
+  console.log('PASS guardian-reviewer: final correction omits stale complete citations with unread chronology');
+
   const interrupted = await assess(() => streamed({
     ...assistant([{ type: 'toolCall', id: 'partial-decision', name: 'guardian_decide', arguments: {
       outcome: 'ALLOW', basis: 'standing_rules', reason: 'Partial decision must not be accepted.',
