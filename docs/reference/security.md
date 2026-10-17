@@ -71,23 +71,41 @@ and generated commands can transfer data over that network.
 
 An invocation can instead select `--network docker-offline` before the workspace
 or `resume` command. This maps strictly to Docker `--network none` for every Pi
-container started by that invocation. It provides loopback but no external
-container interface, and a failed launch is not retried with host networking.
-The effective backend is printed before Pi starts.
+container started by that invocation and provides loopback but no external
+container interface.
 
-Offline networking does not make writable mounts read-only, hide credentials in
-the selected profile, undo prior writes, or turn the container into a VM. It is
-selected per invocation and is not persisted with a profile or session. A later
-resume uses the default host backend unless offline mode is selected again.
+Experimental `docker-restricted` requires one or more exact hostnames supplied
+with repeated `--allow-host` options. The launcher writes the validated list to
+a private temporary host file, mounts that copy read-only into a version-matched
+egress sidecar, and never mounts it into Pi. The sidecar receives `NET_ADMIN`;
+Pi retains its normal dropped-capability set and shares the sidecar's network
+namespace. The launcher waits for firewall and proxy readiness before starting
+Pi, sets loopback `HTTPS_PROXY` variables, and reports every allowed
+`hostname:443`.
 
-Pi-Run does not yet apply a hostname allowlist in normal launcher operation.
-Service authentication and remote authorization remain independent controls. A
-credential, kubeconfig, client binary, or reachable port is capability—not user
-permission for an unrelated operation.
+The restricted firewall defaults to deny for IPv4 and IPv6. Squid permits HTTPS
+CONNECT only to an exact listed hostname on port 443. Direct IP, alternate DNS,
+private-address, and arbitrary TCP paths remain blocked by the network-namespace
+firewall; clients that ignore the proxy cannot connect directly. There is no TLS
+interception or HTTP method/path inspection. An allowed HTTPS service can
+receive arbitrary data by design.
+
+Backend and hostname selections apply only to one invocation and its
+snapshot-triggered Pi restarts. They are not persisted with a profile or
+session. A later launch or resume returns to `docker-host` unless another
+backend is selected explicitly. Sidecar startup or readiness failure prevents Pi
+from starting, and Pi is never retried with host networking. If the proxy exits,
+the firewall remains default-deny and the session loses egress.
+
+Offline or restricted networking does not make writable mounts read-only, hide
+credentials in the selected profile, undo prior writes, or turn the container
+into a VM. Service authentication and remote authorization remain independent
+controls. A credential, kubeconfig, client binary, or reachable port is
+capability—not user permission for an unrelated operation.
 
 Snapshot and SSH management containers can use different network modes for their
-bounded operations. An offline Pi container may request a snapshot whose
-separate host-managed operation uses its documented backend. Consult those
+bounded operations. An offline or restricted Pi container may request a snapshot
+whose separate host-managed operation uses its documented backend. Consult those
 task/reference guides rather than applying session networking assumptions to
 every host command.
 

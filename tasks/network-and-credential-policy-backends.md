@@ -2,9 +2,9 @@
 
 ## Status and purpose
 
-This document records the v0.7 investigation, experimental `docker-offline`
-launcher mode, and recommended restricted-backend work. The branch is a
-prerelease experiment and does not authorize production use.
+This document records the v0.7 investigation and experimental `docker-offline`
+and `docker-restricted` launcher modes. The branch is a prerelease experiment
+and does not authorize production use.
 
 The goal is to add enforceable network policy while retaining Pi-Run's existing
 profile, workspace, session, Guardian, and snapshot semantics. The preferred
@@ -170,16 +170,16 @@ The initial product vocabulary remains small:
 - `docker-host` — current host-network behavior and the unchanged default;
 - `docker-offline` — implemented as an explicit launch option using Docker
   `--network none`; and
-- `docker-restricted` — default-deny egress through the sidecar, not yet
-  integrated into the launcher.
+- `docker-restricted` — implemented experimentally as default-deny egress
+  through the version-matched sidecar.
 
-The launcher displays the effective backend before starting Pi. A failed
-offline launch does not retry with `docker-host`; the same fail-closed rule must
-apply to the future restricted backend. Backend selection is per invocation and
-is not yet stored in profile, policy, or machine configuration.
+The launcher displays the effective backend before starting Pi. Restricted mode
+also displays every allowed `hostname:443`. Offline and restricted failures do
+not retry with `docker-host`. Backend and hostname selection are per invocation
+and are not yet stored in profile, policy, or machine configuration.
 
-No general backend framework is introduced. The restricted sidecar remains an
-experiment outside the launcher path.
+No general backend framework is introduced; the restricted launcher path is
+kept direct while its lifecycle and interface remain experimental.
 
 ## Policy ownership
 
@@ -197,12 +197,14 @@ Effective exposure is the intersection of the profile request, portable policy,
 and machine-local grant. The sidecar receives only the already-resolved runtime
 policy. `policies/` and `machines/` are not mounted into Pi.
 
-This layout is directional; the feasibility harness does not introduce these
-schemas.
+This layout remains directional; the experimental launcher does not introduce
+these schemas. Repeated host-side `--allow-host` inputs are validated and copied
+to a private temporary policy file before Pi starts. Only that runtime copy is
+mounted read-only into the sidecar, and it is never mounted into Pi.
 
 ## Initial policy scope
 
-The first restricted experiment should support only:
+The experimental restricted path supports only:
 
 - default deny;
 - exact HTTPS hostname and port rules;
@@ -210,10 +212,9 @@ The first restricted experiment should support only:
 - blocked direct IP and non-HTTP protocols; and
 - readable audit events containing no secrets.
 
-It should not perform TLS interception. Clients that honor `HTTP_PROXY` and
-`HTTPS_PROXY` use CONNECT, allowing the proxy to enforce the requested hostname
-and port without reading encrypted content. Clients that do not support the
-proxy are blocked.
+It does not perform TLS interception. Clients that honor `HTTPS_PROXY` use
+CONNECT, allowing the proxy to enforce the requested hostname and port without
+reading encrypted content. Clients that do not support the proxy are blocked.
 
 HTTP method/path enforcement, transparent TLS interception, SSH, databases,
 arbitrary TCP, package-manager compatibility exceptions, and credential
@@ -289,6 +290,14 @@ and image startup; the smoke invocation used `pi --version` and therefore did
 not itself attempt an outbound packet. Packet denial follows Docker's
 `--network none` contract and the launch argument has deterministic coverage.
 
+The experimental restricted launcher was then smoke-tested with a disposable
+Pi-Run home, the source-built runtime image, and the production egress image. It
+reported `example.com:443`, passed sidecar readiness, and ran Pi 1.1.0 in the
+shared restricted namespace. The sidecar, private runtime policy copy, and
+disposable home were removed. This invocation also used `pi --version`, so its
+value is lifecycle integration evidence; packet enforcement evidence remains
+the earlier real Docker probe.
+
 ## Important limitations
 
 - This is container isolation on a shared host kernel, not a VM sandbox.
@@ -303,13 +312,14 @@ These limitations must be visible in documentation and release notes.
 
 ## Decision
 
-For v0.7, stop product integration work on OpenShell and Docker Sandboxes. Test
-a Docker-native sidecar based on the enforcement pattern demonstrated by
-`agent-sandbox` and `sandboxed-pi`.
+For v0.7, stop product integration work on OpenShell and Docker Sandboxes. Use
+the Docker-native sidecar pattern demonstrated by `agent-sandbox` and
+`sandboxed-pi` as Pi-Run's experimental restricted backend.
 
-If the sidecar cannot reliably deny direct IP, private-network, IPv6, and DNS
-bypasses on Pi-Run's supported Docker baseline, do not ship hostname claims.
-Retain only an explicit offline backend while reconsidering the architecture.
+The required direct-IP, private-network, IPv6, DNS-bypass, capability, policy,
+and fail-closed probes passed on Pi-Run's supported Docker baseline. Keep the
+backend prerelease-only while its per-invocation interface, limitations, and
+remaining TUI/provider/credential behavior are evaluated.
 
 ## Sources
 

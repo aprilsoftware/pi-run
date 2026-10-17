@@ -31,12 +31,20 @@ as `--home`, `--profile`, and `--network` belong before the workspace:
 ```bash
 pi-run --home /private/pi-run --profile operations /srv/runbooks -r
 pi-run --network docker-offline /srv/runbooks
+pi-run --network docker-restricted --allow-host example.com /srv/runbooks
 ```
 
 `docker-host` is the default network backend. Select `docker-offline` explicitly
-for a session container with Docker `--network none`. The selection applies only
-to that invocation, including any container restart requested by the snapshot
-workflow; it is not saved with the profile or session.
+for a session container with Docker `--network none`. Experimental
+`docker-restricted` requires one or more repeated `--allow-host` options and
+allows only HTTPS CONNECT to those exact lowercase hostnames on port 443. It
+does not accept URLs, paths, ports, wildcards, IP literals, or single-label
+names.
+
+The selection and hostname list apply only to that invocation, including any
+container restart requested by the snapshot workflow; they are not saved with
+the profile or session. A later launch or resume returns to `docker-host` unless
+another backend is selected explicitly.
 
 ## Initialization behavior
 
@@ -136,7 +144,8 @@ the host CA bundle, skills, and session paths. On launch it reports:
 ```text
 pi-run: home=<resolved-data-home>
 pi-run: profile=<profile> workspace=<resolved-workspace>
-pi-run: network=<docker-host|docker-offline>
+pi-run: network=<docker-host|docker-offline|docker-restricted>
+pi-run: allowed-https=<hostname>:443[,<hostname>:443...]  # restricted only
 pi-run: Guardian loaded; review mode starts Off
 ```
 
