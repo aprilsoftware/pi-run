@@ -46,17 +46,22 @@ the Pi-Run license. It contains no hostname policy; a future restricted launch
 must mount already-resolved host-owned policy at runtime. Building this image
 does not enable the experimental restricted backend in the launcher. The
 production Dockerfile was build-validated on Debian Trixie with Docker Engine
-26.1.5 during the v0.7 experiment.
+26.1.5 during the v0.7 experiment. On the same baseline, Doctor successfully
+inspected locally built runtime and egress image overrides.
 
-Check which launcher and runtime image are selected without starting Pi:
+Check which launcher and images are selected without starting Pi:
 
 ```bash
-PI_RUN_IMAGE=pi-run:dev ./bin/pi-run version
+PI_RUN_IMAGE=pi-run:dev \
+PI_RUN_EGRESS_IMAGE=pi-run-egress:dev \
+./bin/pi-run version
 ```
 
-Do not use `PI_RUN_IMAGE` with an untrusted image. The selected image receives
-the workspace, profile, startup privileges, and any optional mounts chosen for
-the run.
+`PI_RUN_IMAGE` and `PI_RUN_EGRESS_IMAGE` are development overrides; normal
+release coordinates come from `VERSION`. Do not use untrusted images. The
+runtime image receives the workspace, profile, startup privileges, and optional
+mounts chosen for a run. The egress image is intended to receive network-policy
+enforcement authority when restricted launcher integration is enabled.
 
 ## Source architecture
 

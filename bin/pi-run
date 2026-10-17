@@ -93,6 +93,7 @@ PI_RUN_VERSION="$(tr -d '\r\n' < "${VERSION_FILE}")"
 [[ "${PI_RUN_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
     || fail "installation has an invalid VERSION: ${VERSION_FILE}"
 DEFAULT_IMAGE="ghcr.io/aprilsoftware/pi-run:${PI_RUN_VERSION}"
+DEFAULT_EGRESS_IMAGE="ghcr.io/aprilsoftware/pi-run-egress:${PI_RUN_VERSION}"
 CA_BUNDLE="/etc/ssl/certs/ca-certificates.crt"
 PROFILE_TEMPLATE_ROOT="${INSTALL_ROOT}/templates/profiles"
 PI_RUN_LIB_ROOT="${INSTALL_ROOT}/lib/pi-run"
@@ -381,7 +382,10 @@ fi
 case "${COMMAND}" in
     version)
         [[ $# -eq 1 ]] || usage
-        printf 'pi-run v%s\nruntime %s\n' "${PI_RUN_VERSION}" "${PI_RUN_IMAGE:-${DEFAULT_IMAGE}}"
+        printf 'pi-run v%s\nruntime %s\negress %s\n' \
+            "${PI_RUN_VERSION}" \
+            "${PI_RUN_IMAGE:-${DEFAULT_IMAGE}}" \
+            "${PI_RUN_EGRESS_IMAGE:-${DEFAULT_EGRESS_IMAGE}}"
         exit 0
         ;;
     machine-id)

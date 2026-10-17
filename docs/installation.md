@@ -175,9 +175,10 @@ pi-run home
 pi-run doctor
 ```
 
-`version` prints the installed launcher version and selected image. `home` prints
-the resolved data location. `doctor` checks host requirements, Docker access,
-the local runtime image, application resources, and selected profile.
+`version` prints the installed launcher version and selected runtime and egress
+images. `home` prints the resolved data location. `doctor` checks host
+requirements, Docker access, both local images, application resources, and the
+selected profile.
 
 Doctor reports `OK`, `WARN`, and `FAIL` and exits nonzero for failed requirements.
 It does not initialize or repair state, pull images, contact registries, or

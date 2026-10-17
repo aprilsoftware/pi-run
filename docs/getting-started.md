@@ -20,10 +20,10 @@ pi-run init
 pi-run doctor
 ```
 
-`version` identifies the launcher and runtime image. `init` creates the initial
-profile and persistent data directories, normally under `~/Pi-Run`. `doctor`
-reports `OK`, `WARN`, and `FAIL` without repairing state or printing credential
-contents.
+`version` identifies the launcher plus its runtime and egress images. `init`
+creates the initial profile and persistent data directories, normally under
+`~/Pi-Run`. `doctor` reports `OK`, `WARN`, and `FAIL` without repairing state or
+printing credential contents.
 
 Required checks should pass before launch. If a command or check fails, use the
 [startup troubleshooting reference](reference/getting-started.md#troubleshoot-startup).

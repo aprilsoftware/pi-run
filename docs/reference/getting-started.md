@@ -98,14 +98,14 @@ These checks do not have the same effect:
 
 | Command | Purpose |
 | --- | --- |
-| `pi-run version` | Print the launcher version and selected runtime image. |
+| `pi-run version` | Print the launcher version and selected runtime and egress images. |
 | `pi-run home` | Print the resolved data-home path without initializing it. |
-| `pi-run doctor` | Validate host commands, installation, image, and selected profile; do not repair them. |
+| `pi-run doctor` | Validate host commands, installation, both images, and selected profile; do not repair them. |
 | `pi-run init` | Create missing persistent data-home structure and the initial profile. |
 
 `doctor` reports `OK`, `WARN`, and `FAIL` and exits nonzero when required checks
-fail. An uninitialized home is a warning. Doctor does not pull an image, contact
-a registry, initialize or repair state, or reveal credential contents.
+fail. An uninitialized home is a warning. Doctor does not pull images, contact a
+registry, initialize or repair state, or reveal credential contents.
 
 When checking another profile or data home, select it explicitly:
 
@@ -195,12 +195,14 @@ intended daemon access. Docker access is highly privileged. Do not solve a
 permission error by exposing the Docker socket inside Pi or broadly changing
 unrelated filesystem ownership.
 
-### The runtime image is missing
+### A runtime or egress image is missing
 
-Run `pi-run version` to identify the exact selected image. Follow the specific
-Doctor diagnostic and confirm required registry authentication before pulling
-it. Do not substitute an unrelated image; `PI_RUN_IMAGE` is a development
-boundary that grants an alternate image the selected mounts and privileges.
+Run `pi-run version` to identify both exact selected images. Follow the
+role-specific Doctor diagnostic and confirm required registry authentication
+before pulling it. Do not substitute an unrelated runtime image;
+`PI_RUN_IMAGE` is a development boundary that grants an alternate image the
+selected mounts and privileges. `PI_RUN_EGRESS_IMAGE` is the corresponding
+maintainer override for the policy-enforcement sidecar image.
 
 ### Initialization is refused
 

@@ -39,8 +39,9 @@ This check does not inspect workspace storage, create directories, change
 permissions, move data, or introduce a runtime storage rejection. Existing
 permission checks remain unchanged.
 
-Doctor checks daemon reachability and local image presence, not the active
-Docker context's locality, host-network behavior, container-visible permissions,
+Doctor checks daemon reachability and local presence of both versioned images,
+not the active Docker context's locality, host-network behavior,
+container-visible permissions,
 locking, or restore durability. Distribution-local Engine host networking
 shares WSL networking; Windows service access needs separate verification.
 WSL-specific diagnostics have automated coverage, but the maintainer does not
@@ -166,15 +167,15 @@ pi-run version
 Persist that change using the appropriate shell configuration only after
 confirming the path.
 
-`pi-run version` reports the launcher version and selected image without checking
-Docker. `pi-run home` resolves the data path without initializing it. `pi-run
-doctor` checks the platform, required commands, UUID source, Docker daemon,
-local image, CA bundle, installed templates, data-home safety, and selected
-profile.
+`pi-run version` reports the launcher version and selected runtime and egress
+images without checking Docker. `pi-run home` resolves the data path without
+initializing it. `pi-run doctor` checks the platform, required commands, UUID
+source, Docker daemon, both local images, CA bundle, installed templates,
+data-home safety, and selected profile.
 
-Doctor never repairs failures. It reports the exact image to pull when that
-image is unavailable locally. Confirm the tag and registry authentication before
-following that instruction.
+Doctor never repairs failures. It reports the exact role and image to pull when
+either image is unavailable locally. Confirm the tag and registry authentication
+before following that instruction.
 
 ## Upgrade selection and activation
 
