@@ -822,6 +822,7 @@ echo "pi-run: Guardian loaded; review mode starts Off" >&2
 if [[ "${NETWORK_BACKEND}" == docker-restricted ]]; then
     if ! docker run -d --name "${SIDECAR_NAME}" \
         --cidfile "${SIDECAR_ID_FILE}" \
+        --env "PI_RUN_WORKLOAD_UID=${HOST_UID}" \
         --cap-add NET_ADMIN \
         --ulimit nofile=4096:4096 \
         --security-opt no-new-privileges=true \

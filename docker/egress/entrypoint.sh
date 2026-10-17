@@ -12,6 +12,13 @@ fail() {
     exit 1
 }
 
+WORKLOAD_UID="${PI_RUN_WORKLOAD_UID:-}"
+[[ "${WORKLOAD_UID}" =~ ^(0|[1-9][0-9]*)$ ]] \
+    || fail "invalid workload UID"
+PROXY_UID="$(id -u proxy)"
+[[ "${WORKLOAD_UID}" != "${PROXY_UID}" ]] \
+    || fail "workload UID collides with proxy UID: ${PROXY_UID}"
+
 [[ -f "${POLICY}" && ! -L "${POLICY}" ]] || fail "missing regular hostname policy"
 while IFS= read -r host || [[ -n "${host}" ]]; do
     [[ "${host}" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ && "${host}" == *.* ]] \
@@ -38,7 +45,6 @@ pid_filename /tmp/pi-run-squid.pid
 visible_hostname pi-run-egress
 EOF
 
-PROXY_UID="$(id -u proxy)"
 iptables -w -F OUTPUT
 iptables -w -P OUTPUT DROP
 iptables -w -A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT

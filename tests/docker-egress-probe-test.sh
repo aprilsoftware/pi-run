@@ -22,7 +22,14 @@ case "$1" in
         [[ "${TEST_BUILD_FAIL:-0}" == 0 ]]
         ;;
     run)
-        echo fake-container-id
+        case "$*" in
+            *'--entrypoint id '*'-u proxy') echo 13 ;;
+            *'--env PI_RUN_WORKLOAD_UID=13 '*)
+                echo 'pi-run-egress: workload UID collides with proxy UID: 13' >&2
+                exit 1
+                ;;
+            *) echo fake-container-id ;;
+        esac
         ;;
     inspect)
         case "$*" in
@@ -51,14 +58,34 @@ esac
 EOF
 chmod 0755 "${TMP}/fake-bin/docker"
 
+mkdir -p "${TMP}/collision-bin"
+cat > "${TMP}/collision-bin/id" <<'EOF'
+#!/bin/sh
+[ "$*" = '-u proxy' ] || exit 2
+printf '%s\n' 13
+EOF
+chmod 0755 "${TMP}/collision-bin/id"
+set +e
+collision_output="$(PATH="${TMP}/collision-bin:${PATH}" PI_RUN_WORKLOAD_UID=13 \
+    "${ROOT}/experiments/docker-egress/entrypoint.sh" 2>&1)"
+collision_status=$?
+set -e
+[[ ${collision_status} -ne 0 ]] || fail "entrypoint accepted a workload/proxy UID collision"
+[[ "${collision_output}" == *'workload UID collides with proxy UID: 13'* ]] \
+    || fail "entrypoint UID collision had no clear diagnostic"
+
 export DOCKER_LOG="${TMP}/docker.log"
 export SIDECAR_KILLED="${TMP}/sidecar-killed"
 output="$(PATH="${TMP}/fake-bin:${PATH}" "$PROBE" --execute)"
 [[ "$output" == *'docker-egress-probe: PASS'* ]] || fail "successful probe did not pass"
+[[ "$output" == *'PASS blocked: workload/proxy UID collision'* ]] \
+    || fail "workload/proxy UID collision was not tested"
 grep -F 'build --target sidecar' "$DOCKER_LOG" >/dev/null \
     || fail "sidecar image was not built"
 grep -F -- '--cap-add NET_ADMIN' "$DOCKER_LOG" >/dev/null \
     || fail "sidecar did not receive NET_ADMIN"
+grep -F -- '--env PI_RUN_WORKLOAD_UID=0' "$DOCKER_LOG" >/dev/null \
+    || fail "sidecar did not receive the workload UID"
 grep -F -- '--ulimit nofile=4096:4096' "$DOCKER_LOG" >/dev/null \
     || fail "sidecar file-descriptor limit was not bounded"
 grep -Fx 'max_filedescriptors 4096' \

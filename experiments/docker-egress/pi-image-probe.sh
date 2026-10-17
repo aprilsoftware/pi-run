@@ -62,6 +62,7 @@ echo "Building disposable egress sidecar..."
 docker build --target sidecar -t "${SIDECAR_IMAGE}" -f "${DIR}/Dockerfile" "${DIR}" >/dev/null
 
 docker run -d --name "${SIDECAR}" \
+    --env "PI_RUN_WORKLOAD_UID=$(id -u)" \
     --cap-add NET_ADMIN \
     --ulimit nofile=4096:4096 \
     --security-opt no-new-privileges=true \

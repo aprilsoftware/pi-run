@@ -49,12 +49,24 @@ echo "Building disposable egress images..."
 docker build --target sidecar -t "${SIDECAR_IMAGE}" -f "${DIR}/Dockerfile" "${DIR}" >/dev/null
 docker build --target workload -t "${WORKLOAD_IMAGE}" -f "${DIR}/Dockerfile" "${DIR}" >/dev/null
 
+PROXY_UID="$(docker run --rm --entrypoint id "${SIDECAR_IMAGE}" -u proxy)"
+set +e
+COLLISION_OUTPUT="$(docker run --rm \
+    --env "PI_RUN_WORKLOAD_UID=${PROXY_UID}" "${SIDECAR_IMAGE}" 2>&1)"
+COLLISION_STATUS=$?
+set -e
+(( COLLISION_STATUS != 0 )) || fail "sidecar accepted a workload/proxy UID collision"
+[[ "${COLLISION_OUTPUT}" == *"workload UID collides with proxy UID: ${PROXY_UID}"* ]] \
+    || fail "sidecar UID collision had no clear diagnostic"
+echo "PASS blocked: workload/proxy UID collision"
+
 docker run -d --name "${TARGET}" --entrypoint busybox \
     "${WORKLOAD_IMAGE}" httpd -f -p 8080 >/dev/null
 TARGET_IP="$(docker inspect -f '{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "${TARGET}")"
 [[ -n "${TARGET_IP}" ]] || fail "private target has no address"
 
 docker run -d --name "${SIDECAR}" \
+    --env PI_RUN_WORKLOAD_UID=0 \
     --cap-add NET_ADMIN \
     --ulimit nofile=4096:4096 \
     --security-opt no-new-privileges=true \
