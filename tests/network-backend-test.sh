@@ -151,7 +151,7 @@ grep -Fx 'https_proxy=http://127.0.0.1:3128' "${DOCKER_LOG}" >/dev/null \
 grep -Fx 'NODE_USE_ENV_PROXY=1' "${DOCKER_LOG}" >/dev/null \
     || fail "Node environment proxy support was not enabled"
 ready_line="$(grep -n '/tmp/pi-run-egress-ready' "${DOCKER_LOG}" | head -1 | cut -d: -f1)"
-runtime_line="$(grep -n 'ghcr.io/aprilsoftware/pi-run:0.6.3' "${DOCKER_LOG}" | head -1 | cut -d: -f1)"
+runtime_line="$(grep -n 'ghcr.io/aprilsoftware/pi-run:0.7.0' "${DOCKER_LOG}" | head -1 | cut -d: -f1)"
 (( ready_line < runtime_line )) || fail "Pi started before sidecar readiness"
 grep -Fx rm "${DOCKER_LOG}" >/dev/null || fail "sidecar cleanup was not attempted"
 if grep -Fx host "${DOCKER_LOG}" >/dev/null; then
@@ -191,7 +191,7 @@ for failure in run ready; do
     status=$?
     set -e
     [[ ${status} -ne 0 ]] || fail "sidecar ${failure} failure was accepted"
-    if grep -Fx 'ghcr.io/aprilsoftware/pi-run:0.6.3' "${DOCKER_LOG}" >/dev/null; then
+    if grep -Fx 'ghcr.io/aprilsoftware/pi-run:0.7.0' "${DOCKER_LOG}" >/dev/null; then
         fail "Pi started after sidecar ${failure} failure"
     fi
     [[ ! -e "$(< "${POLICY_DIR_CAPTURE}")" ]] \
