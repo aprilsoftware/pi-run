@@ -262,11 +262,20 @@ had no `NET_ADMIN`, could not see the sidecar policy, and remained unable to
 connect after the proxy was killed. The cleanup trap removed every test
 container; no custom Docker network was created.
 
-This proves the bounded network-namespace and sidecar pattern on Pi-Run's Debian
-Docker baseline. It does not yet prove the released Pi-Run image, entrypoint,
-profile/session persistence, TUI behavior, provider endpoints, credentials,
-SSH, or snapshots. The two disposable test images remain only as a local build
-cache unless removed explicitly.
+A second harness built the current Pi-Run Dockerfile and ran that image in the
+sidecar network namespace. The real entrypoint mapped the host UID/GID, executed
+`pi --version`, and persisted writes through disposable workspace, selected
+profile, and session-path mounts. The image had no `NET_ADMIN`, could not see a
+sibling profile or the sidecar policy, allowed `example.com:443`, blocked an
+unlisted hostname and direct public IP, and remained blocked after proxy
+termination. Its containers and temporary host state were removed.
+
+Together these results prove the bounded network-namespace and sidecar pattern
+with the current source-built Pi-Run image on Pi-Run's Debian Docker baseline.
+They do not prove a published release artifact, interactive TUI behavior,
+actual transcript creation or resume, provider credentials and model requests,
+Guardian, SSH, snapshots, or normal launcher integration. The locally built
+images remain only as build cache unless removed explicitly.
 
 ## Important limitations
 
