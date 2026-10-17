@@ -252,6 +252,22 @@ The harness should inspect actual kernel-visible capabilities and routes rather
 than infer them from Docker arguments. Negative tests are required; a successful
 allowed request alone is not evidence of enforcement.
 
+### Observed feasibility result
+
+The disposable harness passed on Debian Trixie with Docker Engine 26.1.5. It
+allowed `example.com:443` through the explicit proxy and blocked an unlisted
+hostname, an IP literal through the proxy, direct public IP access, a private
+container address, alternate DNS, direct IPv6, and non-proxy TCP. The workload
+had no `NET_ADMIN`, could not see the sidecar policy, and remained unable to
+connect after the proxy was killed. The cleanup trap removed every test
+container; no custom Docker network was created.
+
+This proves the bounded network-namespace and sidecar pattern on Pi-Run's Debian
+Docker baseline. It does not yet prove the released Pi-Run image, entrypoint,
+profile/session persistence, TUI behavior, provider endpoints, credentials,
+SSH, or snapshots. The two disposable test images remain only as a local build
+cache unless removed explicitly.
+
 ## Important limitations
 
 - This is container isolation on a shared host kernel, not a VM sandbox.
