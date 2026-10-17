@@ -64,19 +64,32 @@ boundary.
 
 ## Networking and service authority
 
-Normal sessions use `--network host`. Loopback can reach Docker-host services,
-and surrounding routes can expose LAN, internet, cloud, cluster, and database
-endpoints. Package managers, web tools, service clients, and generated commands
-can transfer data over that network.
+The default `docker-host` backend uses `--network host`. Loopback can reach
+Docker-host services, and surrounding routes can expose LAN, internet, cloud,
+cluster, and database endpoints. Package managers, web tools, service clients,
+and generated commands can transfer data over that network.
 
-Pi-Run does not apply an internal network allowlist. Service authentication and
-remote authorization remain independent controls. A credential, kubeconfig,
-client binary, or reachable port is capability—not user permission for an
-unrelated operation.
+An invocation can instead select `--network docker-offline` before the workspace
+or `resume` command. This maps strictly to Docker `--network none` for every Pi
+container started by that invocation. It provides loopback but no external
+container interface, and a failed launch is not retried with host networking.
+The effective backend is printed before Pi starts.
+
+Offline networking does not make writable mounts read-only, hide credentials in
+the selected profile, undo prior writes, or turn the container into a VM. It is
+selected per invocation and is not persisted with a profile or session. A later
+resume uses the default host backend unless offline mode is selected again.
+
+Pi-Run does not yet apply a hostname allowlist in normal launcher operation.
+Service authentication and remote authorization remain independent controls. A
+credential, kubeconfig, client binary, or reachable port is capability—not user
+permission for an unrelated operation.
 
 Snapshot and SSH management containers can use different network modes for their
-bounded operations. Consult their task/reference guides rather than applying
-normal-session assumptions to every host command.
+bounded operations. An offline Pi container may request a snapshot whose
+separate host-managed operation uses its documented backend. Consult those
+task/reference guides rather than applying session networking assumptions to
+every host command.
 
 ## Profile, shared, and skill exposure
 

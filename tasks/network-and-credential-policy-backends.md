@@ -2,8 +2,9 @@
 
 ## Status and purpose
 
-This document records the v0.7 investigation and recommended experiment. It
-does not describe implemented Pi-Run behavior or authorize production use.
+This document records the v0.7 investigation, experimental `docker-offline`
+launcher mode, and recommended restricted-backend work. The branch is a
+prerelease experiment and does not authorize production use.
 
 The goal is to add enforceable network policy while retaining Pi-Run's existing
 profile, workspace, session, Guardian, and snapshot semantics. The preferred
@@ -164,17 +165,21 @@ cleanup. Neither container receives the Docker socket.
 
 ## Backend model
 
-The initial product vocabulary should remain small:
+The initial product vocabulary remains small:
 
-- `docker-host` — current host-network behavior;
-- `docker-offline` — no network namespace access; and
-- `docker-restricted` — default-deny egress through the sidecar.
+- `docker-host` — current host-network behavior and the unchanged default;
+- `docker-offline` — implemented as an explicit launch option using Docker
+  `--network none`; and
+- `docker-restricted` — default-deny egress through the sidecar, not yet
+  integrated into the launcher.
 
-Backend selection must be explicit. A restricted-backend failure must not retry
-with `docker-host`.
+The launcher displays the effective backend before starting Pi. A failed
+offline launch does not retry with `docker-host`; the same fail-closed rule must
+apply to the future restricted backend. Backend selection is per invocation and
+is not yet stored in profile, policy, or machine configuration.
 
-No general backend framework should be added before the sidecar experiment
-passes. The launcher may initially implement the experiment as a separate path.
+No general backend framework is introduced. The restricted sidecar remains an
+experiment outside the launcher path.
 
 ## Policy ownership
 
@@ -274,8 +279,15 @@ Together these results prove the bounded network-namespace and sidecar pattern
 with the current source-built Pi-Run image on Pi-Run's Debian Docker baseline.
 They do not prove a published release artifact, interactive TUI behavior,
 actual transcript creation or resume, provider credentials and model requests,
-Guardian, SSH, snapshots, or normal launcher integration. The locally built
-images remain only as build cache unless removed explicitly.
+Guardian, SSH, or snapshots. The locally built images remain only as build cache
+unless removed explicitly.
+
+A separate launcher smoke test used a disposable Pi-Run home and the
+source-built image. It reported `network=docker-offline`, ran Pi 1.1.0, and left
+no test container after exit. This confirms launcher-to-Docker mode selection
+and image startup; the smoke invocation used `pi --version` and therefore did
+not itself attempt an outbound packet. Packet denial follows Docker's
+`--network none` contract and the launch argument has deterministic coverage.
 
 ## Important limitations
 

@@ -7,7 +7,7 @@ umask 077
 usage() {
     cat >&2 <<EOF
 Usage:
-  pi-run [--home <path>] [--profile <name>] <workspace> [pi arguments...]
+  pi-run [--home <path>] [--profile <name>] [--network <docker-host|docker-offline>] <workspace> [pi arguments...]
   pi-run [--home <path>] init
   pi-run [--home <path>] home
   pi-run version
@@ -37,6 +37,7 @@ Usage:
 Examples:
   pi-run .
   pi-run --profile default . -c
+  pi-run --network docker-offline .
   pi-run workspace list
   pi-run session list
   pi-run resume
@@ -130,6 +131,8 @@ source "${PI_RUN_LIB_ROOT}/doctor.sh"
 PROFILE="default"
 PROFILE_EXPLICIT=false
 HOME_OVERRIDE=""
+NETWORK_BACKEND="docker-host"
+NETWORK_EXPLICIT=false
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -142,6 +145,12 @@ while [[ $# -gt 0 ]]; do
             require_value "$1" "${2:-}"
             PROFILE="$2"
             PROFILE_EXPLICIT=true
+            shift 2
+            ;;
+        --network)
+            require_value "$1" "${2:-}"
+            NETWORK_BACKEND="$2"
+            NETWORK_EXPLICIT=true
             shift 2
             ;;
         -h|--help)
@@ -161,6 +170,15 @@ while [[ $# -gt 0 ]]; do
 done
 
 validate_profile_name "${PROFILE}"
+case "${NETWORK_BACKEND}" in
+    docker-host|docker-offline) ;;
+    docker-restricted)
+        fail "network backend is not implemented: ${NETWORK_BACKEND}"
+        ;;
+    *)
+        fail "unsupported network backend: ${NETWORK_BACKEND}"
+        ;;
+esac
 
 PI_RUN_HOME_INPUT="${HOME_OVERRIDE:-${PI_RUN_HOME:-${HOME}/Pi-Run}}"
 [[ -n "${PI_RUN_HOME_INPUT}" ]] || fail "Pi-Run home must not be empty"
@@ -350,6 +368,13 @@ sanitize_display() {
 
 RESUME_LAUNCH=false
 COMMAND="${1:-}"
+if [[ "${NETWORK_EXPLICIT}" == true ]]; then
+    case "${COMMAND}" in
+        version|machine-id|doctor|upgrade|home|init|profile|skill|workspace|session|ssh-key|snapshot)
+            fail "--network is only valid for workspace and resume launches"
+            ;;
+    esac
+fi
 if [[ "${COMMAND}" == snapshot && "${2:-}" == restore ]]; then
     HOME_LOCK_MODE=exclusive
 fi
@@ -614,6 +639,10 @@ trap cleanup_snapshot_launch_request EXIT
 HOST_UID="$(id -u)"
 HOST_GID="$(id -g)"
 IMAGE="${PI_RUN_IMAGE:-${DEFAULT_IMAGE}}"
+case "${NETWORK_BACKEND}" in
+    docker-host) DOCKER_NETWORK_MODE=host ;;
+    docker-offline) DOCKER_NETWORK_MODE=none ;;
+esac
 
 DOCKER_ARGS=(
     --rm
@@ -625,7 +654,7 @@ DOCKER_ARGS=(
     --cap-add=SETGID
     --cap-add=DAC_READ_SEARCH
     --security-opt=no-new-privileges
-    --network host
+    --network "${DOCKER_NETWORK_MODE}"
     --workdir /workspace
     --mount "type=bind,src=${WORKSPACE},dst=/workspace"
     --mount "type=bind,src=${PROFILE_DIR},dst=/profile"
@@ -694,6 +723,7 @@ done
 
 echo "pi-run: home=${PI_RUN_HOME_RESOLVED}" >&2
 echo "pi-run: profile=${PROFILE} workspace=${WORKSPACE}" >&2
+echo "pi-run: network=${NETWORK_BACKEND}" >&2
 echo "pi-run: Guardian loaded; review mode starts Off" >&2
 [[ "${SHARED_MODE}" == "read-write" ]] && echo "pi-run: shared=/shared (read-write)" >&2
 

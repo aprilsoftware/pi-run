@@ -26,11 +26,17 @@ Run slash commands after Pi's interface opens:
 ```
 
 Arguments after the workspace are forwarded to Pi. Launcher-wide options such
-as `--home` and `--profile` belong before the workspace:
+as `--home`, `--profile`, and `--network` belong before the workspace:
 
 ```bash
 pi-run --home /private/pi-run --profile operations /srv/runbooks -r
+pi-run --network docker-offline /srv/runbooks
 ```
+
+`docker-host` is the default network backend. Select `docker-offline` explicitly
+for a session container with Docker `--network none`. The selection applies only
+to that invocation, including any container restart requested by the snapshot
+workflow; it is not saved with the profile or session.
 
 ## Initialization behavior
 
@@ -130,6 +136,7 @@ the host CA bundle, skills, and session paths. On launch it reports:
 ```text
 pi-run: home=<resolved-data-home>
 pi-run: profile=<profile> workspace=<resolved-workspace>
+pi-run: network=<docker-host|docker-offline>
 pi-run: Guardian loaded; review mode starts Off
 ```
 
