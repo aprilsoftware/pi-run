@@ -17,6 +17,10 @@ SPDX='# SPDX-License-Identifier: MIT'
     || fail "standalone installer has no SPDX license identifier"
 [[ "$(sed -n '1p' "${ROOT}/docker/Dockerfile")" == "${SPDX}" ]] \
     || fail "Dockerfile has no SPDX license identifier"
+[[ "$(sed -n '1p' "${ROOT}/docker/egress/Dockerfile")" == "${SPDX}" ]] \
+    || fail "egress Dockerfile has no SPDX license identifier"
+[[ "$(sed -n '2p' "${ROOT}/docker/egress/entrypoint.sh")" == "${SPDX}" ]] \
+    || fail "egress entrypoint has no SPDX license identifier"
 [[ "$(sed -n '1p' "${ROOT}/.github/workflows/release.yml")" == "${SPDX}" ]] \
     || fail "release workflow has no SPDX license identifier"
 [[ "$(sed -n '2p' "${BASH_SOURCE[0]}")" == "${SPDX}" ]] \
@@ -29,7 +33,37 @@ cmp -s "${ROOT}/LICENSE" "${image_license}" \
 grep -Fx 'COPY licenses/pi-run-LICENSE /usr/local/share/licenses/pi-run/LICENSE' \
     "${ROOT}/docker/Dockerfile" >/dev/null \
     || fail "Dockerfile does not install the Pi-Run license"
-grep -Fx '            "LICENSE" \' "${ROOT}/.github/workflows/release.yml" >/dev/null \
+grep -Fx 'COPY licenses/pi-run-LICENSE /usr/local/share/licenses/pi-run/LICENSE' \
+    "${ROOT}/docker/egress/Dockerfile" >/dev/null \
+    || fail "egress Dockerfile does not install the Pi-Run license"
+[[ -x "${ROOT}/docker/egress/entrypoint.sh" && ! -L "${ROOT}/docker/egress/entrypoint.sh" ]] \
+    || fail "egress entrypoint is missing or unsafe"
+cmp -s "${ROOT}/experiments/docker-egress/entrypoint.sh" \
+    "${ROOT}/docker/egress/entrypoint.sh" \
+    || fail "production egress entrypoint differs from the proven experiment"
+grep -Fx '  RUNTIME_IMAGE_NAME: ghcr.io/aprilsoftware/pi-run' \
+    "${ROOT}/.github/workflows/release.yml" >/dev/null \
+    || fail "release workflow has no versioned runtime image name"
+grep -Fx '  EGRESS_IMAGE_NAME: ghcr.io/aprilsoftware/pi-run-egress' \
+    "${ROOT}/.github/workflows/release.yml" >/dev/null \
+    || fail "release workflow has no versioned egress image name"
+grep -Fx "            --tag \"\${RUNTIME_IMAGE_NAME}:\${PI_RUN_VERSION}\" \\" \
+    "${ROOT}/.github/workflows/release.yml" >/dev/null \
+    || fail "release workflow does not version the runtime image"
+grep -Fx "            --file docker/egress/Dockerfile \\" \
+    "${ROOT}/.github/workflows/release.yml" >/dev/null \
+    || fail "release workflow does not build the egress Dockerfile"
+grep -Fx "            --tag \"\${EGRESS_IMAGE_NAME}:\${PI_RUN_VERSION}\" \\" \
+    "${ROOT}/.github/workflows/release.yml" >/dev/null \
+    || fail "release workflow does not version the egress image"
+grep -Fx "          for image in \"\${RUNTIME_IMAGE_NAME}\" \"\${EGRESS_IMAGE_NAME}\"; do" \
+    "${ROOT}/.github/workflows/release.yml" >/dev/null \
+    || fail "release workflow does not push both images"
+if grep -E -- '--tag .*:latest|docker push .*:latest' \
+    "${ROOT}/.github/workflows/release.yml" >/dev/null; then
+    fail "release workflow publishes a mutable latest image"
+fi
+grep -Fx "            \"LICENSE\" \\" "${ROOT}/.github/workflows/release.yml" >/dev/null \
     || fail "release workflow does not publish the license"
 
 EXPECTED="$(printf '%s\n' \

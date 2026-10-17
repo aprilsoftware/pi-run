@@ -35,7 +35,20 @@ development and operations toolchain. Credentials, workspaces, selected skills,
 and optional host resources remain separate runtime inputs; an installed tool
 does not grant authority to use a service.
 
-Check which launcher and image are selected without starting Pi:
+Build the versioned egress sidecar separately from the same Docker context:
+
+```bash
+docker build -t pi-run-egress:dev -f docker/egress/Dockerfile docker
+```
+
+The sidecar image contains Squid, iptables, the proven firewall entrypoint, and
+the Pi-Run license. It contains no hostname policy; a future restricted launch
+must mount already-resolved host-owned policy at runtime. Building this image
+does not enable the experimental restricted backend in the launcher. The
+production Dockerfile was build-validated on Debian Trixie with Docker Engine
+26.1.5 during the v0.7 experiment.
+
+Check which launcher and runtime image are selected without starting Pi:
 
 ```bash
 PI_RUN_IMAGE=pi-run:dev ./bin/pi-run version
@@ -66,6 +79,7 @@ independent services.
 | `lib/pi-run/upgrade.sh` | Release discovery and atomic application upgrade |
 | `docker/Dockerfile` | Versioned runtime toolchain and bundled components |
 | `docker/entrypoint.sh` | Runtime UID/GID mapping, setup, and privilege drop |
+| `docker/egress/` | Versioned restricted-egress sidecar image and firewall/proxy entrypoint |
 | `docker/extensions/` | Planning, Guardian, and snapshot-request extensions |
 | `docker/skills/` | Runtime-owned core skills |
 | `templates/profiles/default/` | Definitions copied when the data home is initialized |
@@ -130,7 +144,8 @@ Keep these release coordinates aligned:
 - `VERSION` contains `X.Y.Z` without a `v` prefix.
 - `PI_RUN_DEFAULT_VERSION` in `install.sh` matches `VERSION`.
 - The GitHub Release tag is exactly `vX.Y.Z`.
-- The runtime image tag is exactly `X.Y.Z`.
+- The runtime image tag is exactly `ghcr.io/aprilsoftware/pi-run:X.Y.Z`.
+- The egress image tag is exactly `ghcr.io/aprilsoftware/pi-run-egress:X.Y.Z`.
 
 Changing a version or publishing artifacts requires its own reviewed release
 scope; a successful local archive build is not publication approval.
@@ -139,9 +154,10 @@ scope; a successful local archive build is not publication approval.
 
 Publishing a GitHub Release, including a prerelease, triggers
 `.github/workflows/release.yml`. The workflow verifies that its tag matches
-`VERSION`, builds the application archive, builds and pushes the matching
-Linux/amd64 runtime image, and uploads `LICENSE`, `install.sh`, the archive, and
-its checksum to that release. It does not publish a mutable `latest` image.
+`VERSION`, builds the application archive, builds and pushes matching
+Linux/amd64 runtime and egress images, and uploads `LICENSE`, `install.sh`, the
+archive, and its checksum to that release. Both images use the exact release
+version; the workflow does not publish mutable `latest` images.
 
 For candidate testing, publish the intended canonical tag as a prerelease and
 install it by exact tag (`pi-run upgrade vX.Y.Z`). Automatic upgrade discovery
