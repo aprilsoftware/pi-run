@@ -117,8 +117,9 @@ pi-run .
 ```
 
 The downloaded installer contains its matching version. It verifies the
-versioned application archive, pulls the matching runtime image, and installs
-the `pi-run` command. `pi-run init` creates the data home and initial profile;
+versioned application archive, pulls the matching runtime and egress images,
+and installs the `pi-run` command. `pi-run init` creates the data home and
+initial profile;
 `pi-run .` opens the current directory as a writable workspace.
 
 Restricted assets require the

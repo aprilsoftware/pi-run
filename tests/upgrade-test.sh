@@ -331,6 +331,7 @@ PATH="${TMP}/fake-bin:${PATH}" HOME="${HOME_DIR}" PI_RUN_RELEASE_BASE_URL="${REL
 [[ "$(cat "${HOME_DIR}/preserve")" == 'user data' ]]
 "${BIN_DIR}/pi-run" version | grep -F 'pi-run v0.5.4' >/dev/null
 grep -Fx 'ghcr.io/aprilsoftware/pi-run:0.5.4' "${DOCKER_LOG}" >/dev/null
+grep -Fx 'ghcr.io/aprilsoftware/pi-run-egress:0.5.4' "${DOCKER_LOG}" >/dev/null
 
 # Installation checks happen before release-list network access.
 : > "${CURL_LOG}"
@@ -361,6 +362,7 @@ grep -Fx token "${GH_LOG}" >/dev/null || fail "authenticated gh session was not 
 [[ -d "${INSTALL_ROOT}/releases/0.5.3" && -d "${INSTALL_ROOT}/releases/0.5.4" ]]
 [[ "$(cat "${HOME_DIR}/preserve")" == 'user data' ]]
 grep -Fx 'ghcr.io/aprilsoftware/pi-run:0.5.5' "${DOCKER_LOG}" >/dev/null
+grep -Fx 'ghcr.io/aprilsoftware/pi-run-egress:0.5.5' "${DOCKER_LOG}" >/dev/null
 
 # Current releases succeed without downloading or pulling another image.
 before_pulls="$(wc -l < "${DOCKER_LOG}")"
@@ -458,14 +460,18 @@ assert_contains "${output}" "FAILED"
 [[ ! -e "${INSTALL_ROOT}/releases/0.5.6" ]]
 
 make_release 0.5.6
-set +e
-output="$(PATH="${TMP}/fake-bin:${PATH}" HOME="${HOME_DIR}" PI_RUN_RELEASE_BASE_URL="${RELEASE_BASE}" \
-    FAIL_IMAGE='ghcr.io/aprilsoftware/pi-run:0.5.6' "${BIN_DIR}/pi-run" upgrade v0.5.6 2>&1)"
-status=$?
-set -e
-[[ ${status} -ne 0 ]] || fail "failed image pull was accepted"
-[[ "$(readlink "${INSTALL_ROOT}/current")" == 'releases/0.5.5' ]]
-[[ ! -e "${INSTALL_ROOT}/releases/0.5.6" ]]
+for failed_image in \
+    'ghcr.io/aprilsoftware/pi-run:0.5.6' \
+    'ghcr.io/aprilsoftware/pi-run-egress:0.5.6'; do
+    set +e
+    output="$(PATH="${TMP}/fake-bin:${PATH}" HOME="${HOME_DIR}" PI_RUN_RELEASE_BASE_URL="${RELEASE_BASE}" \
+        FAIL_IMAGE="${failed_image}" "${BIN_DIR}/pi-run" upgrade v0.5.6 2>&1)"
+    status=$?
+    set -e
+    [[ ${status} -ne 0 ]] || fail "failed image pull was accepted: ${failed_image}"
+    [[ "$(readlink "${INSTALL_ROOT}/current")" == 'releases/0.5.5' ]]
+    [[ ! -e "${INSTALL_ROOT}/releases/0.5.6" ]]
+done
 
 mkdir -p "${TMP}/fail-copy-bin"
 printf '#!/bin/sh\nexit 1\n' > "${TMP}/fail-copy-bin/cp"

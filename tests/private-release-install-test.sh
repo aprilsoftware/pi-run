@@ -69,7 +69,13 @@ esac
 EOF
 cat > "${TMP}/fake-bin/docker" <<'EOF'
 #!/bin/sh
-[ "$1" = pull ] && [ "$2" = ghcr.io/aprilsoftware/pi-run:0.6.3 ]
+set -eu
+[ "$1" = pull ] || exit 2
+case "$2" in
+    ghcr.io/aprilsoftware/pi-run:0.6.3|ghcr.io/aprilsoftware/pi-run-egress:0.6.3) ;;
+    *) exit 2 ;;
+esac
+printf '%s\n' "$2" >> "${DOCKER_LOG:?}"
 EOF
 chmod 0755 "${TMP}/fake-bin/curl" "${TMP}/fake-bin/docker"
 
@@ -79,6 +85,7 @@ chmod 0644 "${TMP}/downloaded-install.sh"
 [[ "$(stat -c '%a' "${TMP}/downloaded-install.sh")" == 644 ]]
 
 export CURL_LOG="${TMP}/curl.log"
+export DOCKER_LOG="${TMP}/docker.log"
 export FIXTURE_RELEASE="${TMP}/release"
 PATH="${TMP}/fake-bin:${PATH}" \
 HOME="${TMP}/home" \
@@ -95,6 +102,12 @@ for component in doctor.sh upgrade.sh; do
 done
 [[ "$(cat "${TMP}/application/current/VERSION")" == 0.6.3 ]] \
     || fail "private install selected the wrong release"
+grep -Fx 'ghcr.io/aprilsoftware/pi-run:0.6.3' "${DOCKER_LOG}" >/dev/null \
+    || fail "private install did not pull the runtime image"
+grep -Fx 'ghcr.io/aprilsoftware/pi-run-egress:0.6.3' "${DOCKER_LOG}" >/dev/null \
+    || fail "private install did not pull the egress image"
+[[ "$(wc -l < "${DOCKER_LOG}")" -eq 2 ]] \
+    || fail "private install pulled an unexpected image set"
 grep -Fx 'https://api.github.com/repos/aprilsoftware/pi-run/releases/tags/v0.6.3' \
     "${TMP}/curl.log" >/dev/null
 grep -Fx 'https://api.github.test/releases/assets/1' "${TMP}/curl.log" >/dev/null

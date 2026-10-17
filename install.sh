@@ -24,7 +24,8 @@ require_command grep
 PI_RUN_VERSION=${PI_RUN_INSTALL_VERSION:-${PI_RUN_DEFAULT_VERSION}}
 printf '%s\n' "${PI_RUN_VERSION}" | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$' \
     || fail "invalid release version: ${PI_RUN_VERSION}"
-IMAGE="ghcr.io/aprilsoftware/pi-run:${PI_RUN_VERSION}"
+RUNTIME_IMAGE="ghcr.io/aprilsoftware/pi-run:${PI_RUN_VERSION}"
+EGRESS_IMAGE="ghcr.io/aprilsoftware/pi-run-egress:${PI_RUN_VERSION}"
 ARCHIVE="pi-run-${PI_RUN_VERSION}.tar.gz"
 CHECKSUM="${ARCHIVE}.sha256"
 DEFAULT_RELEASE_BASE="https://github.com/${REPOSITORY}/releases/download/v${PI_RUN_VERSION}"
@@ -215,10 +216,13 @@ if find "${PACKAGE_DIR}" -mindepth 1 ! -type d ! -type f -print -quit | grep -q 
     fail "release archive contains a symlink or special file"
 fi
 
-# Pull before changing the active installation. Private packages require a prior
-# `docker login ghcr.io`; the installer never handles registry credentials.
-echo "Pulling ${IMAGE}..."
-docker pull "${IMAGE}"
+# Pull both version-matched images before changing the active installation.
+# Private packages require a prior `docker login ghcr.io`; the installer never
+# handles registry credentials.
+for IMAGE in "${RUNTIME_IMAGE}" "${EGRESS_IMAGE}"; do
+    echo "Pulling ${IMAGE}..."
+    docker pull "${IMAGE}"
+done
 
 mkdir -p "${INSTALL_ROOT}/releases" "${BIN_DIR}"
 STAGED_RELEASE="${INSTALL_ROOT}/releases/.${PI_RUN_VERSION}.tmp.$$"
