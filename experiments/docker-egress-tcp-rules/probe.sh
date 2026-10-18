@@ -83,6 +83,21 @@ jq -n --arg target "${TARGET_IP}/32" --arg any "${ANY_TARGET_IP}/32" '{
  ]
 }' > "${TMP}/rules.json"
 chmod 0600 "${TMP}/rules.json"
+for invalid_policy in \
+    '{"schemaVersion":1,"rules":[]}' \
+    '{"schemaVersion":1,"rules":[{"host":"one.test","domain":"two.test"}]}' \
+    '{"schemaVersion":1,"rules":[{"host":"one.test","tcpPorts":[0]}]}' \
+    '{"schemaVersion":1,"rules":[{"cidr":"10.0.0.0/99"}]}'; do
+    printf '%s\n' "${invalid_policy}" > "${TMP}/invalid.json"
+    if docker run --rm --network "${NETWORK}" --cap-add NET_ADMIN \
+        --env "PI_RUN_WORKLOAD_UID=${WORKLOAD_UID}" \
+        --mount "type=bind,src=${TMP}/invalid.json,dst=/policy/rules.json,readonly" \
+        "${SIDECAR_IMAGE}" >/dev/null 2>&1; then
+        fail "sidecar accepted an invalid rule policy"
+    fi
+done
+echo "PASS blocked: invalid rule policies"
+
 docker run -d --name "${SIDECAR}" --network "${NETWORK}" \
     --env "PI_RUN_WORKLOAD_UID=${WORKLOAD_UID}" --cap-add NET_ADMIN \
     --ulimit nofile=4096:4096 --security-opt no-new-privileges=true \

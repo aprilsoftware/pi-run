@@ -46,9 +46,13 @@ grep -Fx 'COPY network-policy-resolver.mjs /usr/local/bin/pi-run-network-policy-
     || fail "network policy resolver is missing or unsafe"
 [[ -x "${ROOT}/docker/egress/entrypoint.sh" && ! -L "${ROOT}/docker/egress/entrypoint.sh" ]] \
     || fail "egress entrypoint is missing or unsafe"
-cmp -s "${ROOT}/experiments/docker-egress/entrypoint.sh" \
+cmp -s "${ROOT}/experiments/docker-egress-tcp-rules/entrypoint.sh" \
     "${ROOT}/docker/egress/entrypoint.sh" \
-    || fail "production egress entrypoint differs from the proven experiment"
+    || fail "production egress entrypoint differs from the generalized TCP experiment"
+for package in iproute2 jq; do
+    grep -Fx "        ${package} \\" "${ROOT}/docker/egress/Dockerfile" >/dev/null \
+        || fail "egress Dockerfile does not install ${package}"
+done
 grep -Fx '  RUNTIME_IMAGE_NAME: ghcr.io/aprilsoftware/pi-run' \
     "${ROOT}/.github/workflows/release.yml" >/dev/null \
     || fail "release workflow has no versioned runtime image name"

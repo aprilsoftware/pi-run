@@ -52,7 +52,7 @@ case "${1:-}" in
             [ "$argument" = NET_ADMIN ] && sidecar=true
             [ "$argument" = --cidfile ] && next_is_cidfile=true
             case "$argument" in
-                type=bind,src=*,dst=/policy/allowed-hosts.txt,readonly)
+                type=bind,src=*,dst=/policy/rules.json,readonly)
                     policy_source=${argument#*src=}
                     policy_source=${policy_source%,dst=*}
                     ;;
@@ -83,7 +83,7 @@ exit 0
 EOF
 chmod 0755 "${TMP}/fake-bin/docker" "${TMP}/fake-bin/sleep"
 export DOCKER_LOG="${TMP}/docker.log"
-export POLICY_CAPTURE="${TMP}/allowed-hosts.txt"
+export POLICY_CAPTURE="${TMP}/rules.json"
 export POLICY_DIR_CAPTURE="${TMP}/policy-dir"
 
 # Existing launches retain host networking and identify the effective backend.
@@ -125,16 +125,22 @@ grep -F 'pi-run: network=docker-restricted' "${TMP}/stderr" >/dev/null \
     || fail "restricted backend was not reported"
 grep -F 'pi-run: allowed-https=example.com:443,api.example.net:443' \
     "${TMP}/stderr" >/dev/null || fail "restricted exposure was not reported"
-printf '%s\n' example.com api.example.net > "${TMP}/expected-policy"
-cmp -s "${TMP}/expected-policy" "${POLICY_CAPTURE}" \
-    || fail "runtime hostname policy was incorrect"
+jq -e '
+    . == {
+        schemaVersion: 1,
+        rules: [
+            {host: "example.com", tcpPorts: [443]},
+            {host: "api.example.net", tcpPorts: [443]}
+        ]
+    }
+' "${POLICY_CAPTURE}" >/dev/null || fail "runtime TCP rule policy was incorrect"
 [[ ! -e "$(< "${POLICY_DIR_CAPTURE}")" ]] \
     || fail "runtime hostname policy was not cleaned up"
 grep -Fx 'example.invalid/pi-run-egress:test' "${DOCKER_LOG}" >/dev/null \
     || fail "selected egress image was not used"
-grep -F 'dst=/policy/allowed-hosts.txt,readonly' "${DOCKER_LOG}" >/dev/null \
+grep -F 'dst=/policy/rules.json,readonly' "${DOCKER_LOG}" >/dev/null \
     || fail "policy was not mounted read-only"
-[[ "$(grep -Fc 'dst=/policy/allowed-hosts.txt' "${DOCKER_LOG}")" -eq 1 ]] \
+[[ "$(grep -Fc 'dst=/policy/rules.json' "${DOCKER_LOG}")" -eq 1 ]] \
     || fail "policy was exposed to more than the sidecar"
 [[ "$(grep -Fxc NET_ADMIN "${DOCKER_LOG}")" -eq 1 ]] \
     || fail "NET_ADMIN was not isolated to the sidecar"

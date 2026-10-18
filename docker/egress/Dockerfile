@@ -5,7 +5,9 @@ FROM debian:trixie-slim
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
+        iproute2 \
         iptables \
+        jq \
         squid \
         squidclient \
     && rm -rf /var/lib/apt/lists/*

@@ -718,8 +718,12 @@ case "${NETWORK_BACKEND}" in
         EGRESS_POLICY_DIR="$(mktemp -d /tmp/pi-run-egress.XXXXXX)"
         SIDECAR_ID_FILE="${EGRESS_POLICY_DIR}/sidecar.cid"
         chmod 0700 "${EGRESS_POLICY_DIR}"
-        printf '%s\n' "${ALLOWED_HOSTS[@]}" > "${EGRESS_POLICY_DIR}/allowed-hosts.txt"
-        chmod 0600 "${EGRESS_POLICY_DIR}/allowed-hosts.txt"
+        jq -cn --args '
+            $ARGS.positional |
+            map({host: ., tcpPorts: [443]}) |
+            {schemaVersion: 1, rules: .}
+        ' -- "${ALLOWED_HOSTS[@]}" > "${EGRESS_POLICY_DIR}/rules.json"
+        chmod 0600 "${EGRESS_POLICY_DIR}/rules.json"
         for ALLOWED_HOST in "${ALLOWED_HOSTS[@]}"; do
             ALLOWED_HOSTS_DISPLAY+="${ALLOWED_HOSTS_DISPLAY:+,}${ALLOWED_HOST}:443"
         done
@@ -826,7 +830,7 @@ if [[ "${NETWORK_BACKEND}" == docker-restricted ]]; then
         --cap-add NET_ADMIN \
         --ulimit nofile=4096:4096 \
         --security-opt no-new-privileges=true \
-        --mount "type=bind,src=${EGRESS_POLICY_DIR}/allowed-hosts.txt,dst=/policy/allowed-hosts.txt,readonly" \
+        --mount "type=bind,src=${EGRESS_POLICY_DIR}/rules.json,dst=/policy/rules.json,readonly" \
         "${EGRESS_IMAGE}" >/dev/null; then
         fail "restricted egress sidecar failed to start"
     fi
