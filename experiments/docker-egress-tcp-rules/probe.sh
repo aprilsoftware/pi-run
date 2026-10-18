@@ -10,16 +10,20 @@ command -v docker >/dev/null 2>&1 || { echo "docker-egress-tcp-rules: docker una
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SUFFIX="$(date +%s)-$$"; NETWORK="pirun-rules-${SUFFIX}"
-SIDECAR="pirun-rules-sidecar-${SUFFIX}"; WORKLOAD="pirun-rules-workload-${SUFFIX}"
+SIDECAR="pirun-rules-sidecar-${SUFFIX}"; ALL_SIDECAR="pirun-rules-all-${SUFFIX}"
+WORKLOAD="pirun-rules-workload-${SUFFIX}"
 TARGET="pirun-rules-target-${SUFFIX}"; ANY_TARGET="pirun-rules-any-${SUFFIX}"
 DENIED_TARGET="pirun-rules-denied-${SUFFIX}"; WORKLOAD_UID=2000
 PREFIX="${PI_RUN_EGRESS_RULES_IMAGE_PREFIX:-pi-run-egress-rules-probe}"
-SIDECAR_IMAGE="${PREFIX}:sidecar"; WORKLOAD_IMAGE="${PREFIX}:workload"; TMP="$(mktemp -d)"
+SIDECAR_IMAGE="${PREFIX}:sidecar-${SUFFIX}"
+WORKLOAD_IMAGE="${PREFIX}:workload-${SUFFIX}"
+TMP="$(mktemp -d)"
 
 cleanup() {
-    docker rm -f "${WORKLOAD}" "${SIDECAR}" "${TARGET}" "${ANY_TARGET}" \
+    docker rm -f "${WORKLOAD}" "${SIDECAR}" "${ALL_SIDECAR}" "${TARGET}" "${ANY_TARGET}" \
         "${DENIED_TARGET}" >/dev/null 2>&1 || true
     docker network rm "${NETWORK}" >/dev/null 2>&1 || true
+    docker image rm "${SIDECAR_IMAGE}" "${WORKLOAD_IMAGE}" >/dev/null 2>&1 || true
     rm -rf "${TMP}"
 }
 trap cleanup EXIT
@@ -79,7 +83,8 @@ jq -n --arg target "${TARGET_IP}/32" --arg any "${ANY_TARGET_IP}/32" '{
  schemaVersion: 1, rules: [
   {host: "exact.rules.test", tcpPorts: [2222]},
   {domain: "wild.rules.test", tcpPorts: [8080]},
-  {cidr: $target, tcpPorts: [5432]}, {cidr: $any}
+  {cidr: $target, tcpPorts: [5432]}, {cidr: $any},
+  {internet: true, tcpPorts: [443, 9418]}
  ]
 }' > "${TMP}/rules.json"
 chmod 0600 "${TMP}/rules.json"
@@ -87,7 +92,10 @@ for invalid_policy in \
     '{"schemaVersion":1,"rules":[]}' \
     '{"schemaVersion":1,"rules":[{"host":"one.test","domain":"two.test"}]}' \
     '{"schemaVersion":1,"rules":[{"host":"one.test","tcpPorts":[0]}]}' \
-    '{"schemaVersion":1,"rules":[{"cidr":"10.0.0.0/99"}]}'; do
+    '{"schemaVersion":1,"rules":[{"cidr":"10.0.0.0/99"}]}' \
+    '{"schemaVersion":1,"rules":[{"internet":false}]}' \
+    '{"schemaVersion":1,"rules":[{"internet":true,"host":"one.test"}]}' \
+    '{"schemaVersion":1,"rules":[{"internet":true},{"internet":true,"tcpPorts":[443]}]}'; do
     printf '%s\n' "${invalid_policy}" > "${TMP}/invalid.json"
     if docker run --rm --network "${NETWORK}" --cap-add NET_ADMIN \
         --env "PI_RUN_WORKLOAD_UID=${WORKLOAD_UID}" \
@@ -97,6 +105,25 @@ for invalid_policy in \
     fi
 done
 echo "PASS blocked: invalid rule policies"
+
+printf '%s\n' '{"schemaVersion":1,"rules":[{"internet":true}]}' > "${TMP}/all-internet.json"
+docker run -d --name "${ALL_SIDECAR}" --network "${NETWORK}" \
+    --env "PI_RUN_WORKLOAD_UID=${WORKLOAD_UID}" --cap-add NET_ADMIN \
+    --ulimit nofile=4096:4096 --security-opt no-new-privileges=true \
+    --mount "type=bind,src=${TMP}/all-internet.json,dst=/policy/rules.json,readonly" \
+    "${SIDECAR_IMAGE}" >/dev/null
+for _ in $(seq 1 50); do
+    docker exec "${ALL_SIDECAR}" test -f /tmp/pi-run-egress-ready >/dev/null 2>&1 && break
+    sleep 0.2
+done
+docker exec "${ALL_SIDECAR}" grep -Fx \
+    'http_access allow CONNECT internet_public !internet_excluded' \
+    /tmp/pi-run-squid.conf >/dev/null \
+    || fail "all-TCP public internet proxy policy was not configured"
+docker exec "${ALL_SIDECAR}" iptables -w -C OUTPUT -m owner \
+    --uid-owner "${WORKLOAD_UID}" -d 0.0.0.0/0 -p tcp -j ACCEPT \
+    || fail "all-TCP public internet direct policy was not configured"
+docker rm -f "${ALL_SIDECAR}" >/dev/null
 
 docker run -d --name "${SIDECAR}" --network "${NETWORK}" \
     --env "PI_RUN_WORKLOAD_UID=${WORKLOAD_UID}" --cap-add NET_ADMIN \
@@ -109,6 +136,19 @@ for _ in $(seq 1 50); do
 done
 docker exec "${SIDECAR}" test -f /tmp/pi-run-egress-ready >/dev/null 2>&1 \
     || fail "sidecar did not become ready"
+docker exec "${SIDECAR}" grep -Fx 'acl internet_ports port 443 9418' \
+    /tmp/pi-run-squid.conf >/dev/null \
+    || fail "internet TCP ports were not configured in the proxy"
+docker exec "${SIDECAR}" grep -Fx \
+    'http_access allow CONNECT internet_public !internet_excluded internet_ports' \
+    /tmp/pi-run-squid.conf >/dev/null \
+    || fail "public internet proxy policy was not configured"
+docker exec "${SIDECAR}" iptables -w -C OUTPUT -m owner \
+    --uid-owner "${WORKLOAD_UID}" -d 0.0.0.0/0 -p tcp --dport 443 -j ACCEPT \
+    || fail "public internet direct TCP/443 policy was not configured"
+docker exec "${SIDECAR}" iptables -w -C OUTPUT -m owner \
+    --uid-owner "${WORKLOAD_UID}" -d 10.0.0.0/8 -p tcp -j REJECT \
+    || fail "private IPv4 was not excluded from public internet access"
 docker run -d --name "${WORKLOAD}" --network "container:${SIDECAR}" \
     --user "${WORKLOAD_UID}:${WORKLOAD_UID}" --cap-drop ALL \
     --security-opt no-new-privileges=true "${WORKLOAD_IMAGE}" >/dev/null

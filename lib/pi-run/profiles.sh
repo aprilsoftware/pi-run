@@ -64,12 +64,13 @@ validate_profile_config_file() {
              all(.tcpPorts[]; type == "number" and floor == . and . >= 1 and . <= 65535));
         def rule:
             type == "object" and
-            ((keys - ["cidr", "domain", "host", "tcpPorts"]) | length == 0) and
-            ([has("host"), has("domain"), has("cidr")] | map(select(.)) | length == 1) and
+            ((keys - ["cidr", "domain", "host", "internet", "tcpPorts"]) | length == 0) and
+            ([has("host"), has("domain"), has("cidr"), has("internet")] | map(select(.)) | length == 1) and
             ((has("host") | not) or (.host | hostname)) and
             ((has("domain") | not) or (.domain | hostname)) and
             ((has("cidr") | not) or
                 (.cidr | type == "string" and test("^[0-9A-Fa-f:.]+/[0-9]{1,3}$"))) and
+            ((has("internet") | not) or .internet == true) and
             ports;
         .schemaVersion == 1 and
         .name == $name and
@@ -88,6 +89,7 @@ validate_profile_config_file() {
                  ((.network | keys) == ["allow", "mode"] and
                   (.network.allow | type == "array") and
                   ((.network.allow | unique | length) == (.network.allow | length)) and
+                  ([.network.allow[] | select(has("internet"))] | length <= 1) and
                   all(.network.allow[]; rule)))
               else
                 ((.network.mode == "host" or .network.mode == "offline") and
@@ -281,7 +283,8 @@ list_profile_network_rules() {
         def selector:
             if .host then "host=" + .host
             elif .domain then "domain=" + .domain
-            else "cidr=" + .cidr
+            elif .cidr then "cidr=" + .cidr
+            else "internet=public"
             end;
         def ports:
             if .tcpPorts then (.tcpPorts | sort | map(tostring) | join("|"))

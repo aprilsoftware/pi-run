@@ -86,7 +86,7 @@ case "${1:-}" in
             if [ "${RESOLVER_OUTPUT+x}" = x ]; then
                 printf '%s\n' "${RESOLVER_OUTPUT}"
             else
-                printf '%s\n' '{"schemaVersion":1,"modelRules":[{"host":"model.example.test","tcpPorts":[443]}],"sshRules":[{"host":"ssh.example.test","tcpPorts":[22]}],"manualRules":[{"cidr":"10.20.30.0/24","tcpPorts":[5432]},{"domain":"example.net"},{"host":"git.example.test","tcpPorts":[22,443]}]}'
+                printf '%s\n' '{"schemaVersion":1,"modelRules":[{"host":"model.example.test","tcpPorts":[443]}],"sshRules":[{"host":"ssh.example.test","tcpPorts":[22]}],"manualRules":[{"cidr":"10.20.30.0/24","tcpPorts":[5432]},{"domain":"example.net"},{"host":"git.example.test","tcpPorts":[22,443]},{"internet":true}]}'
             fi
         elif [ "$sidecar" = true ]; then
             [ -n "$policy_source" ] && [ -n "$cidfile" ] || exit 3
@@ -163,14 +163,15 @@ grep -F 'pi-run: ssh-tcp=1 managed target on port 22' "${TMP}/stderr" >/dev/null
     || fail "managed SSH TCP exposure count was not reported"
 [[ "$(< "${TMP}/stderr")" != *ssh.example.test* ]] \
     || fail "managed SSH hostname was disclosed in startup output"
-grep -F 'pi-run: manual-tcp=cidr=10.20.30.0/24:5432,domain=example.net:*,host=git.example.test:22|443' \
+grep -F 'pi-run: manual-tcp=cidr=10.20.30.0/24:5432,domain=example.net:*,host=git.example.test:22|443,internet=public:*' \
     "${TMP}/stderr" >/dev/null || fail "manual TCP exposure was not reported"
 jq -e '. == {schemaVersion: 1, rules: [
     {cidr: "10.20.30.0/24", tcpPorts: [5432]},
     {domain: "example.net"},
     {host: "git.example.test", tcpPorts: [22, 443]},
     {host: "model.example.test", tcpPorts: [443]},
-    {host: "ssh.example.test", tcpPorts: [22]}
+    {host: "ssh.example.test", tcpPorts: [22]},
+    {internet: true}
 ]}' "${POLICY_CAPTURE}" >/dev/null || fail "runtime TCP rule policy was incorrect"
 [[ ! -e "$(< "${POLICY_DIR_CAPTURE}")" ]] \
     || fail "runtime hostname policy was not cleaned up"

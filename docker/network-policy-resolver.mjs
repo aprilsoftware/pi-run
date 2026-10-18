@@ -140,13 +140,16 @@ function normalizeCidr(value) {
 
 function normalizeManualRule(value) {
   const rule = object(value, "manual network rule");
-  const selectors = ["host", "domain", "cidr"].filter((key) => Object.hasOwn(rule, key));
+  const selectors = ["host", "domain", "cidr", "internet"].filter((key) => Object.hasOwn(rule, key));
   const allowedKeys = new Set([...selectors, "tcpPorts"]);
   if (selectors.length !== 1 || Object.keys(rule).some((key) => !allowedKeys.has(key))) fail("invalid manual network rule");
   const selector = selectors[0];
-  const normalized = selector === "cidr"
-    ? normalizeCidr(rule[selector])
-    : exactHostname(rule[selector], `${selector} rule`);
+  let normalized;
+  if (selector === "cidr") normalized = normalizeCidr(rule[selector]);
+  else if (selector === "internet") {
+    if (rule[selector] !== true) fail("invalid internet rule");
+    normalized = true;
+  } else normalized = exactHostname(rule[selector], `${selector} rule`);
   const result = { [selector]: normalized };
   if (rule.tcpPorts !== undefined) {
     if (!Array.isArray(rule.tcpPorts) || rule.tcpPorts.length === 0 ||
@@ -158,7 +161,7 @@ function normalizeManualRule(value) {
 }
 
 function manualRuleKey(rule) {
-  const selector = ["host", "domain", "cidr"].find((key) => Object.hasOwn(rule, key));
+  const selector = ["host", "domain", "cidr", "internet"].find((key) => Object.hasOwn(rule, key));
   return `${selector}:${rule[selector]}:${rule.tcpPorts?.join(",") ?? "all"}`;
 }
 
@@ -380,6 +383,9 @@ async function main() {
   });
   const manualKeys = manualRules.map(manualRuleKey);
   if (new Set(manualKeys).size !== manualKeys.length) fail("duplicate manual network rule");
+  if (manualRules.filter((rule) => Object.hasOwn(rule, "internet")).length > 1) {
+    fail("multiple internet rules are not allowed");
+  }
   const sshRules = await resolveSshRules(profileDir);
 
   const auth = object(await readJson(join(profileDir, "auth.json")), "auth.json");

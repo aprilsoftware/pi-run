@@ -27,7 +27,7 @@ printf '%s\n' \
     '{"providers":[{"id":"openai-codex","baseUrls":["https://chatgpt.com/backend-api"]},{"id":"azure","baseUrls":[]},{"id":"google-vertex","baseUrls":["https://{location}-aiplatform.googleapis.com"]},{"id":"amazon-bedrock","baseUrls":["https://bedrock-runtime.us-east-1.amazonaws.com"]},{"id":"github-copilot","baseUrls":["https://api.individual.githubcopilot.com"]}]}' \
     > "${TMP}/metadata.json"
 printf '%s\n' \
-    '{"network":{"mode":"restricted","allow":[{"host":"git.example.test","tcpPorts":[443,22]},{"domain":"example.test"},{"cidr":"10.20.30.17/24","tcpPorts":[22]},{"cidr":"2001:0db8::1/64"}]}}' \
+    '{"network":{"mode":"restricted","allow":[{"host":"git.example.test","tcpPorts":[443,22]},{"domain":"example.test"},{"cidr":"10.20.30.17/24","tcpPorts":[22]},{"cidr":"2001:0db8::1/64"},{"internet":true,"tcpPorts":[8443,443]}]}}' \
     > "${PROFILE}/profile.json"
 printf '%s\n' \
     '{"openai-codex":{"type":"oauth","access":"RESOLVER_SECRET_MUST_NOT_APPEAR"}}' \
@@ -52,7 +52,7 @@ jq -e 'all(.modelRules[]; .tcpPorts == [443] and (keys == ["host", "tcpPorts"]))
    '[{"cidr":"192.0.2.44/32","tcpPorts":[22]},{"host":"ssh.example.test","tcpPorts":[22]}]' ]] \
     || fail "managed SSH rules were not inferred"
 [[ "$(jq -c '.manualRules' <<< "${output}")" == \
-   '[{"cidr":"10.20.30.0/24","tcpPorts":[22]},{"cidr":"2001:db8::/64"},{"domain":"example.test"},{"host":"git.example.test","tcpPorts":[22,443]}]' ]] \
+   '[{"cidr":"10.20.30.0/24","tcpPorts":[22]},{"cidr":"2001:db8::/64"},{"domain":"example.test"},{"host":"git.example.test","tcpPorts":[22,443]},{"internet":true,"tcpPorts":[443,8443]}]' ]] \
     || fail "manual rule normalization was incorrect"
 [[ "$(jq -r 'keys | sort | join(",")' <<< "${output}")" == \
    'manualRules,modelRules,schemaVersion,sshRules' ]] || fail "resolver emitted unexpected fields"
@@ -191,6 +191,10 @@ make_key deploy@ssh-only.example.test
    '{"modelRules":[],"sshRules":[{"host":"ssh-only.example.test","tcpPorts":[22]}],"manualRules":[]}' ]] \
     || fail "SSH-only restricted policy was not accepted"
 rm -rf "${PROFILE}/credentials"
+printf '%s\n' '{"network":{"mode":"restricted","allow":[{"internet":true}]}}' \
+    > "${PROFILE}/profile.json"
+[[ "$(run_resolver | jq -c '.manualRules')" == '[{"internet":true}]' ]] \
+    || fail "all-TCP public internet rule was not accepted"
 while IFS=$'\t' read -r expected network; do
     printf '{"network":%s}\n' "${network}" > "${PROFILE}/profile.json"
     expect_failure "${expected}"
@@ -198,6 +202,9 @@ done <<'EOF'
 invalid network configuration in profile.json	{"mode":"restricted","extra":true}
 invalid allow rules in profile.json	{"mode":"restricted","allow":{}}
 invalid manual network rule	{"mode":"restricted","allow":[{"host":"one.test","domain":"two.test"}]}
+invalid manual network rule	{"mode":"restricted","allow":[{"host":"one.test","internet":true}]}
+invalid internet rule	{"mode":"restricted","allow":[{"internet":false}]}
+multiple internet rules are not allowed	{"mode":"restricted","allow":[{"internet":true},{"internet":true,"tcpPorts":[443]}]}
 invalid domain rule	{"mode":"restricted","allow":[{"domain":"*.example.test"}]}
 invalid tcpPorts in manual network rule	{"mode":"restricted","allow":[{"host":"one.test","tcpPorts":[22,22]}]}
 invalid tcpPorts in manual network rule	{"mode":"restricted","allow":[{"cidr":"10.0.0.0/8","tcpPorts":[0]}]}

@@ -75,11 +75,11 @@ cmp "${TMP}/network-mode.before" "${default_config}" \
 expect_failure env PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" \
     network allow add host blocked.example.test --tcp-port 443
 PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" network mode restricted >/dev/null
-jq '.network.allow = [{cidr: "10.20.30.0/24", tcpPorts: [5432]}]' \
+jq '.network.allow = [{cidr: "10.20.30.0/24", tcpPorts: [5432]}, {internet: true}]' \
     "${default_config}" > "${default_config}.tmp"
 mv "${default_config}.tmp" "${default_config}"
 network_output="$(PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" network allow list)"
-[[ "${network_output}" == $'Profile: default\nManual allow rules: 1\ncidr=10.20.30.0/24 tcp=5432' ]] \
+[[ "${network_output}" == $'Profile: default\nManual allow rules: 2\ncidr=10.20.30.0/24 tcp=5432\ninternet=public tcp=all' ]] \
     || fail "manual network rule list was incorrect"
 network_output="$(PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" network allow add \
     host Git.Example.Test --tcp-port 443 --tcp-port 22)"
@@ -89,6 +89,7 @@ PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" network allow add \
     domain Example.Test --all-tcp >/dev/null
 jq -e '.network.allow == [
     {cidr: "10.20.30.0/24", tcpPorts: [5432]},
+    {internet: true},
     {host: "git.example.test", tcpPorts: [22, 443]},
     {domain: "example.test"}
 ]' "${default_config}" >/dev/null || fail "network rule additions were not normalized or preserved"
@@ -107,10 +108,17 @@ expect_failure env PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" network allow 
     cidr 10.0.0.0/8 --all-tcp
 cmp "${TMP}/network-rules-cli.before" "${default_config}" \
     || fail "invalid network rule command changed the profile"
+cp "${default_config}" "${TMP}/network-rules-valid"
+jq '.network.allow += [{internet: true, tcpPorts: [443]}]' \
+    "${default_config}" > "${default_config}.tmp"
+mv "${default_config}.tmp" "${default_config}"
+expect_failure env PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" network show
+mv "${TMP}/network-rules-valid" "${default_config}"
 PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" network allow remove \
     host GIT.EXAMPLE.TEST --tcp-port 443 --tcp-port 22 >/dev/null
 jq -e '.network.allow == [
     {cidr: "10.20.30.0/24", tcpPorts: [5432]},
+    {internet: true},
     {domain: "example.test"}
 ]' "${default_config}" >/dev/null || fail "host rule removal changed unrelated rules"
 PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" network allow remove \

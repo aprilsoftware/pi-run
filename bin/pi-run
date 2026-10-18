@@ -687,12 +687,13 @@ if [[ "${NETWORK_MODE}" == restricted ]]; then
              all(.tcpPorts[]; type == "number" and floor == . and . >= 1 and . <= 65535));
         def rule:
             type == "object" and
-            ((keys - ["cidr", "domain", "host", "tcpPorts"]) | length == 0) and
-            ([has("host"), has("domain"), has("cidr")] | map(select(.)) | length == 1) and
+            ((keys - ["cidr", "domain", "host", "internet", "tcpPorts"]) | length == 0) and
+            ([has("host"), has("domain"), has("cidr"), has("internet")] | map(select(.)) | length == 1) and
             ((has("host") | not) or (.host | hostname)) and
             ((has("domain") | not) or (.domain | hostname)) and
             ((has("cidr") | not) or
-                (.cidr | type == "string" and test("^[0-9A-Fa-f:.]+/[0-9]{1,3}$"))) and ports;
+                (.cidr | type == "string" and test("^[0-9A-Fa-f:.]+/[0-9]{1,3}$"))) and
+            ((has("internet") | not) or .internet == true) and ports;
         if length == 1 and (.[0] |
             type == "object" and keys == ["manualRules", "modelRules", "schemaVersion", "sshRules"] and
             .schemaVersion == 1 and (.modelRules | type == "array") and
@@ -702,6 +703,7 @@ if [[ "${NETWORK_MODE}" == restricted ]]; then
             all(.sshRules[]; rule and (has("domain") | not) and .tcpPorts == [22] and
                 (has("host") or (.cidr | test("^(?:[0-9]{1,3}\\.){3}[0-9]{1,3}/32$")))) and
             all(.manualRules[]; rule) and
+            ([.manualRules[] | select(has("internet"))] | length <= 1) and
             ((.modelRules | length) + (.sshRules | length) + (.manualRules | length) > 0))
         then .[0] else error("invalid policy") end
     ' <<< "${RESOLVER_OUTPUT}" 2>/dev/null)"; then
@@ -728,7 +730,8 @@ if [[ "${NETWORK_MODE}" == restricted ]]; then
             [.manualRules[] |
                 (if has("host") then "host=" + .host
                  elif has("domain") then "domain=" + .domain
-                 else "cidr=" + .cidr end) + ":" + ports] | join(",")
+                 elif has("cidr") then "cidr=" + .cidr
+                 else "internet=public" end) + ":" + ports] | join(",")
         end
     ' <<< "${RESOLVED_POLICY}")"
 fi
