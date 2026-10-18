@@ -2,9 +2,10 @@
 
 ## Status and purpose
 
-This document records the v0.7 investigation and experimental `docker-offline`
-and `docker-restricted` launcher modes. The branch is a prerelease experiment
-and does not authorize production use.
+This document records the v0.7 investigation, the experimental `docker-offline`
+and `docker-restricted` launcher modes published in the v0.7.0 prerelease, and
+the profile-driven follow-up selected from prerelease feedback. Experimental
+availability does not authorize production use.
 
 The goal is to add enforceable network policy while retaining Pi-Run's existing
 profile, workspace, session, Guardian, and snapshot semantics. The preferred
@@ -38,7 +39,8 @@ A restricted backend must ensure:
 - the effective exposure is displayed before Pi starts;
 - direct IP, alternate DNS, IPv6, private-address, and proxy bypasses fail;
 - raw credentials are never described as hidden when Pi can read them;
-- policy remains host-owned rather than writable through the selected profile;
+- the resolved policy is frozen before Pi starts and cannot be changed by the
+  running Pi process;
 - the unrestricted backend remains explicit and unchanged; and
 - cleanup does not leave privileged containers, networks, or policy material.
 
@@ -165,42 +167,101 @@ cleanup. Neither container receives the Docker socket.
 
 ## Backend model
 
-The initial product vocabulary remains small:
+The product vocabulary remains small:
 
-- `docker-host` — current host-network behavior and the unchanged default;
-- `docker-offline` — implemented as an explicit launch option using Docker
-  `--network none`; and
-- `docker-restricted` — implemented experimentally as default-deny egress
-  through the version-matched sidecar.
+- `docker-host` — current host-network behavior and the compatibility default;
+- `docker-offline` — Docker `--network none`; and
+- `docker-restricted` — default-deny egress through the version-matched
+  sidecar.
 
-The launcher displays the effective backend before starting Pi. Restricted mode
-also displays every allowed `hostname:443`. Offline and restricted failures do
-not retry with `docker-host`. Backend and hostname selection are per invocation
-and are not yet stored in profile, policy, or machine configuration.
+The v0.7.0 prerelease selects offline and restricted modes per invocation and
+requires repeated `--allow-host` values. This proved the enforcement path, but
+real use showed that repeating provider and task hostnames makes ordinary model
+access cumbersome and makes a later launch easy to return accidentally to host
+networking. The per-invocation interface is therefore evidence and a migration
+source, not the intended long-term user experience.
 
-No general backend framework is introduced; the restricted launcher path is
-kept direct while its lifecycle and interface remain experimental.
+## Profile-driven follow-up
 
-## Policy ownership
+A follow-up prerelease should select networking from the profile with one
+optional top-level object:
 
-Authoritative policy must not live only in the writable selected profile. The
-intended ownership remains:
-
-```text
-Pi-Run home/
-├── profiles/<name>/profile.json       # requested working identity
-├── policies/<policy>.json             # portable host-managed limits
-└── machines/<machine-id>.json         # local assignment and grants
+```json
+{
+  "network": {
+    "mode": "restricted",
+    "allowHosts": ["github.com", "api.github.com"]
+  }
+}
 ```
 
-Effective exposure is the intersection of the profile request, portable policy,
-and machine-local grant. The sidecar receives only the already-resolved runtime
-policy. `policies/` and `machines/` are not mounted into Pi.
+`mode` accepts `host`, `offline`, or `restricted`. An absent `network` object
+preserves `host` for existing profiles. `allowHosts` is optional and contains
+only additional exact lowercase HTTPS hostnames needed by the profile's tasks;
+it does not repeat model-provider endpoints.
 
-This layout remains directional; the experimental launcher does not introduce
-these schemas. Repeated host-side `--allow-host` inputs are validated and copied
-to a private temporary policy file before Pi starts. Only that runtime copy is
-mounted read-only into the sidecar, and it is never mounted into Pi.
+Normal launch syntax remains only profile and workspace selection:
+
+```text
+pi-run --profile <name> <workspace>
+```
+
+The follow-up removes `--network` and `--allow-host` from normal launches rather
+than maintaining two competing sources of authority. Profile creation copies
+the source profile's network choice. Backend or hostname changes take effect on
+the next launch, never in a running namespace.
+
+## Automatic model-provider egress
+
+For restricted profiles, Pi-Run resolves model connectivity automatically from
+the selected profile before starting the sidecar:
+
+1. HTTPS `baseUrl` values for custom providers in `models.json` contribute their
+   normalized hostname.
+2. Provider identities present in `auth.json` are matched to versioned built-in
+   provider metadata containing API and required token-refresh hostnames.
+3. Model/provider selections in `settings.json` identify configured providers
+   that may not need a stored credential.
+4. Every resolvable configured provider is included so `/model` switching does
+   not require restarting with another hostname list.
+
+Resolution reads only structure needed for provider identity and endpoint
+selection. It must not print, copy into policy, or log credential values,
+headers, account identifiers, URL paths, or query strings. Hostnames are
+lowercased, validated, deduplicated, and restricted to HTTPS port 443. A custom
+provider using HTTP, an explicit alternate port, an IP literal, or an invalid
+URL makes a restricted launch fail with a clear diagnostic.
+
+The resulting provider hosts and optional `allowHosts` are frozen into the
+private runtime policy copy. Startup reports model-derived and additional hosts
+separately. Missing metadata, unsupported dynamic provider extensions, or an
+empty effective restricted policy fail closed rather than restoring host
+networking. Offline mode does not infer or allow provider endpoints.
+
+Initial automatic resolution targets providers already represented by the
+profile. Signing in to a previously unconfigured provider from a restricted
+session may remain unsupported until its intent can be known before launch.
+This limitation is preferable to allowing every built-in provider endpoint.
+
+## Profile trust and active policy
+
+The selected profile is already the durable identity boundary for model
+configuration and credentials. The profile-driven design deliberately treats
+`profile.json`, `models.json`, `auth.json`, and `settings.json` as trusted input
+for the next launch instead of introducing separate policy and machine-grant
+files. This is the chosen usability tradeoff for the experimental follow-up.
+
+`profile.json` should be over-mounted read-only in the Pi container because Pi
+does not need to update Pi-Run's resource definition. Pi still needs writable
+`auth.json`, `models.json`, and `settings.json` for login and model selection.
+Changes to those files cannot alter the active sidecar, but they can change the
+model-derived host set on a later launch. Pi-Run must display that complete set
+at every startup, and documentation must state this trust boundary directly.
+
+The active hostname list remains a private temporary host file mounted read-only
+only into the sidecar. It is never mounted into Pi. Restricted staging must
+continue to reject workspace overlap, provider-resolution failure, sidecar
+failure, and proxy failure without falling back to `docker-host`.
 
 ## Initial policy scope
 
@@ -318,8 +379,13 @@ the Docker-native sidecar pattern demonstrated by `agent-sandbox` and
 
 The required direct-IP, private-network, IPv6, DNS-bypass, capability, policy,
 and fail-closed probes passed on Pi-Run's supported Docker baseline. Keep the
-backend prerelease-only while its per-invocation interface, limitations, and
-remaining TUI/provider/credential behavior are evaluated.
+backend prerelease-only while its limitations and remaining
+TUI/provider/credential behavior are evaluated.
+
+Prerelease feedback rejects per-launch network mode and provider-host arguments
+as the durable interface. The next experiment should use the profile-driven,
+automatically resolved model-provider design above while preserving the proven
+sidecar enforcement and fail-closed behavior.
 
 ## Sources
 
