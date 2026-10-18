@@ -1,12 +1,14 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: MIT
 
-import { lstat, readFile } from "node:fs/promises";
+import { lstat, readFile, readdir } from "node:fs/promises";
 import { isIP } from "node:net";
 import { dirname, join } from "node:path";
+import { spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 
 const MAX_CONFIG_BYTES = 4 * 1024 * 1024;
+const MAX_SSH_KEY_BYTES = 1024 * 1024;
 const PI_PACKAGE = "/usr/local/lib/node_modules/@earendil-works/pi-coding-agent/package.json";
 const AUXILIARY_HOSTS = {
   anthropic: ["claude.ai", "platform.claude.com"],
@@ -160,6 +162,100 @@ function manualRuleKey(rule) {
   return `${selector}:${rule[selector]}:${rule.tcpPorts?.join(",") ?? "all"}`;
 }
 
+async function optionalInfo(path) {
+  try {
+    return await lstat(path);
+  } catch (error) {
+    if (error?.code === "ENOENT") return undefined;
+    fail("could not inspect managed SSH credentials");
+  }
+}
+
+function sshPublicRecord(value) {
+  const lines = value.split(/\r?\n/).filter((line) => line.trim().length > 0);
+  if (lines.length !== 1) fail("invalid managed SSH credential pair");
+  const fields = lines[0].trim().split(/\s+/);
+  if (fields.length < 2 || !/^(?:ssh-|ecdsa-|sk-)/.test(fields[0]) || !fields[1]) {
+    fail("invalid managed SSH credential pair");
+  }
+  return `${fields[0]} ${fields[1]}`;
+}
+
+function sshTargetRule(target) {
+  const separator = target.indexOf("@");
+  if (separator <= 0 || separator !== target.lastIndexOf("@")) fail("invalid managed SSH credential target");
+  const user = target.slice(0, separator);
+  const host = target.slice(separator + 1).toLowerCase();
+  if (!/^[A-Za-z_][A-Za-z0-9._-]*$/.test(user)) fail("invalid managed SSH credential target");
+  if (isIP(host) === 4) return { cidr: `${host}/32`, tcpPorts: [22] };
+  if (isIP(host)) fail("invalid managed SSH credential target");
+  return { host: exactHostname(host, "managed SSH credential target"), tcpPorts: [22] };
+}
+
+async function resolveSshRules(profileDir) {
+  const credentialsDir = join(profileDir, "credentials");
+  const sshDir = join(credentialsDir, "ssh");
+  const credentialsInfo = await optionalInfo(credentialsDir);
+  if (!credentialsInfo) return [];
+  if (!credentialsInfo.isDirectory() || credentialsInfo.isSymbolicLink()) {
+    fail("unsafe managed SSH credential directory");
+  }
+  const sshInfo = await optionalInfo(sshDir);
+  if (!sshInfo) return [];
+  if (!sshInfo.isDirectory() || sshInfo.isSymbolicLink() || (sshInfo.mode & 0o077) !== 0) {
+    fail("unsafe managed SSH credential directory");
+  }
+
+  const entries = await readdir(sshDir);
+  const privateNames = new Set();
+  const publicNames = new Set();
+  for (const name of entries) {
+    const path = join(sshDir, name);
+    const info = await optionalInfo(path);
+    if (!info?.isFile() || info.isSymbolicLink() || info.nlink !== 1) {
+      fail("unsafe managed SSH credential entry");
+    }
+    if (name === "known_hosts") continue;
+    if (info.size > MAX_SSH_KEY_BYTES) fail("unsafe managed SSH credential entry");
+    if (name.endsWith(".pub")) {
+      publicNames.add(name.slice(0, -4));
+    } else {
+      if ((info.mode & 0o077) !== 0) fail("unsafe managed SSH private key permissions");
+      privateNames.add(name);
+    }
+  }
+
+  const targets = [...new Set([...privateNames, ...publicNames])].sort();
+  const seenHosts = new Set();
+  const rules = [];
+  for (const target of targets) {
+    if (!privateNames.has(target) || !publicNames.has(target)) fail("incomplete managed SSH credential pair");
+    const privatePath = join(sshDir, target);
+    const publicPath = `${privatePath}.pub`;
+    const publicInfo = await optionalInfo(publicPath);
+    if (!publicInfo || publicInfo.size > MAX_SSH_KEY_BYTES) fail("invalid managed SSH credential pair");
+    const derived = spawnSync("/usr/bin/ssh-keygen", ["-y", "-P", "", "-f", privatePath], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      maxBuffer: 64 * 1024,
+    });
+    if (derived.status !== 0 || derived.error) fail("invalid or encrypted managed SSH private key");
+    const privateRecord = sshPublicRecord(derived.stdout);
+    const publicRecord = sshPublicRecord(await readFile(publicPath, "utf8"));
+    if (privateRecord !== publicRecord) fail("mismatched managed SSH credential pair");
+    const rule = sshTargetRule(target);
+    const hostKey = rule.host ?? rule.cidr;
+    if (seenHosts.has(hostKey)) fail("ambiguous managed SSH credential hostname");
+    seenHosts.add(hostKey);
+    rules.push(rule);
+  }
+  return rules.sort((left, right) => {
+    const leftKey = JSON.stringify(left);
+    const rightKey = JSON.stringify(right);
+    return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
+  });
+}
+
 async function loadBuiltinProviders() {
   const metadataFile = process.env.PI_RUN_PROVIDER_METADATA_FILE;
   if (metadataFile) {
@@ -284,6 +380,7 @@ async function main() {
   });
   const manualKeys = manualRules.map(manualRuleKey);
   if (new Set(manualKeys).size !== manualKeys.length) fail("duplicate manual network rule");
+  const sshRules = await resolveSshRules(profileDir);
 
   const auth = object(await readJson(join(profileDir, "auth.json")), "auth.json");
   const models = object(await readJson(join(profileDir, "models.json")), "models.json");
@@ -303,11 +400,14 @@ async function main() {
     for (const host of AUXILIARY_HOSTS[providerId] ?? []) modelHosts.add(exactHostname(host, "provider auxiliary hostname"));
     if (builtins.has(providerId)) modelHosts.add("pi.dev");
   }
-  if (modelHosts.size === 0 && manualRules.length === 0) fail("restricted profile resolved no TCP rules");
+  if (modelHosts.size === 0 && sshRules.length === 0 && manualRules.length === 0) {
+    fail("restricted profile resolved no TCP rules");
+  }
 
   process.stdout.write(`${JSON.stringify({
     schemaVersion: 1,
     modelRules: [...modelHosts].sort().map((host) => ({ host, tcpPorts: [443] })),
+    sshRules,
     manualRules,
   })}\n`);
 }

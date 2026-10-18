@@ -20,10 +20,12 @@ credential directories use mode `0700`, private keys `0600`, and public keys
 `0644`. Managed credentials must be regular, singly linked files under the
 profile store; symbolic links, hard links, and unsafe permissions are refused.
 
-Private keys are passphrase-free Ed25519 files. They are available to the
-selected profile's running container and are included in complete encrypted
-snapshots. Creating a profile does not copy credentials. Keep profiles out of
-source control and preserve snapshot recovery secrets separately.
+Private keys are passphrase-free Ed25519 files. They are available through a
+read-only credential-directory over-mount in the selected profile's running
+container and are included in complete encrypted snapshots. Key-management
+containers retain controlled write access. Creating a profile does not copy
+credentials. Keep profiles out of source control and preserve snapshot recovery
+secrets separately.
 
 ## Key-list states
 
@@ -64,6 +66,21 @@ Listing and removal do not use container networking. Removal confirms, deletes
 only the named local pair, preserves `known_hosts`, and succeeds without deleting
 unrelated entries when the pair is absent. It never edits remote
 `authorized_keys` or terminates connections.
+
+## Restricted network inference
+
+Before a restricted launch, the offline resolver inspects the managed SSH store.
+Each complete, matching, unencrypted pair contributes an exact hostname TCP/22
+rule; an IPv4 target contributes an exact `/32` TCP/22 rule. Rules are normalized,
+deduplicated, reported as `ssh-tcp`, and frozen with model and manual rules.
+Private material, public keys, comments, and fingerprints never enter policy
+output.
+
+Incomplete, invalid, encrypted, mismatched, linked, unsafely permissioned, or
+hostname-ambiguous stores fail restricted resolution rather than granting
+partial access. Removing a pair removes its derived rule on the next launch.
+Host mode is unchanged and offline mode never applies derived access. IPv6
+names, aliases, and nonstandard ports are not inferred.
 
 ## Startup OpenSSH configuration
 
@@ -115,8 +132,8 @@ use this configuration.
   selection, server policy, and host identity when diagnosing authentication.
 - Generated profile-key entries use `IdentitiesOnly yes`, but deliberate client
   overrides can change identity selection.
-- Presence of a credential or reachable host is not authorization to connect or
-  perform work.
+- A complete managed credential implies exact-target TCP/22 reachability in
+  restricted mode. It is still not user authorization to connect or perform work.
 - Keep literal secrets out of commands, conversations, and published logs.
 
 [SSH task guide](../ssh.md) · [Profiles](../profiles.md) ·

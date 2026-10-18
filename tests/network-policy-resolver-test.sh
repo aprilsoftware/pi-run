@@ -14,7 +14,15 @@ fail() {
 }
 
 PROFILE="${TMP}/profile"
-mkdir -p "${PROFILE}"
+SSH_DIR="${PROFILE}/credentials/ssh"
+mkdir -p "${SSH_DIR}"
+chmod 0700 "${PROFILE}/credentials" "${SSH_DIR}"
+make_key() {
+    ssh-keygen -q -t ed25519 -N "${2:-}" -f "${SSH_DIR}/$1"
+}
+make_key deploy@ssh.example.test
+make_key deploy@192.0.2.44
+sed -i 's/$/ SSH_PUBLIC_COMMENT_MUST_NOT_APPEAR/' "${SSH_DIR}/deploy@192.0.2.44.pub"
 printf '%s\n' \
     '{"providers":[{"id":"openai-codex","baseUrls":["https://chatgpt.com/backend-api"]},{"id":"azure","baseUrls":[]},{"id":"google-vertex","baseUrls":["https://{location}-aiplatform.googleapis.com"]},{"id":"amazon-bedrock","baseUrls":["https://bedrock-runtime.us-east-1.amazonaws.com"]},{"id":"github-copilot","baseUrls":["https://api.individual.githubcopilot.com"]}]}' \
     > "${TMP}/metadata.json"
@@ -40,12 +48,16 @@ expected_model_hosts='["api.openai.com","auth.openai.com","chatgpt.com","inferen
     || fail "model rule resolution was incorrect"
 jq -e 'all(.modelRules[]; .tcpPorts == [443] and (keys == ["host", "tcpPorts"]))' \
     <<< "${output}" >/dev/null || fail "model rules were not exact TCP/443 rules"
+[[ "$(jq -c '.sshRules' <<< "${output}")" == \
+   '[{"cidr":"192.0.2.44/32","tcpPorts":[22]},{"host":"ssh.example.test","tcpPorts":[22]}]' ]] \
+    || fail "managed SSH rules were not inferred"
 [[ "$(jq -c '.manualRules' <<< "${output}")" == \
    '[{"cidr":"10.20.30.0/24","tcpPorts":[22]},{"cidr":"2001:db8::/64"},{"domain":"example.test"},{"host":"git.example.test","tcpPorts":[22,443]}]' ]] \
     || fail "manual rule normalization was incorrect"
 [[ "$(jq -r 'keys | sort | join(",")' <<< "${output}")" == \
-   'manualRules,modelRules,schemaVersion' ]] || fail "resolver emitted unexpected fields"
+   'manualRules,modelRules,schemaVersion,sshRules' ]] || fail "resolver emitted unexpected fields"
 [[ "${output}" != *RESOLVER_SECRET_MUST_NOT_APPEAR* ]] || fail "resolver printed a credential"
+[[ "${output}" != *SSH_PUBLIC_COMMENT_MUST_NOT_APPEAR* ]] || fail "resolver printed an SSH key comment"
 
 expect_failure() {
     local expected="$1"
@@ -56,7 +68,50 @@ expect_failure() {
     [[ ${status} -ne 0 ]] || fail "resolver accepted invalid input: ${expected}"
     [[ "${failure_output}" == *"${expected}"* ]] || fail "resolver failure lacked diagnostic: ${expected}"
     [[ "${failure_output}" != *RESOLVER_SECRET_MUST_NOT_APPEAR* ]] || fail "resolver failure printed a secret"
+    [[ "${failure_output}" != *SSH_PUBLIC_COMMENT_MUST_NOT_APPEAR* ]] \
+        || fail "resolver failure printed an SSH key comment"
 }
+
+rm "${SSH_DIR}/deploy@ssh.example.test.pub"
+expect_failure 'incomplete managed SSH credential pair'
+rm -rf "${PROFILE}/credentials"
+mkdir -p "${SSH_DIR}"
+chmod 0700 "${PROFILE}/credentials" "${SSH_DIR}"
+make_key deploy@ssh.example.test secret
+expect_failure 'invalid or encrypted managed SSH private key'
+rm -rf "${PROFILE}/credentials"
+mkdir -p "${SSH_DIR}"
+chmod 0700 "${PROFILE}/credentials" "${SSH_DIR}"
+make_key deploy@ssh.example.test
+ssh-keygen -q -t ed25519 -N '' -f "${TMP}/other-ssh-key"
+cp "${TMP}/other-ssh-key.pub" "${SSH_DIR}/deploy@ssh.example.test.pub"
+expect_failure 'mismatched managed SSH credential pair'
+rm -rf "${PROFILE}/credentials"
+mkdir -p "${SSH_DIR}"
+chmod 0700 "${PROFILE}/credentials" "${SSH_DIR}"
+ln -s /dev/null "${SSH_DIR}/deploy@ssh.example.test"
+printf '%s\n' 'ssh-ed25519 AAAA' > "${SSH_DIR}/deploy@ssh.example.test.pub"
+expect_failure 'unsafe managed SSH credential entry'
+rm -rf "${PROFILE}/credentials"
+mkdir -p "${SSH_DIR}"
+chmod 0700 "${PROFILE}/credentials" "${SSH_DIR}"
+make_key deploy@same.example.test
+make_key admin@same.example.test
+expect_failure 'ambiguous managed SSH credential hostname'
+rm -rf "${PROFILE}/credentials"
+mkdir -p "${SSH_DIR}"
+chmod 0700 "${PROFILE}/credentials" "${SSH_DIR}"
+make_key deploy@single
+expect_failure 'invalid managed SSH credential target'
+rm -rf "${PROFILE}/credentials"
+mkdir -p "${SSH_DIR}"
+chmod 0700 "${PROFILE}/credentials" "${SSH_DIR}"
+make_key deploy@ssh.example.test
+chmod 0644 "${SSH_DIR}/deploy@ssh.example.test"
+expect_failure 'unsafe managed SSH private key permissions'
+rm -rf "${PROFILE}/credentials"
+mkdir -p "${SSH_DIR}"
+chmod 0700 "${PROFILE}/credentials" "${SSH_DIR}"
 
 for endpoint in 'http://inference.example.test/v1' \
     'https://inference.example.test:8443/v1' 'https://192.0.2.1/v1' \
@@ -130,6 +185,12 @@ expect_failure 'provider amazon-bedrock uses a region-derived endpoint unsupport
 printf '%s\n' '{}' > "${PROFILE}/models.json"
 printf '%s\n' '{}' > "${PROFILE}/settings.json"
 printf '%s\n' '{}' > "${PROFILE}/auth.json"
+printf '%s\n' '{"network":{"mode":"restricted"}}' > "${PROFILE}/profile.json"
+make_key deploy@ssh-only.example.test
+[[ "$(run_resolver | jq -c '{modelRules,sshRules,manualRules}')" == \
+   '{"modelRules":[],"sshRules":[{"host":"ssh-only.example.test","tcpPorts":[22]}],"manualRules":[]}' ]] \
+    || fail "SSH-only restricted policy was not accepted"
+rm -rf "${PROFILE}/credentials"
 while IFS=$'\t' read -r expected network; do
     printf '{"network":%s}\n' "${network}" > "${PROFILE}/profile.json"
     expect_failure "${expected}"

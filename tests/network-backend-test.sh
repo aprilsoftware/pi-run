@@ -48,6 +48,11 @@ HOME_DIR="${TMP}/Pi Run"
 WORKSPACE="${TMP}/workspace"
 mkdir -p "${WORKSPACE}" "${TMP}/fake-bin"
 PI_RUN_HOME="${HOME_DIR}" "${PI_RUN}" init >/dev/null
+SSH_CREDENTIAL_DIR="${HOME_DIR}/profiles/default/credentials/ssh"
+mkdir -m 0700 "${SSH_CREDENTIAL_DIR}"
+printf '%s\n' 'disposable private fixture' > "${SSH_CREDENTIAL_DIR}/user@ssh.example.test"
+printf '%s\n' 'disposable public fixture' > "${SSH_CREDENTIAL_DIR}/user@ssh.example.test.pub"
+chmod 0600 "${SSH_CREDENTIAL_DIR}/user@ssh.example.test"
 
 cat > "${TMP}/fake-bin/docker" <<'EOF'
 #!/bin/sh
@@ -81,7 +86,7 @@ case "${1:-}" in
             if [ "${RESOLVER_OUTPUT+x}" = x ]; then
                 printf '%s\n' "${RESOLVER_OUTPUT}"
             else
-                printf '%s\n' '{"schemaVersion":1,"modelRules":[{"host":"model.example.test","tcpPorts":[443]}],"manualRules":[{"cidr":"10.20.30.0/24","tcpPorts":[5432]},{"domain":"example.net"},{"host":"git.example.test","tcpPorts":[22,443]}]}'
+                printf '%s\n' '{"schemaVersion":1,"modelRules":[{"host":"model.example.test","tcpPorts":[443]}],"sshRules":[{"host":"ssh.example.test","tcpPorts":[22]}],"manualRules":[{"cidr":"10.20.30.0/24","tcpPorts":[5432]},{"domain":"example.net"},{"host":"git.example.test","tcpPorts":[22,443]}]}'
             fi
         elif [ "$sidecar" = true ]; then
             [ -n "$policy_source" ] && [ -n "$cidfile" ] || exit 3
@@ -154,13 +159,16 @@ grep -F 'pi-run: network=docker-restricted' "${TMP}/stderr" >/dev/null \
     || fail "restricted backend was not reported"
 grep -F 'pi-run: model-tcp=model.example.test:443' "${TMP}/stderr" >/dev/null \
     || fail "model TCP exposure was not reported"
+grep -F 'pi-run: ssh-tcp=ssh.example.test:22' "${TMP}/stderr" >/dev/null \
+    || fail "managed SSH TCP exposure was not reported"
 grep -F 'pi-run: manual-tcp=cidr=10.20.30.0/24:5432,domain=example.net:*,host=git.example.test:22|443' \
     "${TMP}/stderr" >/dev/null || fail "manual TCP exposure was not reported"
 jq -e '. == {schemaVersion: 1, rules: [
     {cidr: "10.20.30.0/24", tcpPorts: [5432]},
     {domain: "example.net"},
     {host: "git.example.test", tcpPorts: [22, 443]},
-    {host: "model.example.test", tcpPorts: [443]}
+    {host: "model.example.test", tcpPorts: [443]},
+    {host: "ssh.example.test", tcpPorts: [22]}
 ]}' "${POLICY_CAPTURE}" >/dev/null || fail "runtime TCP rule policy was incorrect"
 [[ ! -e "$(< "${POLICY_DIR_CAPTURE}")" ]] \
     || fail "runtime hostname policy was not cleaned up"
@@ -180,6 +188,8 @@ grep -F 'dst=/profile,readonly' "${DOCKER_LOG}" >/dev/null \
     || fail "resolver did not receive a read-only profile"
 grep -F 'dst=/profile/profile.json,readonly' "${DOCKER_LOG}" >/dev/null \
     || fail "Pi did not receive a read-only profile configuration"
+grep -F "src=${SSH_CREDENTIAL_DIR},dst=/profile/credentials/ssh,readonly" "${DOCKER_LOG}" >/dev/null \
+    || fail "Pi did not receive read-only managed SSH credentials"
 grep -Fx -- '--cap-drop=ALL' "${DOCKER_LOG}" >/dev/null \
     || fail "capabilities were not dropped"
 grep -F -- '--ulimit' "${DOCKER_LOG}" >/dev/null \

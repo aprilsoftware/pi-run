@@ -661,6 +661,7 @@ EGRESS_IMAGE="${PI_RUN_EGRESS_IMAGE:-${DEFAULT_EGRESS_IMAGE}}"
 NETWORK_MODE="$(jq -r '.network.mode // "host"' "${PROFILE_CONFIG}")"
 NETWORK_BACKEND="docker-${NETWORK_MODE}"
 MODEL_RULES_DISPLAY="none"
+SSH_RULES_DISPLAY="none"
 MANUAL_RULES_DISPLAY="none"
 POLICY_JSON=""
 if [[ "${NETWORK_MODE}" == restricted ]]; then
@@ -693,24 +694,33 @@ if [[ "${NETWORK_MODE}" == restricted ]]; then
             ((has("cidr") | not) or
                 (.cidr | type == "string" and test("^[0-9A-Fa-f:.]+/[0-9]{1,3}$"))) and ports;
         if length == 1 and (.[0] |
-            type == "object" and keys == ["manualRules", "modelRules", "schemaVersion"] and
+            type == "object" and keys == ["manualRules", "modelRules", "schemaVersion", "sshRules"] and
             .schemaVersion == 1 and (.modelRules | type == "array") and
-            (.manualRules | type == "array") and
+            (.sshRules | type == "array") and (.manualRules | type == "array") and
             all(.modelRules[]; keys == ["host", "tcpPorts"] and
                 (.host | hostname) and .tcpPorts == [443]) and
+            all(.sshRules[]; rule and (has("domain") | not) and .tcpPorts == [22] and
+                (has("host") or (.cidr | test("^(?:[0-9]{1,3}\\.){3}[0-9]{1,3}/32$")))) and
             all(.manualRules[]; rule) and
-            ((.modelRules | length) + (.manualRules | length) > 0))
+            ((.modelRules | length) + (.sshRules | length) + (.manualRules | length) > 0))
         then .[0] else error("invalid policy") end
     ' <<< "${RESOLVER_OUTPUT}" 2>/dev/null)"; then
         fail "restricted network policy resolver returned invalid output"
     fi
     POLICY_JSON="$(jq -c '{
         schemaVersion: 1,
-        rules: ((.modelRules + .manualRules) | unique_by(tojson) | sort_by(tojson))
+        rules: ((.modelRules + .sshRules + .manualRules) | unique_by(tojson) | sort_by(tojson))
     }' <<< "${RESOLVED_POLICY}")"
     MODEL_RULES_DISPLAY="$(jq -r '
         if (.modelRules | length) == 0 then "none" else
             [.modelRules[] | (.host + ":" + (.tcpPorts | map(tostring) | join("|")))] | join(",")
+        end
+    ' <<< "${RESOLVED_POLICY}")"
+    SSH_RULES_DISPLAY="$(jq -r '
+        if (.sshRules | length) == 0 then "none" else
+            [.sshRules[] |
+                (if has("host") then .host else .cidr end) +
+                ":" + (.tcpPorts | map(tostring) | join("|"))] | join(",")
         end
     ' <<< "${RESOLVED_POLICY}")"
     MANUAL_RULES_DISPLAY="$(jq -r '
@@ -796,6 +806,15 @@ DOCKER_ARGS=(
     --env PI_RUN_SNAPSHOT_REQUEST_DIR=/run/pi-run-snapshot
     --env "PI_RUN_SNAPSHOT_TOKEN=${SNAPSHOT_LAUNCH_REQUEST_TOKEN}"
 )
+SSH_CREDENTIAL_DIR="${PROFILE_DIR}/credentials/ssh"
+if [[ -e "${SSH_CREDENTIAL_DIR}" || -L "${SSH_CREDENTIAL_DIR}" ]]; then
+    [[ -d "${SSH_CREDENTIAL_DIR}" && ! -L "${SSH_CREDENTIAL_DIR}" &&
+       "$(realpath "${SSH_CREDENTIAL_DIR}")" == "${SSH_CREDENTIAL_DIR}" ]] \
+        || fail "SSH credentials must be a contained non-symlink directory: ${SSH_CREDENTIAL_DIR}"
+    DOCKER_ARGS+=(
+        --mount "type=bind,src=${SSH_CREDENTIAL_DIR},dst=/profile/credentials/ssh,readonly"
+    )
+fi
 if [[ "${NETWORK_BACKEND}" == docker-restricted ]]; then
     DOCKER_ARGS+=(
         --env HTTPS_PROXY=http://127.0.0.1:3128
@@ -859,6 +878,7 @@ echo "pi-run: profile=${PROFILE} workspace=${WORKSPACE}" >&2
 echo "pi-run: network=${NETWORK_BACKEND}" >&2
 if [[ "${NETWORK_BACKEND}" == docker-restricted ]]; then
     echo "pi-run: model-tcp=${MODEL_RULES_DISPLAY}" >&2
+    echo "pi-run: ssh-tcp=${SSH_RULES_DISPLAY}" >&2
     echo "pi-run: manual-tcp=${MANUAL_RULES_DISPLAY}" >&2
 fi
 echo "pi-run: Guardian loaded; review mode starts Off" >&2

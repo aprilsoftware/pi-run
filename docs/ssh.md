@@ -26,6 +26,14 @@ exist, stores it in the selected profile, and makes one interactive
 authenticate to the account. Verify an unknown fingerprint independently before
 accepting it.
 
+On the next restricted launch, every complete matching managed pair
+automatically permits its exact hostname on TCP/22. An IPv4 target permits only
+that address as a `/32` on TCP/22. Startup reports these derived rules as
+`ssh-tcp`; `profile.json` manual rules are unnecessary for standard SSH. Host
+mode already has broad network access, while offline mode remains network-none.
+Credential presence supplies authentication and reachability, not authorization
+for a remote task.
+
 If installation fails, the local pair remains available for inspection and a
 later explicit retry. Pi-Run does not silently regenerate or overwrite an
 incomplete, invalid, encrypted, or mismatched pair.
@@ -66,7 +74,8 @@ pi-run --profile default ssh-key remove deploy@server.example.test
 ```
 
 Removal asks for confirmation and deletes only that profile's local private and
-public files. It preserves `known_hosts`.
+public files. It preserves `known_hosts`. The corresponding derived TCP/22 rule
+disappears on the next restricted launch; an active policy remains frozen.
 
 **Removing the local pair does not revoke the public key on the server.** Remove
 its remote `authorized_keys` entry through a separate, explicitly authorized
@@ -76,10 +85,14 @@ identity.
 ## Essential boundaries
 
 - Profile private keys are unencrypted and readable inside the selected run.
-  Keep profiles private and use [encrypted snapshots](snapshots.md) for backup.
+  Their credential directory is mounted read-only during normal sessions; key
+  management uses separate controlled containers. Keep profiles private and use
+  [encrypted snapshots](snapshots.md) for backup.
 - Pi-Run keeps host-key checking enabled and never stores an account password.
-- A valid local key does not prove remote authorization or successful
-  authentication.
+- A valid matching pair grants exact-host TCP/22 reachability in restricted
+  mode, but does not prove remote authorization or successful authentication.
+- Nonstandard SSH ports, aliases, and additional destinations still need manual
+  network rules.
 - Host networking can reach real systems, and Guardian does not review
   [every possible action](guardian.md#understand-the-coverage-first).
 - Deleting local credentials does not close existing connections or revoke

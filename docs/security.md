@@ -17,7 +17,7 @@ A normal Pi-Run session can access:
 | Resource | Exposure |
 | --- | --- |
 | Selected workspace | Writable at `/workspace` |
-| Selected profile | Available at `/profile`; `profile.json` is read-only, while credentials, settings, and sessions remain writable |
+| Selected profile | Available at `/profile`; `profile.json` and managed SSH credentials are read-only, while provider state, settings, and sessions remain writable |
 | Shared directory | Writable at `/shared` when enabled by the profile |
 | Profile-local skills | Writable inside the selected profile |
 | Selected global skills | Mounted read-only |
@@ -67,8 +67,10 @@ destinations remain blocked.
 
 Before the sidecar starts, an offline resolver reads provider identities and
 HTTPS endpoints from the selected profile and adds exact TCP/443 model rules.
-It emits no credential values. Providers whose endpoint depends on runtime or
-credential state fail with a provider-specific diagnostic unless a stable
+Complete matching managed SSH pairs add exact hostname (or IPv4 `/32`) TCP/22
+rules. The resolver validates those pairs but emits no private material, public
+keys, fingerprints, or provider credential values. Providers whose endpoint
+depends on runtime or credential state fail with a provider-specific diagnostic unless a stable
 endpoint can be established. Azure and Google Vertex currently require an
 explicit HTTPS provider `baseUrl` in `models.json`. Enterprise or token-derived
 GitHub Copilot endpoints and region/profile/ARN-derived Amazon Bedrock endpoints
@@ -89,9 +91,11 @@ receive data by design.
 
 The launcher freezes normalized rules in private temporary state mounted only
 into the sidecar. Pi receives no `NET_ADMIN` and cannot read or alter that active
-policy. Startup reports `model-tcp` and `manual-tcp`; stop if they differ from
-your intent. Changes to `profile.json`, `auth.json`, `models.json`, or
-`settings.json` can affect the next launch but not a running sidecar.
+policy. Startup reports `model-tcp`, `ssh-tcp`, and `manual-tcp`; stop if they
+differ from your intent. The managed SSH credential directory is separately
+over-mounted read-only in normal sessions. Changes made through SSH management
+or to `profile.json`, `auth.json`, `models.json`, or `settings.json` can affect
+the next launch but not a running sidecar.
 
 These modes constrain Pi session containers, not every host-managed operation.
 Snapshot and SSH-key management use separately documented containers. Offline
