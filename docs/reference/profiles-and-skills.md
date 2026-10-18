@@ -43,9 +43,9 @@ Creation does not copy `auth.json`, `models.json`, `settings.json`, `gitconfig`,
 general credentials, SSH keys, sessions, Guardian preferences, or logs. It does
 not overwrite an existing profile or select the new one.
 
-Resource fields are copied as part of `profile.json`, so shared access remains
-enabled or disabled as in the source. Resetting `skills` to `null` selects all
-global skills, even if the source selected fewer.
+Resource and network fields are copied as part of `profile.json`, so shared and
+network exposure remain as in the source. Resetting `skills` to `null` selects
+all global skills, even if the source selected fewer.
 
 ## Profile file layout
 
@@ -87,6 +87,9 @@ The supported resource values are:
   "schemaVersion": 1,
   "name": "operations",
   "skills": null,
+  "network": {
+    "mode": "host"
+  },
   "resources": {
     "shared": "disabled"
   }
@@ -95,12 +98,26 @@ The supported resource values are:
 
 - `skills` may be absent, `null`, or an array of unique valid global skill names.
 - `resources` contains only `shared`, which is `disabled` or `read-write`.
+- `network` may be absent for v0.6 compatibility or contain one mode: `host`,
+  `offline`, or `restricted`. Host and offline objects contain only `mode`.
+- A restricted network object may contain `allow`, an array of unique rules.
+  Each rule has exactly one `host`, `domain`, or `cidr` selector and optional
+  unique integer `tcpPorts` from 1 through 65535. Omitted ports mean all TCP.
+- Host and domain values are lowercase multi-label DNS names. CIDRs are
+  semantically normalized by the isolated resolver; blocked special ranges and
+  malformed prefixes fail restricted startup.
 - A legacy or arbitrary top-level `guardian` field is not accepted.
+
+The restricted resolver also reads provider identities and endpoints from
+`auth.json`, `models.json`, and `settings.json`, plus bundled metadata. It adds
+model TCP/443 rules independently of `allow`. Unsupported endpoint forms or
+configured providers without resolvable metadata fail closed. This structure is
+resolved and frozen before Pi starts.
 
 Every selected global name must exist, and reserved core names are invalid in
 the global filter. Profile-local names do not belong in that filter; selecting a
-global package with the same active local name creates a conflict. Resource and
-skill changes take effect only on a new launch.
+global package with the same active local name creates a conflict. Resource,
+network, and skill changes take effect only on a new launch.
 
 The host interface has no profile deletion, show, edit, import, export, or
 profile-only backup command. Do not infer commands from direct file ownership.
@@ -164,8 +181,8 @@ instructions and executable files.
 
 ## Security and lifecycle boundaries
 
-- The selected profile is mounted read-write and exposes all of its private
-  runtime state to that session.
+- The selected profile exposes its private runtime state to that session. Most
+  Pi-owned files are writable; `profile.json` is over-mounted read-only.
 - Global skills are read-only only at their package mount; their instructions and
   scripts can still affect other writable or network resources.
 - Profile-local packages are writable and can be changed by the selected run.

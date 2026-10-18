@@ -26,25 +26,22 @@ Run slash commands after Pi's interface opens:
 ```
 
 Arguments after the workspace are forwarded to Pi. Launcher-wide options such
-as `--home`, `--profile`, and `--network` belong before the workspace:
+as `--home` and `--profile` belong before the workspace:
 
 ```bash
 pi-run --home /private/pi-run --profile operations /srv/runbooks -r
-pi-run --network docker-offline /srv/runbooks
-pi-run --network docker-restricted --allow-host example.com /srv/runbooks
 ```
 
-`docker-host` is the default network backend. Select `docker-offline` explicitly
-for a session container with Docker `--network none`. Experimental
-`docker-restricted` requires one or more repeated `--allow-host` options and
-allows only HTTPS CONNECT to those exact lowercase hostnames on port 443. It
-does not accept URLs, paths, ports, wildcards, IP literals, or single-label
-names.
+Network selection belongs to `profile.json`. `host` maps to Docker host
+networking, `offline` maps to Docker network-none, and experimental `restricted`
+resolves model-provider TCP/443 endpoints plus the profile's typed manual rules.
+The removed prerelease `--network` and `--allow-host` launch options are not
+competing policy sources.
 
-The selection and hostname list apply only to that invocation, including any
-container restart requested by the snapshot workflow; they are not saved with
-the profile or session. A later launch or resume returns to `docker-host` unless
-another backend is selected explicitly.
+The selected profile is re-evaluated on each launch or resume. Its normalized
+restricted policy remains frozen across snapshot-triggered Pi restarts in that
+launcher process. Host-side edits and writable model/authentication settings can
+change the next launch, not the active sidecar.
 
 ## Initialization behavior
 
@@ -145,7 +142,8 @@ the host CA bundle, skills, and session paths. On launch it reports:
 pi-run: home=<resolved-data-home>
 pi-run: profile=<profile> workspace=<resolved-workspace>
 pi-run: network=<docker-host|docker-offline|docker-restricted>
-pi-run: allowed-https=<hostname>:443[,<hostname>:443...]  # restricted only
+pi-run: model-tcp=<provider-host>:443[...]                 # restricted only
+pi-run: manual-tcp=<selector>=<destination>:<ports>[...]   # restricted only
 pi-run: Guardian loaded; review mode starts Off
 ```
 

@@ -33,15 +33,15 @@ Required checks should pass before launch. If a command or check fails, use the
 | Concept | What it gives you |
 | --- | --- |
 | Workspace | The host directory Pi works in, mounted read-write at `/workspace`. |
-| Profile | Selected instructions, settings, credentials, skills, and sessions, mounted read-write at `/profile`. |
+| Profile | Selected instructions, settings, credentials, skills, and sessions at `/profile`; `profile.json` is read-only during a run while Pi-owned settings remain writable. |
 | Pi-Run home | Persistent Pi-Run data, normally `~/Pi-Run`; separate from the installed application. |
 
 The initial profile is `default`. Purpose-specific profiles help keep unrelated
 accounts, sessions, and instructions out of a run.
 
-The workspace and profile are real writable host data. The default profile also
-exposes writable shared files at `/shared`, and the default `docker-host` backend
-uses host networking. Containerization and alternate network modes do not make
+The workspace and most profile state are real writable host data. The default
+profile also exposes writable shared files at `/shared`, and its `host` mode uses
+Docker host networking. Containerization and alternate network modes do not make
 files, credentials, localhost services, or remote systems disposable. Open only
 the directory and access needed for the task; see
 [Security and isolation](security.md).
@@ -54,24 +54,35 @@ Change to the directory you want Pi to use, then run:
 pi-run .
 ```
 
-Choose a narrower session network explicitly when the task supports it:
+Networking belongs to the selected profile. New and existing v0.6 profiles use
+host networking unless their `profile.json` selects another mode. For example,
+a restricted profile can contain:
 
-```bash
-pi-run --network docker-offline .
-pi-run --network docker-restricted --allow-host example.com .
+```json
+{
+  "network": {
+    "mode": "restricted",
+    "allow": [
+      {"host": "git.example.com", "tcpPorts": [22, 443]},
+      {"domain": "example.com", "tcpPorts": [80, 443]},
+      {"cidr": "10.20.30.0/24", "tcpPorts": [22]}
+    ]
+  }
+}
 ```
 
-Offline mode has no external interface. Experimental restricted mode permits
-HTTPS on port 443 only for repeated exact lowercase `--allow-host` values. It
-may break `/login`, model APIs, package managers, web tools, and other clients
-until every required hostname is listed. The choice applies only to that
-invocation and is not saved with the profile or session.
+Use `"mode": "offline"` for Docker network-none. In restricted mode, `host` is
+exact, `domain` includes the apex and subdomains, and `cidr` selects a subnet.
+Omitting `tcpPorts` permits every TCP port for that rule. External UDP remains blocked.
+Pi-Run automatically adds exact TCP/443 rules for model providers already
+represented by the profile, so they do not belong in `allow`.
 
 You can pass another existing directory instead of `.`. Pi-Run reports the data
-home, selected profile, workspace, network backend, Guardian state, and enabled
-optional mounts, then opens Pi's interactive terminal interface. Restricted mode
-also reports each allowed `hostname:443`. The normal terminal mode keeps
-standard scrollback.
+home, selected profile, workspace, effective Docker backend, Guardian state, and
+enabled optional mounts, then opens Pi's interactive terminal interface.
+Restricted mode reports model-derived and manual TCP exposure separately. The
+normal terminal mode keeps standard scrollback. See [Profiles](profiles.md) for
+configuration and [Security and isolation](security.md) for enforcement limits.
 
 The first launch also initializes a missing data home and registers this
 workspace. For profile selection and exact startup behavior, see the

@@ -17,7 +17,7 @@ A normal Pi-Run session can access:
 | Resource | Exposure |
 | --- | --- |
 | Selected workspace | Writable at `/workspace` |
-| Selected profile | Writable at `/profile`, including its credentials and sessions |
+| Selected profile | Available at `/profile`; `profile.json` is read-only, while credentials, settings, and sessions remain writable |
 | Shared directory | Writable at `/shared` when enabled by the profile |
 | Profile-local skills | Writable inside the selected profile |
 | Selected global skills | Mounted read-only |
@@ -31,60 +31,72 @@ workspace mappings, snapshot repositories and recovery secrets, or the Docker
 socket. Technical mounts and operation-specific management containers are
 listed in the [security reference](reference/security.md#normal-session-mounts).
 
-## Choose session networking
+## Choose profile networking
 
-Pi-Run has three per-invocation network backends:
+Networking is selected by the profile, not by normal launch arguments:
 
-| Backend | Session-container network |
+| Profile mode | Session-container network |
 | --- | --- |
-| `docker-host` | Default host networking, including Docker-host loopback and surrounding routes |
-| `docker-offline` | Docker `--network none`; loopback remains but there is no external interface |
-| `docker-restricted` | Experimental default-deny sidecar allowing exact HTTPS hostnames on port 443 |
+| `host` | Docker host networking, including Docker-host loopback and surrounding routes |
+| `offline` | Docker network-none; loopback remains but there is no external interface |
+| `restricted` | Experimental default-deny namespace with a version-matched egress sidecar |
 
-Select a non-default backend before the workspace or `resume` command:
+A missing `network` object preserves host networking for profiles created by
+stable v0.6 releases. New profiles explicitly contain `"mode": "host"`. A
+restricted profile can add typed rules:
 
-```bash
-pi-run --network docker-offline .
-pi-run --network docker-restricted --allow-host example.com .
-pi-run --network docker-restricted \
-  --allow-host api.example.com \
-  --allow-host packages.example.net \
-  .
+```json
+{
+  "network": {
+    "mode": "restricted",
+    "allow": [
+      {"host": "git.example.com", "tcpPorts": [22, 443]},
+      {"domain": "example.com", "tcpPorts": [80, 443]},
+      {"cidr": "10.20.30.0/24", "tcpPorts": [22, 5432]}
+    ]
+  }
+}
 ```
 
-Restricted mode accepts repeated exact lowercase DNS hostnames—not URLs, paths,
-ports, wildcards, IP literals, or single-label names. Clients that honor
-`HTTPS_PROXY` can use CONNECT through the sidecar. Direct IP, alternate DNS,
-private-address, IPv6, and arbitrary TCP bypasses are default-denied. Pi-Run
-does not inspect TLS, HTTP methods, or paths, and an allowed HTTPS endpoint can
-receive arbitrary uploaded data.
+Each rule has exactly one selector. `host` is an exact lowercase DNS hostname;
+`domain` covers the named apex and all subdomains; `cidr` is a normalized IPv4
+or IPv6 subnet. `tcpPorts` contains unique ports from 1 through 65535. Omitting
+it permits all TCP ports for that destination. External UDP, loopback TCP other
+than the local proxy, link-local, multicast, unspecified, and other reserved
+destinations remain blocked.
 
-Provider login, model APIs, package managers, source hosts, CDNs, and web tools
-may each require several changing hostnames. Restricted mode fails closed rather
-than silently restoring host networking, so incomplete lists cause operations to
-fail. It is experimental and is not a compatibility promise for every tool or
-provider.
+Before the sidecar starts, an offline resolver reads provider identities and
+HTTPS endpoints from the selected profile and adds exact TCP/443 model rules.
+It emits no credential values. Unsupported or unsafe provider endpoints,
+invalid manual rules, an empty effective policy, malformed output, or sidecar
+failure prevents Pi from starting; there is no host-network fallback.
 
-The backend and hostname list apply only to that invocation and any
-snapshot-triggered Pi restart. They are not saved in the profile or session. A
-later launch or resume returns to `docker-host` unless another backend is
-selected explicitly. The launcher reports the effective backend and, for
-restricted mode, every allowed `hostname:443`; stop if they differ from your
-intent.
+Host and domain rules are enforced by hostname-aware HTTP CONNECT. HTTP clients
+receive loopback proxy variables, and restricted sessions configure OpenSSH to
+use the same proxy for SSH, SCP, SFTP, Git-over-SSH, and Ansible. Other
+hostname-based clients must support CONNECT. CIDR rules are also enforced by the
+firewall and can support ordinary direct TCP clients. Pi-Run does not inspect
+TLS, application methods, paths, or transferred data. Any allowed service can
+receive data by design.
+
+The launcher freezes normalized rules in private temporary state mounted only
+into the sidecar. Pi receives no `NET_ADMIN` and cannot read or alter that active
+policy. Startup reports `model-tcp` and `manual-tcp`; stop if they differ from
+your intent. Changes to `profile.json`, `auth.json`, `models.json`, or
+`settings.json` can affect the next launch but not a running sidecar.
 
 These modes constrain Pi session containers, not every host-managed operation.
-Snapshot and SSH management may use their separately documented network modes.
-Offline and restricted modes also do not make mounts read-only, hide credentials
-inside the selected profile, revoke remote authority, or turn the shared-kernel
-container into a sandbox or VM.
+Snapshot and SSH-key management use separately documented containers. Offline
+and restricted modes do not hide selected-profile credentials, undo prior
+writes, revoke remote authority, or turn the shared-kernel container into a
+sandbox or VM.
 
-With the default backend, `localhost` can reach services on the Docker host, and
-LAN, internet, cloud, cluster, or database endpoints may also be reachable.
-Filesystem exposure can therefore be narrow while network authority is broad. A
-credential can turn a reachable or allowed endpoint into real access. Do not
-assume a service is disposable because it is called local, dev, or runs in a
-container. Name the actual host, account, cluster, namespace, database,
-operation, and intended effect for administrative work.
+With host mode, `localhost` can reach Docker-host services, and LAN, internet,
+cloud, cluster, or database endpoints may also be reachable. Filesystem
+exposure can therefore be narrow while network authority is broad. A credential
+can turn a reachable or allowed endpoint into real access. Name the actual host,
+account, cluster, namespace, database, operation, and intended effect for
+administrative work.
 
 ## Treat mounted data as exposed
 
@@ -141,8 +153,8 @@ human review as control layers while keeping technical exposure small.
    workspace mode.
 2. **Use a purpose-specific profile.** Keep unrelated provider accounts, remote
    credentials, sessions, and private skills elsewhere.
-3. **Choose session networking.** Use offline mode when no remote access is
-   needed, or an exact-host restricted list when its compatibility limits fit.
+3. **Choose profile networking.** Use offline mode when no remote access is
+   needed, or restricted rules when their TCP and proxy compatibility limits fit.
 4. **Disable optional resources.** Turn off shared access and filter global
    skills. Restart after changing exposure.
 5. **Review the runtime and project.** Use trusted images and inspect unfamiliar
