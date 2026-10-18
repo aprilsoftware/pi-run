@@ -18,7 +18,7 @@ mkdir -p "${PROFILE}"
 printf '%s\n' '{"providers":[{"id":"openai-codex","baseUrls":["https://chatgpt.com/backend-api"]}]}' \
     > "${TMP}/metadata.json"
 printf '%s\n' \
-    '{"network":{"mode":"restricted","allowHosts":["github.com","api.github.com","github.com"]}}' \
+    '{"network":{"mode":"restricted","allow":[{"host":"git.example.test","tcpPorts":[443,22]},{"domain":"example.test"},{"cidr":"10.20.30.17/24","tcpPorts":[22]},{"cidr":"2001:0db8::1/64"}]}}' \
     > "${PROFILE}/profile.json"
 printf '%s\n' \
     '{"openai-codex":{"type":"oauth","access":"RESOLVER_SECRET_MUST_NOT_APPEAR"}}' \
@@ -34,13 +34,16 @@ run_resolver() {
 }
 
 output="$(run_resolver)"
-[[ "$(jq -c '.modelHosts' <<< "${output}")" == \
-   '["api.openai.com","auth.openai.com","chatgpt.com","inference.example.test","pi.dev","vision.example.test"]' ]] \
-    || fail "model hostname resolution was incorrect"
-[[ "$(jq -c '.additionalHosts' <<< "${output}")" == '["api.github.com","github.com"]' ]] \
-    || fail "additional hostname resolution was incorrect"
+expected_model_hosts='["api.openai.com","auth.openai.com","chatgpt.com","inference.example.test","pi.dev","vision.example.test"]'
+[[ "$(jq -c '[.modelRules[].host]' <<< "${output}")" == "${expected_model_hosts}" ]] \
+    || fail "model rule resolution was incorrect"
+jq -e 'all(.modelRules[]; .tcpPorts == [443] and (keys == ["host", "tcpPorts"]))' \
+    <<< "${output}" >/dev/null || fail "model rules were not exact TCP/443 rules"
+[[ "$(jq -c '.manualRules' <<< "${output}")" == \
+   '[{"cidr":"10.20.30.0/24","tcpPorts":[22]},{"cidr":"2001:db8::/64"},{"domain":"example.test"},{"host":"git.example.test","tcpPorts":[22,443]}]' ]] \
+    || fail "manual rule normalization was incorrect"
 [[ "$(jq -r 'keys | sort | join(",")' <<< "${output}")" == \
-   'additionalHosts,modelHosts,schemaVersion' ]] || fail "resolver emitted unexpected fields"
+   'manualRules,modelRules,schemaVersion' ]] || fail "resolver emitted unexpected fields"
 [[ "${output}" != *RESOLVER_SECRET_MUST_NOT_APPEAR* ]] || fail "resolver printed a credential"
 
 expect_failure() {
@@ -51,7 +54,7 @@ expect_failure() {
     set -e
     [[ ${status} -ne 0 ]] || fail "resolver accepted invalid input: ${expected}"
     [[ "${failure_output}" == *"${expected}"* ]] || fail "resolver failure lacked diagnostic: ${expected}"
-    [[ "${failure_output}" != *RESOLVER_SECRET_MUST_NOT_APPEAR* ]] || fail "resolver failure printed a credential"
+    [[ "${failure_output}" != *RESOLVER_SECRET_MUST_NOT_APPEAR* ]] || fail "resolver failure printed a secret"
 }
 
 for endpoint in 'http://inference.example.test/v1' \
@@ -71,9 +74,22 @@ expect_failure 'could not resolve a configured model provider endpoint'
 printf '%s\n' '{"openai-codex":"RESOLVER_SECRET_MUST_NOT_APPEAR"' > "${PROFILE}/auth.json"
 expect_failure 'invalid JSON in profile configuration file: auth.json'
 printf '%s\n' '{}' > "${PROFILE}/auth.json"
-printf '%s\n' '{"network":{"mode":"restricted","allowHosts":["https://github.com"]}}' \
-    > "${PROFILE}/profile.json"
-expect_failure 'invalid allowHosts entry'
+
+while IFS=$'\t' read -r expected network; do
+    printf '{"network":%s}\n' "${network}" > "${PROFILE}/profile.json"
+    expect_failure "${expected}"
+done <<'EOF'
+invalid network configuration in profile.json	{"mode":"restricted","extra":true}
+invalid allow rules in profile.json	{"mode":"restricted","allow":{}}
+invalid manual network rule	{"mode":"restricted","allow":[{"host":"one.test","domain":"two.test"}]}
+invalid domain rule	{"mode":"restricted","allow":[{"domain":"*.example.test"}]}
+invalid tcpPorts in manual network rule	{"mode":"restricted","allow":[{"host":"one.test","tcpPorts":[22,22]}]}
+invalid tcpPorts in manual network rule	{"mode":"restricted","allow":[{"cidr":"10.0.0.0/8","tcpPorts":[0]}]}
+invalid CIDR rule	{"mode":"restricted","allow":[{"cidr":"10.0.0.0/99"}]}
+CIDR rule overlaps a blocked range	{"mode":"restricted","allow":[{"cidr":"127.0.0.1/32"}]}
+duplicate manual network rule	{"mode":"restricted","allow":[{"host":"one.test","tcpPorts":[443,22]},{"host":"one.test","tcpPorts":[22,443]}]}
+EOF
+
 printf '%s\n' '{"network":{"mode":"host"}}' > "${PROFILE}/profile.json"
 expect_failure 'profile network mode is not restricted'
 

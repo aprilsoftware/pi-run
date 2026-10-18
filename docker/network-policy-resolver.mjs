@@ -74,6 +74,92 @@ function endpointHostname(value, label) {
   }
 }
 
+function parseAddress(address, family) {
+  if (family === 4) {
+    const parts = address.split(".");
+    if (parts.length !== 4 || parts.some((part) => !/^(?:0|[1-9][0-9]{0,2})$/.test(part))) fail("invalid CIDR rule");
+    const numbers = parts.map(Number);
+    if (numbers.some((part) => part > 255)) fail("invalid CIDR rule");
+    return numbers.reduce((result, part) => (result << 8n) | BigInt(part), 0n);
+  }
+  const canonical = new URL(`http://[${address}]/`).hostname.slice(1, -1);
+  const [left, right = ""] = canonical.split("::");
+  const leftParts = left ? left.split(":") : [];
+  const rightParts = right ? right.split(":") : [];
+  const groups = canonical.includes("::")
+    ? [...leftParts, ...Array(8 - leftParts.length - rightParts.length).fill("0"), ...rightParts]
+    : leftParts;
+  if (groups.length !== 8) fail("invalid CIDR rule");
+  return groups.reduce((result, part) => (result << 16n) | BigInt(`0x${part}`), 0n);
+}
+
+function parseCidr(value) {
+  if (typeof value !== "string" || !value.includes("/")) fail("invalid CIDR rule");
+  const separator = value.lastIndexOf("/");
+  const address = value.slice(0, separator);
+  const prefixText = value.slice(separator + 1);
+  const family = isIP(address);
+  if (!family || !/^(?:0|[1-9][0-9]{0,2})$/.test(prefixText)) fail("invalid CIDR rule");
+  const bits = family === 4 ? 32 : 128;
+  const prefix = Number(prefixText);
+  if (prefix > bits) fail("invalid CIDR rule");
+  const full = (1n << BigInt(bits)) - 1n;
+  const mask = prefix === 0 ? 0n : (full << BigInt(bits - prefix)) & full;
+  return { family, bits, prefix, address: parseAddress(address, family) & mask };
+}
+
+function formatCidr(parsed) {
+  if (parsed.family === 4) {
+    const parts = [24n, 16n, 8n, 0n].map((shift) => Number((parsed.address >> shift) & 255n));
+    return `${parts.join(".")}/${parsed.prefix}`;
+  }
+  const groups = [];
+  for (let shift = 112n; shift >= 0n; shift -= 16n) groups.push(((parsed.address >> shift) & 65535n).toString(16));
+  const address = new URL(`http://[${groups.join(":")}]/`).hostname.slice(1, -1);
+  return `${address}/${parsed.prefix}`;
+}
+
+const BLOCKED_CIDRS = [
+  "0.0.0.0/8", "127.0.0.0/8", "169.254.0.0/16", "224.0.0.0/4", "240.0.0.0/4",
+  "::/128", "::1/128", "::ffff:0:0/96", "fe80::/10", "ff00::/8",
+].map(parseCidr);
+
+function normalizeCidr(value) {
+  const parsed = parseCidr(value);
+  for (const blocked of BLOCKED_CIDRS) {
+    if (blocked.family !== parsed.family) continue;
+    const prefix = Math.min(blocked.prefix, parsed.prefix);
+    const full = (1n << BigInt(parsed.bits)) - 1n;
+    const mask = prefix === 0 ? 0n : (full << BigInt(parsed.bits - prefix)) & full;
+    if ((blocked.address & mask) === (parsed.address & mask)) fail("CIDR rule overlaps a blocked range");
+  }
+  return formatCidr(parsed);
+}
+
+function normalizeManualRule(value) {
+  const rule = object(value, "manual network rule");
+  const selectors = ["host", "domain", "cidr"].filter((key) => Object.hasOwn(rule, key));
+  const allowedKeys = new Set([...selectors, "tcpPorts"]);
+  if (selectors.length !== 1 || Object.keys(rule).some((key) => !allowedKeys.has(key))) fail("invalid manual network rule");
+  const selector = selectors[0];
+  const normalized = selector === "cidr"
+    ? normalizeCidr(rule[selector])
+    : exactHostname(rule[selector], `${selector} rule`);
+  const result = { [selector]: normalized };
+  if (rule.tcpPorts !== undefined) {
+    if (!Array.isArray(rule.tcpPorts) || rule.tcpPorts.length === 0 ||
+        rule.tcpPorts.some((port) => !Number.isInteger(port) || port < 1 || port > 65535) ||
+        new Set(rule.tcpPorts).size !== rule.tcpPorts.length) fail("invalid tcpPorts in manual network rule");
+    result.tcpPorts = [...rule.tcpPorts].sort((left, right) => left - right);
+  }
+  return result;
+}
+
+function manualRuleKey(rule) {
+  const selector = ["host", "domain", "cidr"].find((key) => Object.hasOwn(rule, key));
+  return `${selector}:${rule[selector]}:${rule.tcpPorts?.join(",") ?? "all"}`;
+}
+
 async function loadBuiltinProviders() {
   const metadataFile = process.env.PI_RUN_PROVIDER_METADATA_FILE;
   if (metadataFile) {
@@ -147,9 +233,16 @@ async function main() {
   const profile = object(await readJson(join(profileDir, "profile.json"), true), "profile.json");
   const network = object(profile.network, "network configuration in profile.json");
   if (network.mode !== "restricted") fail("profile network mode is not restricted");
-  const additional = network.allowHosts ?? [];
-  if (!Array.isArray(additional)) fail("invalid allowHosts in profile.json");
-  const additionalHosts = [...new Set(additional.map((host) => exactHostname(host, "allowHosts entry")))].sort();
+  if (Object.keys(network).some((key) => key !== "mode" && key !== "allow")) fail("invalid network configuration in profile.json");
+  const allow = network.allow ?? [];
+  if (!Array.isArray(allow)) fail("invalid allow rules in profile.json");
+  const manualRules = allow.map(normalizeManualRule).sort((left, right) => {
+    const leftKey = manualRuleKey(left);
+    const rightKey = manualRuleKey(right);
+    return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
+  });
+  const manualKeys = manualRules.map(manualRuleKey);
+  if (new Set(manualKeys).size !== manualKeys.length) fail("duplicate manual network rule");
 
   const auth = object(await readJson(join(profileDir, "auth.json")), "auth.json");
   const models = object(await readJson(join(profileDir, "models.json")), "models.json");
@@ -167,12 +260,12 @@ async function main() {
     for (const host of AUXILIARY_HOSTS[providerId] ?? []) modelHosts.add(exactHostname(host, "provider auxiliary hostname"));
     if (builtins.has(providerId)) modelHosts.add("pi.dev");
   }
-  if (modelHosts.size === 0 && additionalHosts.length === 0) fail("restricted profile resolved no HTTPS hosts");
+  if (modelHosts.size === 0 && manualRules.length === 0) fail("restricted profile resolved no TCP rules");
 
   process.stdout.write(`${JSON.stringify({
     schemaVersion: 1,
-    modelHosts: [...modelHosts].sort(),
-    additionalHosts,
+    modelRules: [...modelHosts].sort().map((host) => ({ host, tcpPorts: [443] })),
+    manualRules,
   })}\n`);
 }
 
