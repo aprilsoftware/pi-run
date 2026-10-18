@@ -11,14 +11,19 @@ A launcher-managed Pi session uses these host-backed resources:
 | Host resource | Container path | Access |
 | --- | --- | --- |
 | Selected workspace | `/workspace` | Read-write |
-| Selected profile | `/profile` | Read-write |
+| Selected profile | `/profile` | Read-write base mount |
+| Profile network configuration | `/profile/profile.json` | Read-only nested over-mount |
+| Managed SSH credential directory, when present | `/profile/credentials/ssh` | Read-only nested over-mount |
 | Shared directory, when enabled | `/shared` | Read-write |
 | Selected global skills | `/skills/<name>` | Read-only |
 | Host CA bundle | `/etc/ssl/certs/ca-certificates.crt` | Read-only |
 | Private per-launch snapshot request directory | `/run/pi-run-snapshot` | Read-write control channel |
 
-Profile-local skills are part of the writable profile mount. Core skills and
-baseline extensions come from the runtime image. The snapshot request channel
+Profile-local skills and Pi-owned provider, settings, and session state remain
+part of the writable profile mount. Normal sessions cannot rewrite the active
+profile network configuration or managed SSH credentials through their nested
+over-mounts. Core skills and baseline extensions come from the runtime image.
+The snapshot request channel
 contains a bounded request and token; it does not expose the repository,
 recovery secrets, S3 credentials, Docker socket, or complete Pi-Run home.
 
@@ -80,9 +85,11 @@ Before restricted startup, the launcher runs the runtime image's policy
 resolver with Docker network-none, all capabilities dropped, the host UID/GID,
 and the selected profile mounted read-only. The resolver derives exact TCP/443
 model rules from `auth.json`, `models.json`, `settings.json`, and bundled
-provider metadata, then normalizes manual `host`, `domain`, and `cidr` rules
-from `profile.json`. It emits destination and port structure, never credential
-values, URL paths, headers, or query strings.
+provider metadata, validates complete matching managed SSH pairs into exact
+hostname or IPv4 `/32` TCP/22 rules, then normalizes manual `host`, `domain`,
+`cidr`, and public-internet rules from `profile.json`. It emits destination and
+port structure, never credential values, private or public keys, fingerprints,
+URL paths, headers, or query strings.
 
 Endpoint derivation must be deterministic before startup. Azure and Google
 Vertex require an explicit HTTPS provider `baseUrl` in `models.json`.
@@ -95,14 +102,17 @@ bundled Bedrock endpoint metadata remain accepted when no dynamic override appli
 The launcher validates the output again, combines and deduplicates rules, and
 writes private `rules.json` staging with mode `0600`. Only the sidecar receives
 that read-only file. Workspaces containing `/tmp`, including `/` and `/tmp`, are
-rejected so staging cannot appear through `/workspace`. `profile.json` is also
-over-mounted read-only in Pi while `auth.json`, `models.json`, and
-`settings.json` remain writable for Pi's supported workflows.
+rejected so staging cannot appear through `/workspace`. `profile.json` and the
+managed SSH credential directory are separately over-mounted read-only in Pi,
+while `auth.json`, `models.json`, and `settings.json` remain writable for Pi's
+supported workflows.
 
 The sidecar receives `NET_ADMIN`; Pi does not. Both share one network namespace
 whose IPv4 and IPv6 output policies default to deny. Squid permits CONNECT when
-a requested exact host, domain suffix, or CIDR and TCP port match a rule. CIDR
-rules also allow matching direct TCP from Pi's mapped UID. External UDP,
+a requested exact host, domain suffix, CIDR, or public-internet destination and
+TCP port match a rule. CIDR and internet rules also allow matching direct TCP
+from Pi's mapped UID. Internet rules exclude private and special-purpose ranges;
+explicit CIDRs can separately grant selected private networks. External UDP,
 alternate DNS, unlisted destinations, gateway access, direct TCP loopback other
 than the local proxy, link-local, multicast, unspecified, and configured
 adjacent ports remain blocked.
@@ -111,21 +121,24 @@ The launcher supplies HTTP proxy variables and enables Node's environment proxy
 support. In restricted mode it also generates an OpenSSH `ProxyCommand` using
 `nc -X connect`, so SSH, SCP, SFTP, Git-over-SSH, and OpenSSH-based Ansible use
 the sidecar. Other hostname/domain clients must support HTTP CONNECT; arbitrary
-non-proxy-aware TCP clients require an applicable CIDR rule. There is no TLS or
-application-protocol interception.
+non-proxy-aware TCP clients require an applicable CIDR or public-internet rule.
+There is no TLS or application-protocol interception.
 
 Resolver failure, invalid output, empty policy, sidecar startup failure, and
 readiness failure all prevent Pi from starting without a host-network retry.
 The normalized policy is frozen for that launcher process, including
-snapshot-triggered Pi restarts. Startup reports model and manual TCP rules.
-Profile changes can influence a later launch but cannot change the active
-firewall or proxy policy.
+snapshot-triggered Pi restarts. Startup reports exact model and manual TCP
+rules plus the inferred SSH target count and port; it does not print the SSH
+inventory. Profile or managed-key changes can influence a later launch but
+cannot change the active firewall or proxy policy.
 
 Offline or restricted networking does not hide credentials, undo prior writes,
-or turn the container into a VM. An allowed endpoint can receive arbitrary data,
-and authentication and remote authorization remain independent controls. A
-credential, kubeconfig, client, or reachable port is capability—not user
-permission for an unrelated operation.
+or turn the container into a VM. An allowed endpoint can receive arbitrary data;
+public-internet TCP authority is broad exfiltration authority even if an
+enterprise firewall independently blocks some traffic. Authentication and
+remote authorization remain separate controls. A credential, kubeconfig,
+client, or reachable port is capability—not user permission for an unrelated
+operation.
 
 Snapshot and SSH-key management containers can use different network modes for
 their bounded operations. An offline or restricted Pi container may request a

@@ -143,6 +143,7 @@ pi-run: home=<resolved-data-home>
 pi-run: profile=<profile> workspace=<resolved-workspace>
 pi-run: network=<docker-host|docker-offline|docker-restricted>
 pi-run: model-tcp=<provider-host>:443[...]                 # restricted only
+pi-run: ssh-tcp=<count> managed targets on port 22          # restricted only
 pi-run: manual-tcp=<selector>=<destination>:<ports>[...]   # restricted only
 pi-run: Guardian loaded; review mode starts Off
 ```

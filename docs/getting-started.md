@@ -33,7 +33,7 @@ Required checks should pass before launch. If a command or check fails, use the
 | Concept | What it gives you |
 | --- | --- |
 | Workspace | The host directory Pi works in, mounted read-write at `/workspace`. |
-| Profile | Selected instructions, settings, credentials, skills, and sessions at `/profile`; `profile.json` is read-only during a run while Pi-owned settings remain writable. |
+| Profile | Selected instructions, settings, credentials, skills, and sessions at `/profile`; `profile.json` and managed SSH credentials are read-only during a run while other permitted Pi-owned state remains writable. |
 | Pi-Run home | Persistent Pi-Run data, normally `~/Pi-Run`; separate from the installed application. |
 
 The initial profile is `default`. Purpose-specific profiles help keep unrelated

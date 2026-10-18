@@ -26,20 +26,28 @@ Pi-Run exposes intentionally selected resources:
 | Resource | Container path | Mode |
 |---|---|---|
 | Selected workspace | `/workspace` | read-write |
-| Selected profile | `/profile` | read-write |
+| Selected profile | `/profile` | read-write base mount |
+| Profile configuration | `/profile/profile.json` | read-only nested over-mount |
+| Managed SSH credentials, when present | `/profile/credentials/ssh` | read-only nested over-mount |
 | Shared directory, when enabled | `/shared` | read-write |
 | Profile-local skill | `/profile/skills/<name>` | read-write |
 | Global skill | `/skills/<name>` | read-only |
 | Host CA bundle | `/etc/ssl/certs/ca-certificates.crt` | read-only |
 | Per-launch snapshot request directory | `/run/pi-run-snapshot` | read-write control channel |
 
-Normal sessions use host networking, so loopback and other reachable services
+Networking belongs to the selected profile. `host` uses Docker host networking;
+`offline` uses Docker network-none; `restricted` uses a default-deny namespace
+with a version-matched egress sidecar and frozen TCP policy. A missing network
+object preserves host networking for stable v0.6 profiles. Reachable services
 may be real host or remote systems. The host home, other profiles, machine-local
 workspace mappings, snapshot repositories and secrets, and Docker socket are not
 mounted in a normal session.
 
 The selected profile is the source of truth for Pi configuration, credentials,
 instructions, Guardian policy, and sessions. Other profiles are not mounted.
+The nested read-only mounts prevent a normal session from rewriting next-launch
+network authority or managed SSH keys; other permitted profile state remains
+real writable host data.
 
 The launcher disables broad automatic skill, extension, and prompt-template
 discovery. Core Pi-Run skills and baseline extensions are loaded explicitly.
@@ -80,6 +88,44 @@ nonzero exit status.
 `doctor` does not initialize or repair state, pull images, access registries, or
 inspect credential contents. Do not treat a successful diagnostic as authority
 to change the host or contact infrastructure.
+
+## Profile networking
+
+Inspect and change network authority from a host terminal:
+
+```bash
+pi-run --profile <name> network show
+pi-run --profile <name> network mode <host|offline|restricted>
+pi-run --profile <name> network allow list
+pi-run --profile <name> network allow add host <hostname> --tcp-port <port>
+pi-run --profile <name> network allow add domain <domain> --all-tcp
+pi-run --profile <name> network allow add cidr <cidr> --all-tcp
+pi-run --profile <name> network allow add internet --all-tcp
+pi-run --profile <name> network allow remove internet
+```
+
+Host and domain rules use hostname-aware HTTP CONNECT. CIDR rules permit direct
+TCP to the normalized network. An internet rule permits public TCP destinations
+while excluding private and special-purpose ranges; explicit CIDRs can grant
+selected private networks. Supplying `tcpPorts` restricts any rule to unique
+ports from 1 through 65535. Profile JSON omits `tcpPorts` for all TCP, while the
+host CLI requires the deliberate `--all-tcp` flag. External UDP and ICMP remain
+denied. Public-internet authority is broad exfiltration authority even when an
+enterprise firewall independently restricts it.
+
+Restricted startup automatically derives exact TCP/443 model destinations and
+exact-target TCP/22 rules from complete matching managed SSH key pairs. It
+reports exact `model-tcp` and `manual-tcp` rules plus only the `ssh-tcp` target
+count and port. Use `ssh-key list` to request the SSH inventory. The normalized
+policy is private from Pi and frozen before startup; profile, provider, or key
+changes affect only a new launch. Network reachability and credential presence
+are capabilities, not user authorization for a task.
+
+Mode and rule commands lock, validate, stage, and atomically replace
+`profile.json`. Host or offline mode cannot retain manual rules; use
+`--discard-rules` only when deliberate removal is intended. CIDR mutation uses
+the locally installed version-matched runtime image in an offline, capability-
+free, read-only helper with no mounts.
 
 ## Sessions
 
@@ -145,9 +191,12 @@ Listing is read-only and networkless. Add creates or reuses a local Ed25519 pair
 and makes one interactive `ssh-copy-id` attempt; a failed installation retains
 the pair for an explicit retry. Remove affects only local files and never
 revokes remote `authorized_keys`. Startup and listing do not contact targets.
-Host-key checking remains enabled, and credential presence does not authorize
-remote access. Encrypted keys, imports, aliases, ports, IPv6 names, and multiple
-users for one hostname are not supported by this mechanism.
+On the next restricted launch, each complete matching pair grants its exact
+hostname—or IPv4 `/32`—TCP/22 reachability. The managed store is mounted
+read-only in normal sessions, and the active policy remains frozen. Host-key
+checking remains enabled, and credential presence does not authorize remote
+work. Encrypted keys, imports, aliases, nonstandard inferred ports, IPv6 names,
+and multiple users for one hostname are not supported by this mechanism.
 
 ## Security boundaries
 

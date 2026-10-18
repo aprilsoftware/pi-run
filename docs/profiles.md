@@ -146,7 +146,7 @@ like:
 | `skills: ["name"]` | Load only the named installed global skills. |
 | `network.mode: "host"` | Use Docker host networking. |
 | `network.mode: "offline"` | Use Docker network-none. |
-| `network.mode: "restricted"` | Resolve and enforce the profile's model and manual TCP rules. |
+| `network.mode: "restricted"` | Resolve and enforce model, managed-SSH, and manual TCP rules. |
 | `resources.shared: "read-write"` | Mount the home's shared directory at writable `/shared`. |
 | `resources.shared: "disabled"` | Do not mount `/shared`. |
 

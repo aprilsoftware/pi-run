@@ -52,7 +52,8 @@ restricted profile can add typed rules:
     "allow": [
       {"host": "git.example.com", "tcpPorts": [22, 443]},
       {"domain": "example.com", "tcpPorts": [80, 443]},
-      {"cidr": "10.20.30.0/24", "tcpPorts": [22, 5432]}
+      {"cidr": "10.20.30.0/24", "tcpPorts": [22, 5432]},
+      {"internet": true}
     ]
   }
 }
@@ -60,19 +61,20 @@ restricted profile can add typed rules:
 
 Each rule has exactly one selector. `host` is an exact lowercase DNS hostname;
 `domain` covers the named apex and all subdomains; `cidr` is a normalized IPv4
-or IPv6 subnet. `tcpPorts` contains unique ports from 1 through 65535. Omitting
-it permits all TCP ports for that destination. External UDP, loopback TCP other
-than the local proxy, link-local, multicast, unspecified, and other reserved
-destinations remain blocked.
+or IPv6 subnet; `internet: true` permits public destinations while excluding
+private and special-purpose ranges. `tcpPorts` contains unique ports from 1
+through 65535. Omitting it permits all TCP ports for that rule. External UDP,
+loopback TCP other than the local proxy, link-local, multicast, unspecified, and
+other reserved destinations remain blocked.
 
 Before the sidecar starts, an offline resolver reads provider identities and
 HTTPS endpoints from the selected profile and adds exact TCP/443 model rules.
 Complete matching managed SSH pairs add exact hostname (or IPv4 `/32`) TCP/22
 rules. The resolver validates those pairs but emits no private material, public
 keys, fingerprints, or provider credential values. Providers whose endpoint
-depends on runtime or credential state fail with a provider-specific diagnostic unless a stable
-endpoint can be established. Azure and Google Vertex currently require an
-explicit HTTPS provider `baseUrl` in `models.json`. Enterprise or token-derived
+depends on runtime or credential state fail with a provider-specific diagnostic
+unless a stable endpoint can be established. Azure and Google Vertex currently
+require an explicit HTTPS provider `baseUrl` in `models.json`. Enterprise or token-derived
 GitHub Copilot endpoints and region/profile/ARN-derived Amazon Bedrock endpoints
 are currently unsupported. Diagnostics do not print credential, endpoint,
 account, or region values.
@@ -84,10 +86,12 @@ starting; there is no host-network fallback.
 Host and domain rules are enforced by hostname-aware HTTP CONNECT. HTTP clients
 receive loopback proxy variables, and restricted sessions configure OpenSSH to
 use the same proxy for SSH, SCP, SFTP, Git-over-SSH, and Ansible. Other
-hostname-based clients must support CONNECT. CIDR rules are also enforced by the
-firewall and can support ordinary direct TCP clients. Pi-Run does not inspect
-TLS, application methods, paths, or transferred data. Any allowed service can
-receive data by design.
+hostname-based clients must support CONNECT. CIDR and public-internet rules are
+also enforced by the firewall and can support ordinary direct TCP clients.
+Public-internet authority is broad exfiltration authority even when enterprise
+firewalls independently restrict it. Pi-Run does not inspect TLS, application
+methods, paths, or transferred data. Any allowed service can receive data by
+design.
 
 The launcher freezes normalized rules in private temporary state mounted only
 into the sidecar. Pi receives no `NET_ADMIN` and cannot read or alter that active

@@ -47,10 +47,11 @@ and policy are profile-configurable; activation is session-scoped and every new
 session starts Off.
 
 Guardian is not a sandbox or an infallible security decision-maker. The temporary
-container narrows filesystem exposure, but selected mounts remain writable and
-the default network backend uses host networking. Explicit offline and
-experimental exact-host HTTPS modes can narrow session networking; they do not
-hide mounted credentials or make writes disposable. Profiles, credentials, Unix
+container narrows filesystem exposure, but selected mounts contain real host
+data and the default network backend uses host networking. Explicit offline and
+experimental restricted TCP modes can narrow session networking with exact
+hosts, domains, CIDRs, or public-internet rules; they do not hide mounted
+credentials or make writes disposable. Profiles, credentials, Unix
 permissions, RBAC, database roles, and network controls bound authority;
 instructions, Guardian, protected workflows, and human review reduce the
 likelihood of a harmful action.
@@ -81,10 +82,12 @@ resources, and other infrastructure need their own recovery mechanisms.
   protect portable Pi-Run state and support guarded restore. They complement Git,
   workspace backups, and infrastructure recovery rather than replacing them.
 - **Selectable session networking:** retain default host networking, choose an
-  explicit offline container, or experiment with an exact-host HTTPS allowlist.
-- **Understandable boundaries:** the workspace and profile are writable, but the
-  host home, other profiles, and Docker socket are not mounted into a normal
-  session.
+  explicit offline container, or use experimental restricted TCP rules for
+  exact hosts, domains, CIDRs, and public-internet access.
+- **Understandable boundaries:** the workspace and most selected-profile state
+  are writable; network-authority configuration and managed SSH credentials are
+  over-mounted read-only. The host home, other profiles, and Docker socket are
+  not mounted into a normal session.
 
 ## Why Pi?
 

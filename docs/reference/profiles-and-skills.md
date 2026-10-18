@@ -236,7 +236,8 @@ instructions and executable files.
 ## Security and lifecycle boundaries
 
 - The selected profile exposes its private runtime state to that session. Most
-  Pi-owned files are writable; `profile.json` is over-mounted read-only.
+  Pi-owned files are writable; `profile.json` and the managed SSH credential
+  directory are over-mounted read-only.
 - Global skills are read-only only at their package mount; their instructions and
   scripts can still affect other writable or network resources.
 - Profile-local packages are writable and can be changed by the selected run.
