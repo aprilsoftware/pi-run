@@ -184,21 +184,33 @@ source, not the intended long-term user experience.
 ## Profile-driven follow-up
 
 A follow-up prerelease should select networking from the profile with one
-optional top-level object:
+optional top-level object and typed TCP rules:
 
 ```json
 {
   "network": {
     "mode": "restricted",
-    "allowHosts": ["github.com", "api.github.com"]
+    "allow": [
+      {"host": "git.example.com", "tcpPorts": [22, 443]},
+      {"domain": "example.com", "tcpPorts": [80, 443, 8443]},
+      {"cidr": "10.20.30.0/24", "tcpPorts": [22, 5432]},
+      {"cidr": "10.50.0.0/16"}
+    ]
   }
 }
 ```
 
 `mode` accepts `host`, `offline`, or `restricted`. An absent `network` object
-preserves `host` for existing profiles. `allowHosts` is optional and contains
-only additional exact lowercase HTTPS hostnames needed by the profile's tasks;
-it does not repeat model-provider endpoints.
+preserves host networking for profiles created by stable v0.6 releases. The
+v0.7.0 interface was explicitly prerelease-only, so its launch flags and
+exact-host policy do not establish a migration contract.
+
+Each manual rule has exactly one selector. `host` is exact, `domain` covers the
+named DNS suffix and its apex, and `cidr` identifies an IP subnet. Optional
+`tcpPorts` is a non-empty set of ports from 1 through 65535; omitting it permits
+all TCP ports for that destination. UDP and ICMP remain denied. Automatically
+resolved model-provider destinations are separate exact-host TCP/443 rules and
+do not need to be repeated in `allow`.
 
 Normal launch syntax remains only profile and workspace selection:
 
@@ -208,8 +220,8 @@ pi-run --profile <name> <workspace>
 
 The follow-up removes `--network` and `--allow-host` from normal launches rather
 than maintaining two competing sources of authority. Profile creation copies
-the source profile's network choice. Backend or hostname changes take effect on
-the next launch, never in a running namespace.
+the source profile's network choice. Policy changes take effect on the next
+launch, never in a running namespace.
 
 ## Automatic model-provider egress
 
@@ -232,11 +244,12 @@ lowercased, validated, deduplicated, and restricted to HTTPS port 443. A custom
 provider using HTTP, an explicit alternate port, an IP literal, or an invalid
 URL makes a restricted launch fail with a clear diagnostic.
 
-The resulting provider hosts and optional `allowHosts` are frozen into the
-private runtime policy copy. Startup reports model-derived and additional hosts
-separately. Missing metadata, unsupported dynamic provider extensions, or an
-empty effective restricted policy fail closed rather than restoring host
-networking. Offline mode does not infer or allow provider endpoints.
+The resulting provider TCP/443 rules and optional manual `allow` rules are
+normalized and frozen into the private runtime policy copy. Startup reports
+model-derived and manual destinations and ports separately. Missing metadata,
+unsupported dynamic provider extensions, invalid manual rules, or an empty
+effective restricted policy fail closed rather than restoring host networking.
+Offline mode does not infer or allow provider endpoints.
 
 Initial automatic resolution targets providers already represented by the
 profile. Signing in to a previously unconfigured provider from a restricted
@@ -258,28 +271,34 @@ Changes to those files cannot alter the active sidecar, but they can change the
 model-derived host set on a later launch. Pi-Run must display that complete set
 at every startup, and documentation must state this trust boundary directly.
 
-The active hostname list remains a private temporary host file mounted read-only
-only into the sidecar. It is never mounted into Pi. Restricted staging must
-continue to reject workspace overlap, provider-resolution failure, sidecar
-failure, and proxy failure without falling back to `docker-host`.
+The active normalized rule policy remains private temporary host state mounted
+read-only only into the sidecar. It is never mounted into Pi. Restricted staging
+must continue to reject workspace overlap, provider-resolution failure,
+sidecar failure, and proxy failure without falling back to `docker-host`.
 
-## Initial policy scope
+## Generalized TCP policy scope
 
-The experimental restricted path supports only:
+The v0.7.0 restricted path proved default-deny exact HTTPS access. The next
+experiment generalizes that boundary to selected TCP services without adding
+UDP:
 
-- default deny;
-- exact HTTPS hostname and port rules;
-- an explicit offline mode;
-- blocked direct IP and non-HTTP protocols; and
-- readable audit events containing no secrets.
+- exact host and DNS-suffix rules use hostname-aware HTTP CONNECT with optional
+  destination ports;
+- CIDR rules permit direct TCP with optional destination ports;
+- omitted ports mean all TCP ports for that one rule;
+- direct traffic that does not match a CIDR remains blocked; and
+- UDP, ICMP, alternate DNS, and unlisted destinations remain blocked.
 
-It does not perform TLS interception. Clients that honor `HTTPS_PROXY` use
-CONNECT, allowing the proxy to enforce the requested hostname and port without
-reading encrypted content. Clients that do not support the proxy are blocked.
+CONNECT does not inspect encrypted content and can tunnel protocols such as SSH.
+OpenSSH can use `nc -X connect` through the loopback proxy. Other hostname-based
+clients must support HTTP CONNECT; a non-proxy-aware application needs an
+explicit CIDR rule. This limitation is preferable to resolving names into broad
+IP firewall grants, which can admit unrelated services sharing an address.
 
-HTTP method/path enforcement, transparent TLS interception, SSH, databases,
-arbitrary TCP, package-manager compatibility exceptions, and credential
-injection are separate experiments.
+Port and destination rules constrain reachability, not application behavior or
+data contents. HTTP method/path enforcement, TLS interception, UDP, transparent
+proxying for arbitrary applications, and credential injection remain separate
+work.
 
 ## Credentials
 
@@ -359,6 +378,18 @@ disposable home were removed. This invocation also used `pi --version`, so its
 value is lifecycle integration evidence; packet enforcement evidence remains
 the earlier real Docker probe.
 
+### Generalized TCP-rule probe
+
+`experiments/docker-egress-tcp-rules/` is a disposable successor harness. Its
+`--execute` path passed on the supported Docker Engine 26 host using a private
+Docker network and local echo services. Exact hosts, domain suffixes, selected
+ports, selected-port CIDRs, and all-port CIDRs succeeded. Adjacent ports, an
+unlisted hostname, an IP literal through the proxy, direct hostname-rule bypass,
+an adjacent CIDR address, UDP inside an allowed CIDR, and bypass after sidecar
+termination all failed. The workload had no `NET_ADMIN` and could not see the
+sidecar policy. This proves the generalized TCP mechanism, not production
+launcher, resolver, SSH-configuration, or published-image integration.
+
 ## Important limitations
 
 - This is container isolation on a shared host kernel, not a VM sandbox.
@@ -383,9 +414,11 @@ backend prerelease-only while its limitations and remaining
 TUI/provider/credential behavior are evaluated.
 
 Prerelease feedback rejects per-launch network mode and provider-host arguments
-as the durable interface. The next experiment should use the profile-driven,
-automatically resolved model-provider design above while preserving the proven
-sidecar enforcement and fail-closed behavior.
+as the durable interface. Before profile integration, a disposable generalized
+TCP-rule harness must prove exact hosts, domain suffixes, CIDRs, selected and
+unrestricted TCP ports, SSH-style CONNECT, UDP denial, policy isolation, and
+fail-closed behavior on Docker Engine 26. Production integration should proceed
+only if that evidence preserves the sidecar's existing security properties.
 
 ## Sources
 
