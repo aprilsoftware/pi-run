@@ -224,7 +224,11 @@ RUN apt-get update && \
 
 # Install the dynamic UID/GID entrypoint and profile SSH configuration helper.
 COPY entrypoint.sh ssh-credentials /usr/local/bin/
-RUN chmod 0755 /usr/local/bin/entrypoint.sh /usr/local/bin/ssh-credentials
+COPY network-policy-resolver.mjs /usr/local/bin/pi-run-network-policy-resolver
+RUN chmod 0755 \
+        /usr/local/bin/entrypoint.sh \
+        /usr/local/bin/ssh-credentials \
+        /usr/local/bin/pi-run-network-policy-resolver
 
 WORKDIR /workspace
 

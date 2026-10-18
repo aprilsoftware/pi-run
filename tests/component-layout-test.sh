@@ -19,6 +19,8 @@ SPDX='# SPDX-License-Identifier: MIT'
     || fail "Dockerfile has no SPDX license identifier"
 [[ "$(sed -n '1p' "${ROOT}/docker/egress/Dockerfile")" == "${SPDX}" ]] \
     || fail "egress Dockerfile has no SPDX license identifier"
+[[ "$(sed -n '2p' "${ROOT}/docker/network-policy-resolver.mjs")" == "//${SPDX#\#}" ]] \
+    || fail "network policy resolver has no SPDX license identifier"
 [[ "$(sed -n '2p' "${ROOT}/docker/egress/entrypoint.sh")" == "${SPDX}" ]] \
     || fail "egress entrypoint has no SPDX license identifier"
 [[ "$(sed -n '1p' "${ROOT}/.github/workflows/release.yml")" == "${SPDX}" ]] \
@@ -36,6 +38,12 @@ grep -Fx 'COPY licenses/pi-run-LICENSE /usr/local/share/licenses/pi-run/LICENSE'
 grep -Fx 'COPY licenses/pi-run-LICENSE /usr/local/share/licenses/pi-run/LICENSE' \
     "${ROOT}/docker/egress/Dockerfile" >/dev/null \
     || fail "egress Dockerfile does not install the Pi-Run license"
+grep -Fx 'COPY network-policy-resolver.mjs /usr/local/bin/pi-run-network-policy-resolver' \
+    "${ROOT}/docker/Dockerfile" >/dev/null \
+    || fail "runtime image does not install the network policy resolver"
+[[ -f "${ROOT}/docker/network-policy-resolver.mjs" && \
+   ! -L "${ROOT}/docker/network-policy-resolver.mjs" ]] \
+    || fail "network policy resolver is missing or unsafe"
 [[ -x "${ROOT}/docker/egress/entrypoint.sh" && ! -L "${ROOT}/docker/egress/entrypoint.sh" ]] \
     || fail "egress entrypoint is missing or unsafe"
 cmp -s "${ROOT}/experiments/docker-egress/entrypoint.sh" \
