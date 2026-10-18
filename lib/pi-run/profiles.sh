@@ -269,6 +269,141 @@ set_profile_network_mode() {
     printf 'Changes apply to new launches; running sessions are unchanged.\n'
 }
 
+list_profile_network_rules() {
+    local profile_dir config rule_count
+    profile_dir="$(resolve_profile_directory)"
+    validate_profile_config "${profile_dir}" "${PROFILE}"
+    validate_profile_definition_files "${profile_dir}"
+    config="${profile_dir}/profile.json"
+    rule_count="$(jq -r '(.network.allow // []) | length' "${config}")"
+    printf 'Profile: %s\nManual allow rules: %s\n' "${PROFILE}" "${rule_count}"
+    jq -r '
+        def selector:
+            if .host then "host=" + .host
+            elif .domain then "domain=" + .domain
+            else "cidr=" + .cidr
+            end;
+        def ports:
+            if .tcpPorts then (.tcpPorts | sort | map(tostring) | join("|"))
+            else "all"
+            end;
+        (.network.allow // [])[] | selector + " tcp=" + ports
+    ' "${config}"
+}
+
+validate_network_rule_hostname() {
+    local value="$1"
+    jq -en --arg value "${value}" '
+        $value | type == "string" and length <= 253 and
+        test("^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$") and
+        (test("^([0-9]{1,3}\\.){3}[0-9]{1,3}$") | not)
+    ' >/dev/null
+}
+
+change_profile_network_rule() {
+    local action="$1" selector="$2" destination="$3"
+    shift 3
+    local all_tcp=false argument port ports_json rule profile_dir config current_mode
+    local match_count staging profile_lock_fd verb
+    local -a ports=()
+    declare -A seen_ports=()
+
+    case "${action}" in add|remove) ;; *) fail "invalid network rule action: ${action}" ;; esac
+    case "${selector}" in host|domain) ;; *) fail "unsupported network rule selector: ${selector}" ;; esac
+    destination="${destination,,}"
+    validate_network_rule_hostname "${destination}" \
+        || fail "invalid ${selector} network rule: ${destination}"
+
+    while [[ $# -gt 0 ]]; do
+        argument="$1"
+        case "${argument}" in
+            --tcp-port)
+                [[ $# -ge 2 ]] || fail "--tcp-port requires a value"
+                port="$2"
+                if [[ ! "${port}" =~ ^[0-9]{1,5}$ ]] ||
+                   (( 10#${port} < 1 || 10#${port} > 65535 )); then
+                    fail "invalid TCP port: ${port}"
+                fi
+                port="$((10#${port}))"
+                [[ -z "${seen_ports[${port}]:-}" ]] || fail "duplicate TCP port: ${port}"
+                seen_ports["${port}"]=1
+                ports+=("${port}")
+                shift 2
+                ;;
+            --all-tcp)
+                [[ "${all_tcp}" == false ]] || fail "duplicate --all-tcp"
+                all_tcp=true
+                shift
+                ;;
+            *) fail "unknown network rule option: ${argument}" ;;
+        esac
+    done
+    if [[ "${all_tcp}" == true && ${#ports[@]} -gt 0 ]]; then
+        fail "--all-tcp cannot be combined with --tcp-port"
+    fi
+    if [[ "${all_tcp}" == false && ${#ports[@]} -eq 0 ]]; then
+        fail "specify at least one --tcp-port or --all-tcp"
+    fi
+
+    if [[ "${all_tcp}" == true ]]; then
+        rule="$(jq -cn --arg selector "${selector}" --arg destination "${destination}" \
+            '{($selector): $destination}')"
+    else
+        ports_json="$(printf '%s\n' "${ports[@]}" | jq -s 'sort')"
+        rule="$(jq -cn --arg selector "${selector}" --arg destination "${destination}" \
+            --argjson ports "${ports_json}" '{($selector): $destination, tcpPorts: $ports}')"
+    fi
+
+    profile_dir="$(resolve_profile_directory)"
+    exec {profile_lock_fd}<"${profile_dir}" \
+        || fail "could not open profile directory for locking: ${profile_dir}"
+    flock -x "${profile_lock_fd}" \
+        || fail "could not lock profile directory: ${profile_dir}"
+    validate_profile_config "${profile_dir}" "${PROFILE}"
+    validate_profile_definition_files "${profile_dir}"
+    config="${profile_dir}/profile.json"
+    current_mode="$(jq -r '.network.mode // "host"' "${config}")"
+    [[ "${current_mode}" == restricted ]] \
+        || fail "manual network rules require restricted mode; current mode is ${current_mode}"
+    match_count="$(jq -r --argjson rule "${rule}" '
+        def canonical: if .tcpPorts then .tcpPorts |= sort else . end;
+        [(.network.allow // [])[] | select((. | canonical) == $rule)] | length
+    ' "${config}")"
+    if [[ "${action}" == add && "${match_count}" -gt 0 ]]; then
+        fail "manual network rule already exists"
+    fi
+    if [[ "${action}" == remove && "${match_count}" -eq 0 ]]; then
+        fail "manual network rule does not exist"
+    fi
+
+    staging="${profile_dir}/.profile.json.tmp.$$"
+    [[ ! -e "${staging}" && ! -L "${staging}" ]] \
+        || fail "profile configuration staging path already exists: ${staging}"
+    trap 'rm -f "${staging:-}"' RETURN
+    if [[ "${action}" == add ]]; then
+        jq --argjson rule "${rule}" \
+            '.network.allow = ((.network.allow // []) + [$rule])' "${config}" > "${staging}"
+    else
+        jq --argjson rule "${rule}" '
+            def canonical: if .tcpPorts then .tcpPorts |= sort else . end;
+            .network.allow = [(.network.allow // [])[] | select((. | canonical) != $rule)] |
+            if (.network.allow | length) == 0 then del(.network.allow) else . end
+        ' "${config}" > "${staging}"
+    fi
+    chmod 0600 "${staging}"
+    if ! validate_profile_config_file "${staging}" "${PROFILE}"; then
+        rm -f "${staging}"
+        fail "staged manual network rule is invalid"
+    fi
+    mv "${staging}" "${config}"
+    trap - RETURN
+    port="$(jq -r 'if .tcpPorts then (.tcpPorts | map(tostring) | join("|")) else "all" end' <<< "${rule}")"
+    [[ "${action}" == add ]] && verb=Added || verb=Removed
+    printf '%s manual network rule for %s: %s=%s tcp=%s\n' \
+        "${verb}" "${PROFILE}" "${selector}" "${destination}" "${port}"
+    printf 'Changes apply to new launches; running sessions are unchanged.\n'
+}
+
 run_profile_ssh_key_command() {
     local action="$1" profile_dir image network mount
     shift

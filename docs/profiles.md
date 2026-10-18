@@ -96,9 +96,20 @@ the destructive change:
 pi-run --profile operations network mode host --discard-rules
 ```
 
-Rule-management commands are not currently provided, so manual allow rules still
-require editing `profile.json`. Every network change takes effect on the next
-launch.
+List manual rules or manage exact host and domain rules while restricted mode is
+configured:
+
+```bash
+pi-run --profile operations network allow list
+pi-run --profile operations network allow add host git.example.com --tcp-port 22
+pi-run --profile operations network allow add domain example.com --tcp-port 80 --tcp-port 443
+pi-run --profile operations network allow remove host git.example.com --tcp-port 22
+```
+
+Ports are normalized and must be repeated exactly when removing a rule. Granting
+all TCP ports requires the explicit `--all-tcp` option. CIDR rule management is
+not currently provided by the CLI and still requires editing `profile.json`.
+Every network change takes effect on the next launch.
 
 ## Configure resources and skills
 
@@ -186,8 +197,9 @@ and keep snapshot recovery secrets separately. Snapshots include every profile
 and its credentials.
 
 Pi-Run currently provides profile listing, creation, default selection, one-run
-selection, and network-mode inspection and changes. It does not provide profile
-deletion, import, definition export, or network-rule management commands.
+selection, network-mode changes, and host/domain manual-rule management. It does
+not provide profile deletion, import, definition export, or CIDR rule-management
+commands.
 
 For exact file layout, creation permissions, schema validation, inherited and
 reset fields, and unsupported operations, see the

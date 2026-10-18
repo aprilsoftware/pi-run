@@ -19,6 +19,8 @@ Usage:
   pi-run [--home <path>] profile create <name> [--from <profile>]
   pi-run [--home <path>] [--profile <name>] network show
   pi-run [--home <path>] [--profile <name>] network mode <host|offline|restricted> [--discard-rules]
+  pi-run [--home <path>] [--profile <name>] network allow list
+  pi-run [--home <path>] [--profile <name>] network allow <add|remove> <host|domain> <name> (--tcp-port <port>...|--all-tcp)
   pi-run [--home <path>] [--profile <name>] skill list
   pi-run [--home <path>] workspace list
   pi-run [--home <path>] workspace link <workspace-id> <path>
@@ -457,6 +459,19 @@ case "${COMMAND}" in
                 else
                     usage
                 fi
+                ;;
+            allow)
+                case "${3:-}" in
+                    list)
+                        [[ $# -eq 3 ]] || usage
+                        list_profile_network_rules
+                        ;;
+                    add|remove)
+                        [[ $# -ge 6 ]] || usage
+                        change_profile_network_rule "$3" "$4" "$5" "${@:6}"
+                        ;;
+                    *) usage ;;
+                esac
                 ;;
             *) usage ;;
         esac

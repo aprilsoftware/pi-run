@@ -36,7 +36,23 @@ Host and offline objects cannot contain manual allow rules. A change from
 restricted mode therefore refuses when rules exist. `--discard-rules` with host
 or offline explicitly replaces the network object and reports the number of
 removed rules; it is invalid with restricted mode. No mode command changes an
-active launch, and rule add/remove commands are not currently provided.
+active launch.
+
+`network allow list` displays every configured manual host, domain, and CIDR
+rule. Host and domain rules can be changed with:
+
+```text
+network allow add <host|domain> <name> (--tcp-port <port>...|--all-tcp)
+network allow remove <host|domain> <name> (--tcp-port <port>...|--all-tcp)
+```
+
+Add and remove require restricted mode. Names are normalized to lowercase;
+ports are normalized to ascending integers and must be unique and in the range
+1–65535. All-port authority requires `--all-tcp`. Removal matches the exact
+normalized selector and port set. Duplicate additions, absent removals, and
+combining explicit ports with `--all-tcp` fail without replacing the profile.
+Existing unrelated rules, including CIDRs, remain unchanged. CIDR mutation is
+not currently provided by the host CLI.
 
 ## Profile creation semantics
 
@@ -139,9 +155,9 @@ global package with the same active local name creates a conflict. Resource,
 network, and skill changes take effect only on a new launch.
 
 The host interface has no profile deletion, general definition show/edit,
-import, export, profile-only backup, or network-rule management command. Network
-mode inspection and changes use the dedicated commands above. Do not infer
-other commands from direct file ownership.
+import, export, profile-only backup, or CIDR rule-management command. Network
+mode and host/domain rule management use the dedicated commands above. Do not
+infer other commands from direct file ownership.
 
 ## Skill names and metadata
 
