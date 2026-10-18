@@ -28,6 +28,22 @@ run_launch() {
         "$@" >"${TMP}/stdout" 2>"${TMP}/stderr"
 }
 
+set_network_mode() {
+    local mode="$1" config="${HOME_DIR}/profiles/default/profile.json"
+    jq --arg mode "${mode}" '.network = {mode: $mode}' "${config}" > "${config}.tmp"
+    mv "${config}.tmp" "${config}"
+}
+
+set_restricted_network() {
+    local config="${HOME_DIR}/profiles/default/profile.json"
+    jq '.network = {mode: "restricted", allow: [
+        {host: "git.example.test", tcpPorts: [443, 22]},
+        {domain: "example.net"},
+        {cidr: "10.20.30.0/24", tcpPorts: [5432]}
+    ]}' "${config}" > "${config}.tmp"
+    mv "${config}.tmp" "${config}"
+}
+
 HOME_DIR="${TMP}/Pi Run"
 WORKSPACE="${TMP}/workspace"
 mkdir -p "${WORKSPACE}" "${TMP}/fake-bin"
@@ -40,6 +56,7 @@ printf '%s\n' '---' "$@" >> "${DOCKER_LOG:?}"
 case "${1:-}" in
     run)
         sidecar=false
+        resolver=false
         policy_source=
         cidfile=
         next_is_cidfile=false
@@ -50,6 +67,7 @@ case "${1:-}" in
                 continue
             fi
             [ "$argument" = NET_ADMIN ] && sidecar=true
+            [ "$argument" = /usr/local/bin/pi-run-network-policy-resolver ] && resolver=true
             [ "$argument" = --cidfile ] && next_is_cidfile=true
             case "$argument" in
                 type=bind,src=*,dst=/policy/rules.json,readonly)
@@ -58,7 +76,14 @@ case "${1:-}" in
                     ;;
             esac
         done
-        if [ "$sidecar" = true ]; then
+        if [ "$resolver" = true ]; then
+            [ "${RESOLVER_FAIL:-0}" = 0 ] || exit 40
+            if [ "${RESOLVER_OUTPUT+x}" = x ]; then
+                printf '%s\n' "${RESOLVER_OUTPUT}"
+            else
+                printf '%s\n' '{"schemaVersion":1,"modelRules":[{"host":"model.example.test","tcpPorts":[443]}],"manualRules":[{"cidr":"10.20.30.0/24","tcpPorts":[5432]},{"domain":"example.net"},{"host":"git.example.test","tcpPorts":[22,443]}]}'
+            fi
+        elif [ "$sidecar" = true ]; then
             [ -n "$policy_source" ] && [ -n "$cidfile" ] || exit 3
             cp "$policy_source" "${POLICY_CAPTURE:?}"
             dirname "$policy_source" > "${POLICY_DIR_CAPTURE:?}"
@@ -86,7 +111,10 @@ export DOCKER_LOG="${TMP}/docker.log"
 export POLICY_CAPTURE="${TMP}/rules.json"
 export POLICY_DIR_CAPTURE="${TMP}/policy-dir"
 
-# Existing launches retain host networking and identify the effective backend.
+# A legacy profile without network configuration retains host networking.
+config="${HOME_DIR}/profiles/default/profile.json"
+jq 'del(.network)' "${config}" > "${config}.tmp"
+mv "${config}.tmp" "${config}"
 run_launch "${PI_RUN}" "${WORKSPACE}"
 assert_network_mode host
 grep -F 'pi-run: network=docker-host' "${TMP}/stderr" >/dev/null \
@@ -94,8 +122,9 @@ grep -F 'pi-run: network=docker-host' "${TMP}/stderr" >/dev/null \
 [[ "$(grep -Fxc -- '--network' "${DOCKER_LOG}")" -eq 1 ]] \
     || fail "default launch supplied multiple Docker network modes"
 
-# Explicit offline launches map to Docker's network-none mode.
-run_launch "${PI_RUN}" --network docker-offline "${WORKSPACE}"
+# Profile-selected offline launches map to Docker's network-none mode.
+set_network_mode offline
+run_launch "${PI_RUN}" "${WORKSPACE}"
 assert_network_mode none
 grep -F 'pi-run: network=docker-offline' "${TMP}/stderr" >/dev/null \
     || fail "offline backend was not reported"
@@ -103,7 +132,7 @@ if grep -Fx host "${DOCKER_LOG}" >/dev/null; then
     fail "offline launch retained host networking"
 fi
 
-# Explicit resume launches retain the selected offline backend.
+# Resume launches retain the profile-selected offline backend.
 machine_file="$(find "${HOME_DIR}/machines" -maxdepth 1 -type f -name '*.json' -print -quit)"
 workspace_id="$(jq -r --arg path "${WORKSPACE}" \
     '.workspacePaths[] | select(.path == $path) | .workspaceId' "${machine_file}")"
@@ -111,29 +140,28 @@ session_dir="${HOME_DIR}/profiles/default/sessions/${workspace_id}"
 printf '%s\n' \
     '{"type":"session","id":"11111111-1111-4111-8111-111111111111","timestamp":"2026-10-17T12:00:00Z","cwd":"/workspace","version":3}' \
     > "${session_dir}/offline-resume.jsonl"
-run_launch "${PI_RUN}" --network docker-offline resume default "${workspace_id}"
+run_launch "${PI_RUN}" resume default "${workspace_id}"
 assert_network_mode none
 grep -Fx -- '--resume' "${DOCKER_LOG}" >/dev/null \
     || fail "offline resume did not reach Pi"
 
-# Restricted launches stage an exact private policy and gate Pi on the sidecar.
+# Restricted profiles resolve and freeze model and manual TCP rules.
+set_restricted_network
 rm -f "${POLICY_CAPTURE}" "${POLICY_DIR_CAPTURE}"
 PI_RUN_EGRESS_IMAGE=example.invalid/pi-run-egress:test \
-    run_launch "${PI_RUN}" --network docker-restricted \
-        --allow-host example.com --allow-host api.example.net "${WORKSPACE}"
+    run_launch "${PI_RUN}" "${WORKSPACE}"
 grep -F 'pi-run: network=docker-restricted' "${TMP}/stderr" >/dev/null \
     || fail "restricted backend was not reported"
-grep -F 'pi-run: allowed-https=example.com:443,api.example.net:443' \
-    "${TMP}/stderr" >/dev/null || fail "restricted exposure was not reported"
-jq -e '
-    . == {
-        schemaVersion: 1,
-        rules: [
-            {host: "example.com", tcpPorts: [443]},
-            {host: "api.example.net", tcpPorts: [443]}
-        ]
-    }
-' "${POLICY_CAPTURE}" >/dev/null || fail "runtime TCP rule policy was incorrect"
+grep -F 'pi-run: model-tcp=model.example.test:443' "${TMP}/stderr" >/dev/null \
+    || fail "model TCP exposure was not reported"
+grep -F 'pi-run: manual-tcp=cidr=10.20.30.0/24:5432,domain=example.net:*,host=git.example.test:22|443' \
+    "${TMP}/stderr" >/dev/null || fail "manual TCP exposure was not reported"
+jq -e '. == {schemaVersion: 1, rules: [
+    {cidr: "10.20.30.0/24", tcpPorts: [5432]},
+    {domain: "example.net"},
+    {host: "git.example.test", tcpPorts: [22, 443]},
+    {host: "model.example.test", tcpPorts: [443]}
+]}' "${POLICY_CAPTURE}" >/dev/null || fail "runtime TCP rule policy was incorrect"
 [[ ! -e "$(< "${POLICY_DIR_CAPTURE}")" ]] \
     || fail "runtime hostname policy was not cleaned up"
 grep -Fx 'example.invalid/pi-run-egress:test' "${DOCKER_LOG}" >/dev/null \
@@ -144,8 +172,16 @@ grep -F 'dst=/policy/rules.json,readonly' "${DOCKER_LOG}" >/dev/null \
     || fail "policy was exposed to more than the sidecar"
 [[ "$(grep -Fxc NET_ADMIN "${DOCKER_LOG}")" -eq 1 ]] \
     || fail "NET_ADMIN was not isolated to the sidecar"
+[[ "$(grep -Fxc -- '--network' "${DOCKER_LOG}")" -eq 2 ]] \
+    || fail "restricted launch did not isolate resolver and Pi networking"
+grep -Fx -- '--pull' "${DOCKER_LOG}" >/dev/null \
+    || fail "resolver did not prohibit implicit image pulls"
+grep -F 'dst=/profile,readonly' "${DOCKER_LOG}" >/dev/null \
+    || fail "resolver did not receive a read-only profile"
+grep -F 'dst=/profile/profile.json,readonly' "${DOCKER_LOG}" >/dev/null \
+    || fail "Pi did not receive a read-only profile configuration"
 grep -Fx -- '--cap-drop=ALL' "${DOCKER_LOG}" >/dev/null \
-    || fail "Pi capabilities were not dropped"
+    || fail "capabilities were not dropped"
 grep -F -- '--ulimit' "${DOCKER_LOG}" >/dev/null \
     || fail "sidecar file-descriptor limit was omitted"
 grep -F 'container:pi-egress-default-' "${DOCKER_LOG}" >/dev/null \
@@ -157,28 +193,43 @@ grep -Fx 'https_proxy=http://127.0.0.1:3128' "${DOCKER_LOG}" >/dev/null \
 grep -Fx 'NODE_USE_ENV_PROXY=1' "${DOCKER_LOG}" >/dev/null \
     || fail "Node environment proxy support was not enabled"
 ready_line="$(grep -n '/tmp/pi-run-egress-ready' "${DOCKER_LOG}" | head -1 | cut -d: -f1)"
-runtime_line="$(grep -n 'ghcr.io/aprilsoftware/pi-run:0.7.0' "${DOCKER_LOG}" | head -1 | cut -d: -f1)"
+runtime_line="$(grep -n -- '-it' "${DOCKER_LOG}" | head -1 | cut -d: -f1)"
 (( ready_line < runtime_line )) || fail "Pi started before sidecar readiness"
 grep -Fx rm "${DOCKER_LOG}" >/dev/null || fail "sidecar cleanup was not attempted"
 if grep -Fx host "${DOCKER_LOG}" >/dev/null; then
     fail "restricted launch used host networking"
 fi
 
-# A failed offline launch propagates the failure without a host-network retry.
+# A failed offline launch propagates without a host-network retry.
+set_network_mode offline
 : > "${DOCKER_LOG}"
 set +e
 PATH="${TMP}/fake-bin:${PATH}" PI_RUN_HOME="${HOME_DIR}" DOCKER_RUN_STATUS=42 \
-    "${PI_RUN}" --network docker-offline "${WORKSPACE}" \
-    >"${TMP}/stdout" 2>"${TMP}/stderr"
+    "${PI_RUN}" "${WORKSPACE}" >"${TMP}/stdout" 2>"${TMP}/stderr"
 status=$?
 set -e
 [[ ${status} -eq 42 ]] || fail "offline Docker failure was not propagated"
 assert_network_mode none
-[[ "$(grep -Fxc run "${DOCKER_LOG}")" -eq 1 ]] \
-    || fail "failed offline launch retried Docker"
-if grep -Fx host "${DOCKER_LOG}" >/dev/null; then
-    fail "failed offline launch fell back to host networking"
-fi
+[[ "$(grep -Fxc run "${DOCKER_LOG}")" -eq 1 ]] || fail "failed offline launch retried Docker"
+
+# Resolver failures and malformed output prevent sidecar startup.
+set_restricted_network
+for failure in execution output; do
+    : > "${DOCKER_LOG}"
+    set +e
+    if [[ "${failure}" == execution ]]; then
+        PATH="${TMP}/fake-bin:${PATH}" PI_RUN_HOME="${HOME_DIR}" RESOLVER_FAIL=1 \
+            "${PI_RUN}" "${WORKSPACE}" >"${TMP}/stdout" 2>"${TMP}/stderr"
+    else
+        PATH="${TMP}/fake-bin:${PATH}" PI_RUN_HOME="${HOME_DIR}" RESOLVER_OUTPUT='{}' \
+            "${PI_RUN}" "${WORKSPACE}" >"${TMP}/stdout" 2>"${TMP}/stderr"
+    fi
+    status=$?
+    set -e
+    [[ ${status} -ne 0 ]] || fail "resolver ${failure} failure was accepted"
+    [[ "$(grep -Fxc run "${DOCKER_LOG}")" -eq 1 ]] \
+        || fail "resolver ${failure} failure reached the sidecar or Pi"
+done
 
 # Sidecar startup and readiness failures prevent Pi from starting and clean policy.
 for failure in run ready; do
@@ -187,21 +238,16 @@ for failure in run ready; do
     set +e
     if [[ "${failure}" == run ]]; then
         PATH="${TMP}/fake-bin:${PATH}" PI_RUN_HOME="${HOME_DIR}" SIDECAR_RUN_FAIL=1 \
-            "${PI_RUN}" --network docker-restricted --allow-host example.com "${WORKSPACE}" \
-            >"${TMP}/stdout" 2>"${TMP}/stderr"
+            "${PI_RUN}" "${WORKSPACE}" >"${TMP}/stdout" 2>"${TMP}/stderr"
     else
         PATH="${TMP}/fake-bin:${PATH}" PI_RUN_HOME="${HOME_DIR}" READY_FAIL=1 \
-            "${PI_RUN}" --network docker-restricted --allow-host example.com "${WORKSPACE}" \
-            >"${TMP}/stdout" 2>"${TMP}/stderr"
+            "${PI_RUN}" "${WORKSPACE}" >"${TMP}/stdout" 2>"${TMP}/stderr"
     fi
     status=$?
     set -e
     [[ ${status} -ne 0 ]] || fail "sidecar ${failure} failure was accepted"
-    if grep -Fx 'ghcr.io/aprilsoftware/pi-run:0.7.0' "${DOCKER_LOG}" >/dev/null; then
-        fail "Pi started after sidecar ${failure} failure"
-    fi
-    [[ ! -e "$(< "${POLICY_DIR_CAPTURE}")" ]] \
-        || fail "sidecar ${failure} failure retained policy"
+    ! grep -Fx -- '-it' "${DOCKER_LOG}" >/dev/null || fail "Pi started after sidecar failure"
+    [[ ! -e "$(< "${POLICY_DIR_CAPTURE}")" ]] || fail "sidecar failure retained policy"
 done
 
 # Pi failure removes the sidecar and policy without retrying through host networking.
@@ -209,37 +255,30 @@ done
 rm -f "${POLICY_CAPTURE}" "${POLICY_DIR_CAPTURE}"
 set +e
 PATH="${TMP}/fake-bin:${PATH}" PI_RUN_HOME="${HOME_DIR}" DOCKER_RUN_STATUS=42 \
-    "${PI_RUN}" --network docker-restricted --allow-host example.com "${WORKSPACE}" \
-    >"${TMP}/stdout" 2>"${TMP}/stderr"
+    "${PI_RUN}" "${WORKSPACE}" >"${TMP}/stdout" 2>"${TMP}/stderr"
 status=$?
 set -e
 [[ ${status} -eq 42 ]] || fail "restricted Pi failure was not propagated"
-[[ "$(grep -Fxc run "${DOCKER_LOG}")" -eq 2 ]] \
-    || fail "failed restricted launch retried Docker"
+[[ "$(grep -Fxc run "${DOCKER_LOG}")" -eq 3 ]] || fail "failed restricted launch retried Docker"
 grep -Fx rm "${DOCKER_LOG}" >/dev/null || fail "failed restricted launch retained sidecar"
 [[ ! -e "$(< "${POLICY_DIR_CAPTURE}")" ]] || fail "failed restricted launch retained policy"
-if grep -Fx host "${DOCKER_LOG}" >/dev/null; then
-    fail "failed restricted launch fell back to host networking"
-fi
 
-# A sidecar cleanup failure is visible and makes the launch fail.
+# Sidecar cleanup failure is visible and makes the launch fail.
 : > "${DOCKER_LOG}"
 set +e
 PATH="${TMP}/fake-bin:${PATH}" PI_RUN_HOME="${HOME_DIR}" DOCKER_RM_FAIL=1 \
-    "${PI_RUN}" --network docker-restricted --allow-host example.com "${WORKSPACE}" \
-    >"${TMP}/stdout" 2>"${TMP}/stderr"
+    "${PI_RUN}" "${WORKSPACE}" >"${TMP}/stdout" 2>"${TMP}/stderr"
 status=$?
 set -e
 [[ ${status} -ne 0 ]] || fail "sidecar cleanup failure was hidden"
 grep -F 'warning: could not remove restricted egress sidecar' "${TMP}/stderr" >/dev/null \
     || fail "sidecar cleanup failure had no diagnostic"
 
-# A broad workspace cannot expose the private /tmp runtime policy staging area.
+# A broad workspace cannot expose private /tmp policy staging.
 : > "${DOCKER_LOG}"
 set +e
 PATH="${TMP}/fake-bin:${PATH}" PI_RUN_HOME="${HOME_DIR}" \
-    "${PI_RUN}" --network docker-restricted --allow-host example.com /tmp \
-    >"${TMP}/stdout" 2>"${TMP}/stderr"
+    "${PI_RUN}" /tmp >"${TMP}/stdout" 2>"${TMP}/stderr"
 status=$?
 set -e
 [[ ${status} -ne 0 ]] || fail "restricted backend accepted an overlapping workspace"
@@ -247,60 +286,40 @@ grep -F 'restricted runtime policy staging would overlap workspace: /tmp' \
     "${TMP}/stderr" >/dev/null || fail "overlapping workspace had no clear diagnostic"
 [[ ! -s "${DOCKER_LOG}" ]] || fail "overlapping workspace reached Docker"
 
-# Invalid selections and policy combinations fail before Docker.
-for backend in invalid docker-restricted; do
+# Structurally invalid profile rules fail before Docker.
+config="${HOME_DIR}/profiles/default/profile.json"
+for network in \
+    '{"mode":"invalid"}' \
+    '{"mode":"host","allow":[]}' \
+    '{"mode":"restricted","allow":{}}' \
+    '{"mode":"restricted","allow":[{"host":"one.test","domain":"two.test"}]}' \
+    '{"mode":"restricted","allow":[{"domain":"*.example.test"}]}' \
+    '{"mode":"restricted","allow":[{"host":"one.test","tcpPorts":[22,22]}]}' \
+    '{"mode":"restricted","allow":[{"host":"one.test"},{"host":"one.test"}]}'; do
+    jq --argjson network "${network}" '.network = $network' "${config}" > "${config}.tmp"
+    mv "${config}.tmp" "${config}"
     : > "${DOCKER_LOG}"
     set +e
     PATH="${TMP}/fake-bin:${PATH}" PI_RUN_HOME="${HOME_DIR}" \
-        "${PI_RUN}" --network "${backend}" "${WORKSPACE}" \
-        >"${TMP}/stdout" 2>"${TMP}/stderr"
+        "${PI_RUN}" "${WORKSPACE}" >"${TMP}/stdout" 2>"${TMP}/stderr"
     status=$?
     set -e
-    [[ ${status} -ne 0 ]] || fail "invalid backend selection was accepted: ${backend}"
-    [[ ! -s "${DOCKER_LOG}" ]] || fail "invalid backend selection reached Docker: ${backend}"
+    [[ ${status} -ne 0 ]] || fail "invalid profile network policy was accepted: ${network}"
+    [[ ! -s "${DOCKER_LOG}" ]] || fail "invalid profile network policy reached Docker"
 done
 
-for hostname in '*.example.com' 'https://example.com' '1.1.1.1' \
-    'example.com:443' localhost Example.com example..com example.com.; do
+# Removed per-launch network options are rejected before Docker.
+for option in --network --allow-host; do
     : > "${DOCKER_LOG}"
     set +e
     PATH="${TMP}/fake-bin:${PATH}" PI_RUN_HOME="${HOME_DIR}" \
-        "${PI_RUN}" --network docker-restricted --allow-host "${hostname}" "${WORKSPACE}" \
-        >"${TMP}/stdout" 2>"${TMP}/stderr"
+        "${PI_RUN}" "${option}" ignored "${WORKSPACE}" >"${TMP}/stdout" 2>"${TMP}/stderr"
     status=$?
     set -e
-    [[ ${status} -ne 0 ]] || fail "invalid exact hostname was accepted: ${hostname}"
-    [[ ! -s "${DOCKER_LOG}" ]] || fail "invalid exact hostname reached Docker: ${hostname}"
+    [[ ${status} -ne 0 ]] || fail "removed launcher option was accepted: ${option}"
+    grep -F "unknown launcher option: ${option}" "${TMP}/stderr" >/dev/null \
+        || fail "removed launcher option had no clear diagnostic"
+    [[ ! -s "${DOCKER_LOG}" ]] || fail "removed launcher option reached Docker"
 done
-
-for backend in docker-host docker-offline; do
-    : > "${DOCKER_LOG}"
-    set +e
-    PATH="${TMP}/fake-bin:${PATH}" PI_RUN_HOME="${HOME_DIR}" \
-        "${PI_RUN}" --network "${backend}" --allow-host example.com "${WORKSPACE}" \
-        >"${TMP}/stdout" 2>"${TMP}/stderr"
-    status=$?
-    set -e
-    [[ ${status} -ne 0 ]] || fail "${backend} accepted a hostname policy"
-    [[ ! -s "${DOCKER_LOG}" ]] || fail "${backend} hostname policy reached Docker"
-done
-
-: > "${DOCKER_LOG}"
-set +e
-PATH="${TMP}/fake-bin:${PATH}" PI_RUN_HOME="${HOME_DIR}" \
-    "${PI_RUN}" --network docker-offline doctor \
-    >"${TMP}/stdout" 2>"${TMP}/stderr"
-status=$?
-set -e
-[[ ${status} -ne 0 ]] || fail "management command accepted a network backend"
-[[ ! -s "${DOCKER_LOG}" ]] || fail "management command backend reached Docker"
-
-set +e
-"${PI_RUN}" --network >"${TMP}/stdout" 2>"${TMP}/stderr"
-status=$?
-set -e
-[[ ${status} -ne 0 ]] || fail "missing backend value was accepted"
-grep -F -- '--network requires a value' "${TMP}/stderr" >/dev/null \
-    || fail "missing backend value had no clear diagnostic"
 
 echo "Network backend tests passed"

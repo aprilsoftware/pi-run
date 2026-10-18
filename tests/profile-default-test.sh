@@ -25,10 +25,14 @@ WORKSPACE="${TMP}/workspace"
 mkdir -p "${WORKSPACE}" "${TMP}/fake-bin"
 
 PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" init >/dev/null
+[[ "$(jq -r '.network.mode' "${HOME_DIR}/profiles/default/profile.json")" == host ]] \
+    || fail "initial default profile does not select host networking"
 [[ "$(PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" profile default)" == default ]] \
     || fail "initial default profile is not default"
 
 PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" profile create development >/dev/null
+[[ "$(jq -r '.network.mode' "${HOME_DIR}/profiles/development/profile.json")" == host ]] \
+    || fail "created profile did not preserve its source network policy"
 output="$(PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" profile default development)"
 [[ "${output}" == "Default profile: development" ]] \
     || fail "setting the default returned unexpected output"
@@ -85,6 +89,20 @@ doctor_output="$(PATH="${TMP}/fake-bin:${PATH}" PI_RUN_HOME="${HOME_DIR}" \
     || fail "doctor did not report the configured default"
 [[ "${doctor_output}" == *"selected profile configuration is valid: development"* ]] \
     || fail "doctor did not inspect the configured default"
+
+development_config="${HOME_DIR}/profiles/development/profile.json"
+jq '.network = {mode: "restricted", allow: [
+    {host: "git.example.test", tcpPorts: [22]},
+    {cidr: "10.20.30.0/24", tcpPorts: [5432]}
+]}' "${development_config}" > "${development_config}.tmp"
+mv "${development_config}.tmp" "${development_config}"
+PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" \
+    profile create network-copy --from development >/dev/null
+jq -e '.network == {mode: "restricted", allow: [
+    {host: "git.example.test", tcpPorts: [22]},
+    {cidr: "10.20.30.0/24", tcpPorts: [5432]}
+]}' "${HOME_DIR}/profiles/network-copy/profile.json" >/dev/null \
+    || fail "profile creation did not preserve a restricted network policy"
 
 cp "${HOME_DIR}/config.json" "${TMP}/config.before"
 expect_failure env PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" profile default missing

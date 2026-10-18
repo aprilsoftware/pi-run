@@ -7,7 +7,7 @@ umask 077
 usage() {
     cat >&2 <<EOF
 Usage:
-  pi-run [--home <path>] [--profile <name>] [--network <docker-host|docker-offline|docker-restricted>] [--allow-host <hostname>]... <workspace> [pi arguments...]
+  pi-run [--home <path>] [--profile <name>] <workspace> [pi arguments...]
   pi-run [--home <path>] init
   pi-run [--home <path>] home
   pi-run version
@@ -37,8 +37,6 @@ Usage:
 Examples:
   pi-run .
   pi-run --profile default . -c
-  pi-run --network docker-offline .
-  pi-run --network docker-restricted --allow-host example.com .
   pi-run workspace list
   pi-run session list
   pi-run resume
@@ -76,24 +74,6 @@ path_is_within() {
     local path="${1%/}" root="${2%/}"
     [[ -n "${root}" ]] || root=/
     [[ "${root}" == / || "${path}" == "${root}" || "${path}" == "${root}/"* ]]
-}
-
-validate_allowed_hostname() {
-    local hostname="$1" label
-    local -a labels
-    (( ${#hostname} <= 253 )) || fail "invalid exact HTTPS hostname: ${hostname}"
-    [[ "${hostname}" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ &&
-       "${hostname}" == *.* && "${hostname}" != *..* &&
-       ! "${hostname}" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] \
-        || fail "invalid exact HTTPS hostname: ${hostname}"
-    IFS=. read -r -a labels <<< "${hostname}"
-    (( ${#labels[@]} >= 2 )) || fail "invalid exact HTTPS hostname: ${hostname}"
-    for label in "${labels[@]}"; do
-        (( ${#label} <= 63 )) \
-            || fail "invalid exact HTTPS hostname: ${hostname}"
-        [[ "${label}" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]] \
-            || fail "invalid exact HTTPS hostname: ${hostname}"
-    done
 }
 
 validate_skill_name() {
@@ -157,9 +137,6 @@ source "${PI_RUN_LIB_ROOT}/doctor.sh"
 PROFILE="default"
 PROFILE_EXPLICIT=false
 HOME_OVERRIDE=""
-NETWORK_BACKEND="docker-host"
-NETWORK_EXPLICIT=false
-ALLOWED_HOSTS=()
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -172,17 +149,6 @@ while [[ $# -gt 0 ]]; do
             require_value "$1" "${2:-}"
             PROFILE="$2"
             PROFILE_EXPLICIT=true
-            shift 2
-            ;;
-        --network)
-            require_value "$1" "${2:-}"
-            NETWORK_BACKEND="$2"
-            NETWORK_EXPLICIT=true
-            shift 2
-            ;;
-        --allow-host)
-            require_value "$1" "${2:-}"
-            ALLOWED_HOSTS+=("$2")
             shift 2
             ;;
         -h|--help)
@@ -202,21 +168,6 @@ while [[ $# -gt 0 ]]; do
 done
 
 validate_profile_name "${PROFILE}"
-case "${NETWORK_BACKEND}" in
-    docker-host|docker-offline|docker-restricted) ;;
-    *)
-        fail "unsupported network backend: ${NETWORK_BACKEND}"
-        ;;
-esac
-if [[ "${NETWORK_BACKEND}" == docker-restricted ]]; then
-    (( ${#ALLOWED_HOSTS[@]} > 0 )) \
-        || fail "docker-restricted requires at least one --allow-host"
-    for ALLOWED_HOST in "${ALLOWED_HOSTS[@]}"; do
-        validate_allowed_hostname "${ALLOWED_HOST}"
-    done
-elif (( ${#ALLOWED_HOSTS[@]} > 0 )); then
-    fail "--allow-host requires --network docker-restricted"
-fi
 
 PI_RUN_HOME_INPUT="${HOME_OVERRIDE:-${PI_RUN_HOME:-${HOME}/Pi-Run}}"
 [[ -n "${PI_RUN_HOME_INPUT}" ]] || fail "Pi-Run home must not be empty"
@@ -406,13 +357,6 @@ sanitize_display() {
 
 RESUME_LAUNCH=false
 COMMAND="${1:-}"
-if [[ "${NETWORK_EXPLICIT}" == true ]]; then
-    case "${COMMAND}" in
-        version|machine-id|doctor|upgrade|home|init|profile|skill|workspace|session|ssh-key|snapshot)
-            fail "--network is only valid for workspace and resume launches"
-            ;;
-    esac
-fi
 if [[ "${COMMAND}" == snapshot && "${2:-}" == restore ]]; then
     HOME_LOCK_MODE=exclusive
 fi
@@ -671,6 +615,76 @@ validate_profile_definition_files "${PROFILE_DIR}"
 
 [[ -f "${CA_BUNDLE}" ]] || fail "CA bundle does not exist: ${CA_BUNDLE}"
 
+HOST_UID="$(id -u)"
+HOST_GID="$(id -g)"
+IMAGE="${PI_RUN_IMAGE:-${DEFAULT_IMAGE}}"
+EGRESS_IMAGE="${PI_RUN_EGRESS_IMAGE:-${DEFAULT_EGRESS_IMAGE}}"
+NETWORK_MODE="$(jq -r '.network.mode // "host"' "${PROFILE_CONFIG}")"
+NETWORK_BACKEND="docker-${NETWORK_MODE}"
+MODEL_RULES_DISPLAY="none"
+MANUAL_RULES_DISPLAY="none"
+POLICY_JSON=""
+if [[ "${NETWORK_MODE}" == restricted ]]; then
+    if path_is_within /tmp "${WORKSPACE}"; then
+        fail "restricted runtime policy staging would overlap workspace: ${WORKSPACE}"
+    fi
+    if ! RESOLVER_OUTPUT="$(docker run --rm --pull never \
+        --network none --cap-drop=ALL --security-opt=no-new-privileges \
+        --user "${HOST_UID}:${HOST_GID}" \
+        --mount "type=bind,src=${PROFILE_DIR},dst=/profile,readonly" \
+        --entrypoint /usr/local/bin/pi-run-network-policy-resolver "${IMAGE}")"; then
+        fail "restricted network policy resolution failed"
+    fi
+    if ! RESOLVED_POLICY="$(jq -cse '
+        def hostname:
+            type == "string" and length <= 253 and
+            test("^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$") and
+            (test("^([0-9]{1,3}\\.){3}[0-9]{1,3}$") | not);
+        def ports:
+            (has("tcpPorts") | not) or
+            ((.tcpPorts | type == "array") and (.tcpPorts | length > 0) and
+             ((.tcpPorts | unique | length) == (.tcpPorts | length)) and
+             all(.tcpPorts[]; type == "number" and floor == . and . >= 1 and . <= 65535));
+        def rule:
+            type == "object" and
+            ((keys - ["cidr", "domain", "host", "tcpPorts"]) | length == 0) and
+            ([has("host"), has("domain"), has("cidr")] | map(select(.)) | length == 1) and
+            ((has("host") | not) or (.host | hostname)) and
+            ((has("domain") | not) or (.domain | hostname)) and
+            ((has("cidr") | not) or
+                (.cidr | type == "string" and test("^[0-9A-Fa-f:.]+/[0-9]{1,3}$"))) and ports;
+        if length == 1 and (.[0] |
+            type == "object" and keys == ["manualRules", "modelRules", "schemaVersion"] and
+            .schemaVersion == 1 and (.modelRules | type == "array") and
+            (.manualRules | type == "array") and
+            all(.modelRules[]; keys == ["host", "tcpPorts"] and
+                (.host | hostname) and .tcpPorts == [443]) and
+            all(.manualRules[]; rule) and
+            ((.modelRules | length) + (.manualRules | length) > 0))
+        then .[0] else error("invalid policy") end
+    ' <<< "${RESOLVER_OUTPUT}" 2>/dev/null)"; then
+        fail "restricted network policy resolver returned invalid output"
+    fi
+    POLICY_JSON="$(jq -c '{
+        schemaVersion: 1,
+        rules: ((.modelRules + .manualRules) | unique_by(tojson) | sort_by(tojson))
+    }' <<< "${RESOLVED_POLICY}")"
+    MODEL_RULES_DISPLAY="$(jq -r '
+        if (.modelRules | length) == 0 then "none" else
+            [.modelRules[] | (.host + ":" + (.tcpPorts | map(tostring) | join("|")))] | join(",")
+        end
+    ' <<< "${RESOLVED_POLICY}")"
+    MANUAL_RULES_DISPLAY="$(jq -r '
+        def ports: if has("tcpPorts") then (.tcpPorts | map(tostring) | join("|")) else "*" end;
+        if (.manualRules | length) == 0 then "none" else
+            [.manualRules[] |
+                (if has("host") then "host=" + .host
+                 elif has("domain") then "domain=" + .domain
+                 else "cidr=" + .cidr end) + ":" + ports] | join(",")
+        end
+    ' <<< "${RESOLVED_POLICY}")"
+fi
+
 SESSION_DIR_HOST="${PROFILE_DIR}/sessions/${WORKSPACE_ID}"
 SESSION_DIR_CONTAINER="/profile/sessions/${WORKSPACE_ID}"
 mkdir -p "${SESSION_DIR_HOST}"
@@ -701,32 +715,17 @@ cleanup_launch_resources() {
 }
 trap cleanup_launch_resources EXIT
 
-HOST_UID="$(id -u)"
-HOST_GID="$(id -g)"
-IMAGE="${PI_RUN_IMAGE:-${DEFAULT_IMAGE}}"
-EGRESS_IMAGE="${PI_RUN_EGRESS_IMAGE:-${DEFAULT_EGRESS_IMAGE}}"
-ALLOWED_HOSTS_DISPLAY=""
-case "${NETWORK_BACKEND}" in
-    docker-host) DOCKER_NETWORK_MODE=host ;;
-    docker-offline) DOCKER_NETWORK_MODE=none ;;
-    docker-restricted)
-        if path_is_within /tmp "${WORKSPACE}"; then
-            fail "restricted runtime policy staging would overlap workspace: ${WORKSPACE}"
-        fi
+case "${NETWORK_MODE}" in
+    host) DOCKER_NETWORK_MODE=host ;;
+    offline) DOCKER_NETWORK_MODE=none ;;
+    restricted)
         SIDECAR_NAME="pi-egress-${PROFILE}-$$"
         DOCKER_NETWORK_MODE="container:${SIDECAR_NAME}"
         EGRESS_POLICY_DIR="$(mktemp -d /tmp/pi-run-egress.XXXXXX)"
         SIDECAR_ID_FILE="${EGRESS_POLICY_DIR}/sidecar.cid"
         chmod 0700 "${EGRESS_POLICY_DIR}"
-        jq -cn --args '
-            $ARGS.positional |
-            map({host: ., tcpPorts: [443]}) |
-            {schemaVersion: 1, rules: .}
-        ' -- "${ALLOWED_HOSTS[@]}" > "${EGRESS_POLICY_DIR}/rules.json"
+        printf '%s\n' "${POLICY_JSON}" > "${EGRESS_POLICY_DIR}/rules.json"
         chmod 0600 "${EGRESS_POLICY_DIR}/rules.json"
-        for ALLOWED_HOST in "${ALLOWED_HOSTS[@]}"; do
-            ALLOWED_HOSTS_DISPLAY+="${ALLOWED_HOSTS_DISPLAY:+,}${ALLOWED_HOST}:443"
-        done
         ;;
 esac
 
@@ -744,6 +743,7 @@ DOCKER_ARGS=(
     --workdir /workspace
     --mount "type=bind,src=${WORKSPACE},dst=/workspace"
     --mount "type=bind,src=${PROFILE_DIR},dst=/profile"
+    --mount "type=bind,src=${PROFILE_CONFIG},dst=/profile/profile.json,readonly"
     --mount "type=bind,src=${SNAPSHOT_LAUNCH_REQUEST_DIR},dst=/run/pi-run-snapshot"
     --mount "type=bind,src=${CA_BUNDLE},dst=/etc/ssl/certs/ca-certificates.crt,readonly"
     --env NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt
@@ -818,7 +818,8 @@ echo "pi-run: home=${PI_RUN_HOME_RESOLVED}" >&2
 echo "pi-run: profile=${PROFILE} workspace=${WORKSPACE}" >&2
 echo "pi-run: network=${NETWORK_BACKEND}" >&2
 if [[ "${NETWORK_BACKEND}" == docker-restricted ]]; then
-    echo "pi-run: allowed-https=${ALLOWED_HOSTS_DISPLAY}" >&2
+    echo "pi-run: model-tcp=${MODEL_RULES_DISPLAY}" >&2
+    echo "pi-run: manual-tcp=${MANUAL_RULES_DISPLAY}" >&2
 fi
 echo "pi-run: Guardian loaded; review mode starts Off" >&2
 [[ "${SHARED_MODE}" == "read-write" ]] && echo "pi-run: shared=/shared (read-write)" >&2

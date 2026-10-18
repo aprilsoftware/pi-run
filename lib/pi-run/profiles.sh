@@ -54,6 +54,24 @@ validate_profile_config() {
     local name="$2"
     local config="${profile_dir}/profile.json"
     if ! jq -e --arg name "${name}" '
+        def hostname:
+            type == "string" and length <= 253 and
+            test("^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$") and
+            (test("^([0-9]{1,3}\\.){3}[0-9]{1,3}$") | not);
+        def ports:
+            (has("tcpPorts") | not) or
+            ((.tcpPorts | type == "array") and (.tcpPorts | length > 0) and
+             ((.tcpPorts | unique | length) == (.tcpPorts | length)) and
+             all(.tcpPorts[]; type == "number" and floor == . and . >= 1 and . <= 65535));
+        def rule:
+            type == "object" and
+            ((keys - ["cidr", "domain", "host", "tcpPorts"]) | length == 0) and
+            ([has("host"), has("domain"), has("cidr")] | map(select(.)) | length == 1) and
+            ((has("host") | not) or (.host | hostname)) and
+            ((has("domain") | not) or (.domain | hostname)) and
+            ((has("cidr") | not) or
+                (.cidr | type == "string" and test("^[0-9A-Fa-f:.]+/[0-9]{1,3}$"))) and
+            ports;
         .schemaVersion == 1 and
         .name == $name and
         ((has("skills") | not) or .skills == null or
@@ -64,6 +82,18 @@ validate_profile_config() {
                 test("^[a-z0-9]+(-[a-z0-9]+)*$") and
                 . != "pi-run" and . != "profile-management"))) and
         (has("guardian") | not) and
+        ((has("network") | not) or
+            ((.network | type == "object") and
+             (if .network.mode == "restricted" then
+                ((.network | keys) == ["mode"] or
+                 ((.network | keys) == ["allow", "mode"] and
+                  (.network.allow | type == "array") and
+                  ((.network.allow | unique | length) == (.network.allow | length)) and
+                  all(.network.allow[]; rule)))
+              else
+                ((.network.mode == "host" or .network.mode == "offline") and
+                 (.network | keys) == ["mode"])
+              end))) and
         (.resources | type == "object") and
         (.resources | keys == ["shared"]) and
         (.resources.shared == "disabled" or .resources.shared == "read-write")
