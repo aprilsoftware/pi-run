@@ -751,6 +751,7 @@ DOCKER_ARGS=(
     --env "HOST_UID=${HOST_UID}"
     --env "HOST_GID=${HOST_GID}"
     --env "PI_RUN_PROFILE=${PROFILE}"
+    --env "PI_RUN_NETWORK_MODE=${NETWORK_MODE}"
     --env PI_RUN_PROFILE_DIR=/profile
     --env PI_CODING_AGENT_DIR=/profile
     --env PI_RUN_SNAPSHOT_REQUEST_DIR=/run/pi-run-snapshot

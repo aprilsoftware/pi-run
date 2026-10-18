@@ -192,6 +192,8 @@ grep -Fx 'https_proxy=http://127.0.0.1:3128' "${DOCKER_LOG}" >/dev/null \
     || fail "Pi did not receive the lowercase HTTPS proxy"
 grep -Fx 'NODE_USE_ENV_PROXY=1' "${DOCKER_LOG}" >/dev/null \
     || fail "Node environment proxy support was not enabled"
+grep -Fx 'PI_RUN_NETWORK_MODE=restricted' "${DOCKER_LOG}" >/dev/null \
+    || fail "restricted mode was not passed to runtime helpers"
 ready_line="$(grep -n '/tmp/pi-run-egress-ready' "${DOCKER_LOG}" | head -1 | cut -d: -f1)"
 runtime_line="$(grep -n -- '-it' "${DOCKER_LOG}" | head -1 | cut -d: -f1)"
 (( ready_line < runtime_line )) || fail "Pi started before sidecar readiness"

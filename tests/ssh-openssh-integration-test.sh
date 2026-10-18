@@ -20,7 +20,7 @@ chmod 0700 "${PROFILE}" "${PROFILE}/credentials" "${SSH_DIR}" "${RUNTIME_HOME}"
 ssh-keygen -q -t ed25519 -N '' -f "${SSH_DIR}/${TARGET}"
 printf 'server.example.test ssh-ed25519 fixture\n' > "${SSH_DIR}/known_hosts"
 before="$(find "${SSH_DIR}" -type f -printf '%P ' -exec sha256sum {} \; | sort)"
-HOME="${RUNTIME_HOME}" PI_RUN_PROFILE_DIR="${PROFILE}" \
+HOME="${RUNTIME_HOME}" PI_RUN_PROFILE_DIR="${PROFILE}" PI_RUN_NETWORK_MODE=restricted \
     "${ROOT}/docker/ssh-credentials" configure
 config="${RUNTIME_HOME}/.ssh/config"
 
@@ -31,6 +31,8 @@ resolved="$(ssh -G -F "${config}" server.example.test 2>/dev/null)"
     || fail "ssh -G did not select the profile private key"
 [[ "${resolved}" == *"userknownhostsfile ${SSH_DIR}/known_hosts"* ]] \
     || fail "ssh -G did not select profile known_hosts"
+[[ "${resolved}" == *'proxycommand /usr/bin/nc -X connect -x 127.0.0.1:3128 %h %p'* ]] \
+    || fail "ssh -G did not select the restricted sidecar proxy"
 
 PROXY="${TMP}/capture-proxy"
 cat > "${PROXY}" <<'EOF'
