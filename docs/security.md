@@ -67,9 +67,17 @@ destinations remain blocked.
 
 Before the sidecar starts, an offline resolver reads provider identities and
 HTTPS endpoints from the selected profile and adds exact TCP/443 model rules.
-It emits no credential values. Unsupported or unsafe provider endpoints,
-invalid manual rules, an empty effective policy, malformed output, or sidecar
-failure prevents Pi from starting; there is no host-network fallback.
+It emits no credential values. Providers whose endpoint depends on runtime or
+credential state fail with a provider-specific diagnostic unless a stable
+endpoint can be established. Azure and Google Vertex currently require an
+explicit HTTPS provider `baseUrl` in `models.json`. Enterprise or token-derived
+GitHub Copilot endpoints and region/profile/ARN-derived Amazon Bedrock endpoints
+are currently unsupported. Diagnostics do not print credential, endpoint,
+account, or region values.
+
+Unsupported or unsafe provider endpoints, invalid manual rules, an empty
+effective policy, malformed output, or sidecar failure prevents Pi from
+starting; there is no host-network fallback.
 
 Host and domain rules are enforced by hostname-aware HTTP CONNECT. HTTP clients
 receive loopback proxy variables, and restricted sessions configure OpenSSH to

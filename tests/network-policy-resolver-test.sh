@@ -15,7 +15,8 @@ fail() {
 
 PROFILE="${TMP}/profile"
 mkdir -p "${PROFILE}"
-printf '%s\n' '{"providers":[{"id":"openai-codex","baseUrls":["https://chatgpt.com/backend-api"]}]}' \
+printf '%s\n' \
+    '{"providers":[{"id":"openai-codex","baseUrls":["https://chatgpt.com/backend-api"]},{"id":"azure","baseUrls":[]},{"id":"google-vertex","baseUrls":["https://{location}-aiplatform.googleapis.com"]},{"id":"amazon-bedrock","baseUrls":["https://bedrock-runtime.us-east-1.amazonaws.com"]},{"id":"github-copilot","baseUrls":["https://api.individual.githubcopilot.com"]}]}' \
     > "${TMP}/metadata.json"
 printf '%s\n' \
     '{"network":{"mode":"restricted","allow":[{"host":"git.example.test","tcpPorts":[443,22]},{"domain":"example.test"},{"cidr":"10.20.30.17/24","tcpPorts":[22]},{"cidr":"2001:0db8::1/64"}]}}' \
@@ -75,6 +76,54 @@ printf '%s\n' '{"openai-codex":"RESOLVER_SECRET_MUST_NOT_APPEAR"' > "${PROFILE}/
 expect_failure 'invalid JSON in profile configuration file: auth.json'
 printf '%s\n' '{}' > "${PROFILE}/auth.json"
 
+printf '%s\n' '{"defaultProvider":"azure"}' > "${PROFILE}/settings.json"
+expect_failure 'provider azure requires an explicit HTTPS baseUrl in models.json for restricted networking'
+printf '%s\n' '{"providers":{"azure":{"baseUrl":"https://azure-endpoint.example.test/openai/v1"}}}' \
+    > "${PROFILE}/models.json"
+[[ "$(run_resolver | jq -r '.modelRules[].host' | grep -Fxc azure-endpoint.example.test)" -eq 1 ]] \
+    || fail "explicit Azure endpoint was not accepted"
+
+printf '%s\n' '{}' > "${PROFILE}/models.json"
+printf '%s\n' '{"defaultProvider":"google-vertex"}' > "${PROFILE}/settings.json"
+expect_failure 'provider google-vertex requires an explicit HTTPS baseUrl in models.json for restricted networking'
+printf '%s\n' '{"providers":{"google-vertex":{"baseUrl":"https://vertex-endpoint.example.test/v1"}}}' \
+    > "${PROFILE}/models.json"
+[[ "$(run_resolver | jq -r '.modelRules[].host' | grep -Fxc vertex-endpoint.example.test)" -eq 1 ]] \
+    || fail "explicit Vertex endpoint was not accepted"
+
+printf '%s\n' '{}' > "${PROFILE}/models.json"
+printf '%s\n' '{"defaultProvider":"github-copilot"}' > "${PROFILE}/settings.json"
+printf '%s\n' \
+    '{"github-copilot":{"type":"oauth","access":"RESOLVER_SECRET_MUST_NOT_APPEAR","enterpriseUrl":"private-enterprise.example.test"}}' \
+    > "${PROFILE}/auth.json"
+expect_failure 'provider github-copilot uses a credential-derived endpoint unsupported by restricted networking'
+[[ "${failure_output}" != *private-enterprise.example.test* ]] \
+    || fail "resolver printed a private Copilot enterprise domain"
+printf '%s\n' \
+    '{"github-copilot":{"type":"oauth","access":"RESOLVER_SECRET_MUST_NOT_APPEAR;proxy-ep=proxy.private-copilot.example.test;"}}' \
+    > "${PROFILE}/auth.json"
+expect_failure 'provider github-copilot uses a credential-derived endpoint unsupported by restricted networking'
+[[ "${failure_output}" != *private-copilot.example.test* ]] \
+    || fail "resolver printed a Copilot token-derived domain"
+
+printf '%s\n' '{}' > "${PROFILE}/models.json"
+printf '%s\n' '{"defaultProvider":"amazon-bedrock"}' > "${PROFILE}/settings.json"
+printf '%s\n' \
+    '{"amazon-bedrock":{"type":"api_key","key":"RESOLVER_SECRET_MUST_NOT_APPEAR","env":{"AWS_REGION":"private-region-value"}}}' \
+    > "${PROFILE}/auth.json"
+expect_failure 'provider amazon-bedrock uses a region-derived endpoint unsupported by restricted networking'
+[[ "${failure_output}" != *private-region-value* ]] || fail "resolver printed a Bedrock region value"
+
+printf '%s\n' '{}' > "${PROFILE}/auth.json"
+printf '%s\n' \
+    '{"providers":{"amazon-bedrock":{"models":[{"id":"arn:aws:bedrock:us-west-2:123456789012:inference-profile/private","baseUrl":"https://bedrock-endpoint.example.test"}]}}}' \
+    > "${PROFILE}/models.json"
+expect_failure 'provider amazon-bedrock uses a region-derived endpoint unsupported by restricted networking'
+[[ "${failure_output}" != *123456789012* ]] || fail "resolver printed a Bedrock account ID"
+
+printf '%s\n' '{}' > "${PROFILE}/models.json"
+printf '%s\n' '{}' > "${PROFILE}/settings.json"
+printf '%s\n' '{}' > "${PROFILE}/auth.json"
 while IFS=$'\t' read -r expected network; do
     printf '{"network":%s}\n' "${network}" > "${PROFILE}/profile.json"
     expect_failure "${expected}"

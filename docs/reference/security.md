@@ -84,6 +84,14 @@ provider metadata, then normalizes manual `host`, `domain`, and `cidr` rules
 from `profile.json`. It emits destination and port structure, never credential
 values, URL paths, headers, or query strings.
 
+Endpoint derivation must be deterministic before startup. Azure and Google
+Vertex require an explicit HTTPS provider `baseUrl` in `models.json`.
+Credential- or token-derived enterprise GitHub Copilot endpoints and Amazon
+Bedrock endpoints selected through a stored region, AWS profile, or ARN model
+are rejected with provider-specific diagnostics. These diagnostics omit
+credential, endpoint, account, and region values. Static personal Copilot and
+bundled Bedrock endpoint metadata remain accepted when no dynamic override applies.
+
 The launcher validates the output again, combines and deduplicates rules, and
 writes private `rules.json` staging with mode `0600`. Only the sidecar receives
 that read-only file. Workspaces containing `/tmp`, including `/` and `/tmp`, are

@@ -227,6 +227,47 @@ function configuredBaseUrls(config) {
   return { providerOverride, urls };
 }
 
+function optionalObject(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value : undefined;
+}
+
+function copilotHasDynamicEndpoint(credential) {
+  const record = optionalObject(credential);
+  if (!record) return false;
+  if (typeof record.enterpriseUrl === "string" && record.enterpriseUrl.length > 0) return true;
+  for (const token of [record.access, record.key]) {
+    if (typeof token !== "string") continue;
+    const match = /(?:^|;)proxy-ep=([^;]+)/i.exec(token);
+    if (match && match[1].toLowerCase() !== "proxy.individual.githubcopilot.com") return true;
+  }
+  return false;
+}
+
+function bedrockHasDynamicEndpoint(config, credential) {
+  const record = optionalObject(credential);
+  const env = optionalObject(record?.env);
+  if (env && ["AWS_PROFILE", "AWS_REGION", "AWS_DEFAULT_REGION"].some((key) =>
+    typeof env[key] === "string" && env[key].length > 0)) return true;
+  const provider = optionalObject(config);
+  if (!Array.isArray(provider?.models)) return false;
+  return provider.models.some((model) => {
+    const id = optionalObject(model)?.id;
+    return typeof id === "string" && /^arn:aws(?:-[a-z0-9-]+)?:bedrock:/i.test(id);
+  });
+}
+
+function validateProviderEndpointMode(providerId, config, configured, credential) {
+  if ((providerId === "azure" || providerId === "google-vertex") && !configured.providerOverride) {
+    fail(`provider ${providerId} requires an explicit HTTPS baseUrl in models.json for restricted networking`);
+  }
+  if (providerId === "github-copilot" && copilotHasDynamicEndpoint(credential)) {
+    fail("provider github-copilot uses a credential-derived endpoint unsupported by restricted networking");
+  }
+  if (providerId === "amazon-bedrock" && bedrockHasDynamicEndpoint(config, credential)) {
+    fail("provider amazon-bedrock uses a region-derived endpoint unsupported by restricted networking");
+  }
+}
+
 async function main() {
   if (process.argv.length > 3) fail("usage: pi-run-network-policy-resolver [profile-directory]");
   const profileDir = process.argv[2] ?? "/profile";
@@ -252,7 +293,9 @@ async function main() {
   const modelHosts = new Set();
 
   for (const providerId of configuredProviderIds(auth, models, settings)) {
-    const configured = configuredBaseUrls(models.providers[providerId]);
+    const providerConfig = models.providers[providerId];
+    const configured = configuredBaseUrls(providerConfig);
+    validateProviderEndpointMode(providerId, providerConfig, configured, auth[providerId]);
     const urls = [...configured.urls];
     if (!configured.providerOverride) urls.push(...(builtins.get(providerId) ?? []));
     if (urls.length === 0) fail("could not resolve a configured model provider endpoint");
