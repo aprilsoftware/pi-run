@@ -17,6 +17,8 @@ Usage:
   pi-run [--home <path>] profile list
   pi-run [--home <path>] profile default [<name>]
   pi-run [--home <path>] profile create <name> [--from <profile>]
+  pi-run [--home <path>] [--profile <name>] network show
+  pi-run [--home <path>] [--profile <name>] network mode <host|offline|restricted> [--discard-rules]
   pi-run [--home <path>] [--profile <name>] skill list
   pi-run [--home <path>] workspace list
   pi-run [--home <path>] workspace link <workspace-id> <path>
@@ -435,6 +437,28 @@ case "${COMMAND}" in
             *)
                 usage
                 ;;
+        esac
+        exit 0
+        ;;
+    network)
+        initialize_home
+        require_jq
+        resolve_configured_profile true
+        case "${2:-}" in
+            show)
+                [[ $# -eq 2 ]] || usage
+                show_profile_network
+                ;;
+            mode)
+                if [[ $# -eq 3 ]]; then
+                    set_profile_network_mode "$3" false
+                elif [[ $# -eq 4 && "$4" == --discard-rules ]]; then
+                    set_profile_network_mode "$3" true
+                else
+                    usage
+                fi
+                ;;
+            *) usage ;;
         esac
         exit 0
         ;;

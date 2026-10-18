@@ -19,6 +19,25 @@ Profile commands and launches must use the same `--home` or `PI_RUN_HOME` when a
 non-default data home is selected. Changing the default does not affect running
 containers, transfer sessions, or move credentials.
 
+## Network mode commands
+
+`network show` reports the selected profile, effective mode, configuration
+source, and manual-rule count. A missing `network` object is reported as the
+v0.6 compatibility host default.
+
+`network mode <host|offline|restricted>` validates the existing profile, locks
+the profile directory against another network-mode command, stages a complete
+replacement, validates it, sets mode `0600`, and atomically replaces
+`profile.json`. An explicit `--profile` selects the target; otherwise the saved
+default is used. Selecting the already-configured mode does not rewrite the
+file.
+
+Host and offline objects cannot contain manual allow rules. A change from
+restricted mode therefore refuses when rules exist. `--discard-rules` with host
+or offline explicitly replaces the network object and reports the number of
+removed rules; it is invalid with restricted mode. No mode command changes an
+active launch, and rule add/remove commands are not currently provided.
+
 ## Profile creation semantics
 
 `profile create <name>` always derives from the profile literally named
@@ -119,8 +138,10 @@ the global filter. Profile-local names do not belong in that filter; selecting a
 global package with the same active local name creates a conflict. Resource,
 network, and skill changes take effect only on a new launch.
 
-The host interface has no profile deletion, show, edit, import, export, or
-profile-only backup command. Do not infer commands from direct file ownership.
+The host interface has no profile deletion, general definition show/edit,
+import, export, profile-only backup, or network-rule management command. Network
+mode inspection and changes use the dedicated commands above. Do not infer
+other commands from direct file ownership.
 
 ## Skill names and metadata
 

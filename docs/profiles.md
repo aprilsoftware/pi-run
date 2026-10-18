@@ -75,10 +75,36 @@ Shared-folder and network configuration are inherited, so review both before
 first launch. The global skill filter resets to `null`, meaning all installed
 global skills are initially selected.
 
+## Manage network mode
+
+Inspect or change the selected profile's mode from the host:
+
+```bash
+pi-run --profile operations network show
+pi-run --profile operations network mode restricted
+pi-run --profile operations network mode offline
+pi-run --profile operations network mode host
+```
+
+A missing network object is reported as the compatibility `host` default. Mode
+changes validate and atomically replace the complete `profile.json`; they do not
+alter running sessions. If a restricted profile has manual allow rules, changing
+to host or offline refuses to discard them. Remove them deliberately, or confirm
+the destructive change:
+
+```bash
+pi-run --profile operations network mode host --discard-rules
+```
+
+Rule-management commands are not currently provided, so manual allow rules still
+require editing `profile.json`. Every network change takes effect on the next
+launch.
+
 ## Configure resources and skills
 
-Edit the selected profile's `profile.json`. A minimal profile with optional host
-resources disabled looks like:
+Edit the selected profile's `profile.json` for resources, skills, and manual
+network rules. A minimal profile with optional host resources disabled looks
+like:
 
 ```json
 {
@@ -159,9 +185,9 @@ Use [encrypted snapshots](snapshots.md) to back up or move complete Pi-Run state
 and keep snapshot recovery secrets separately. Snapshots include every profile
 and its credentials.
 
-Pi-Run currently provides profile listing, creation, default selection, and
-one-run selection. It does not provide profile deletion, import, or definition
-export commands.
+Pi-Run currently provides profile listing, creation, default selection, one-run
+selection, and network-mode inspection and changes. It does not provide profile
+deletion, import, definition export, or network-rule management commands.
 
 For exact file layout, creation permissions, schema validation, inherited and
 reset fields, and unsupported operations, see the

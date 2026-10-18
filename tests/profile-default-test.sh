@@ -29,6 +29,49 @@ PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" init >/dev/null
     || fail "initial default profile does not select host networking"
 [[ "$(PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" profile default)" == default ]] \
     || fail "initial default profile is not default"
+network_output="$(PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" network show)"
+[[ "${network_output}" == $'Profile: default\nNetwork mode: host (configured)\nManual allow rules: 0' ]] \
+    || fail "configured network mode display was incorrect"
+default_config="${HOME_DIR}/profiles/default/profile.json"
+jq 'del(.network)' "${default_config}" > "${default_config}.tmp"
+mv "${default_config}.tmp" "${default_config}"
+network_output="$(PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" network show)"
+[[ "${network_output}" == $'Profile: default\nNetwork mode: host (compatibility default)\nManual allow rules: 0' ]] \
+    || fail "compatibility network mode display was incorrect"
+PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" network mode host >/dev/null
+[[ "$(jq -r '.network.mode' "${default_config}")" == host &&
+   "$(stat -c %a "${default_config}")" == 600 ]] \
+    || fail "network mode command did not materialize host mode safely"
+config_inode="$(stat -c %i "${default_config}")"
+network_output="$(PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" network mode host)"
+[[ "${network_output}" == *'Network mode for default: host (unchanged)'* &&
+   "$(stat -c %i "${default_config}")" == "${config_inode}" ]] \
+    || fail "same network mode was not idempotent"
+exec {network_lock_fd}<"${HOME_DIR}/profiles/default"
+flock -x "${network_lock_fd}"
+PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" network mode offline \
+    >"${TMP}/locked-network.out" &
+network_pid=$!
+sleep 0.1
+kill -0 "${network_pid}" 2>/dev/null \
+    || fail "network mode command did not wait for the profile lock"
+flock -u "${network_lock_fd}"
+wait "${network_pid}"
+exec {network_lock_fd}>&-
+[[ "$(jq -r '.network.mode' "${default_config}")" == offline ]] \
+    || fail "network mode command did not continue after profile unlock"
+PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" network mode restricted >/dev/null
+[[ "$(jq -c '.network' "${default_config}")" == '{"mode":"restricted"}' ]] \
+    || fail "network mode command did not select restricted mode"
+PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" network mode offline >/dev/null
+[[ "$(jq -c '.network' "${default_config}")" == '{"mode":"offline"}' ]] \
+    || fail "network mode command did not select offline mode"
+PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" network mode host >/dev/null
+cp "${default_config}" "${TMP}/network-mode.before"
+expect_failure env PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" network mode invalid
+expect_failure env PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" network mode restricted --discard-rules
+cmp "${TMP}/network-mode.before" "${default_config}" \
+    || fail "invalid network mode command changed the profile"
 
 PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" profile create development >/dev/null
 [[ "$(jq -r '.network.mode' "${HOME_DIR}/profiles/development/profile.json")" == host ]] \
@@ -42,6 +85,11 @@ output="$(PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" profile default develop
     || fail "home configuration permissions are not 600"
 [[ "$(PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" profile default)" == development ]] \
     || fail "configured default was not reported"
+PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" --profile default network mode offline >/dev/null
+[[ "$(jq -r '.network.mode' "${HOME_DIR}/profiles/default/profile.json")" == offline &&
+   "$(jq -r '.network.mode' "${HOME_DIR}/profiles/development/profile.json")" == host ]] \
+    || fail "explicit profile network change affected the configured default"
+PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" --profile default network mode host >/dev/null
 profile_list="$(PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" profile list)"
 expected_list=$'NAME         DEFAULT\ndefault      -\ndevelopment  yes'
 [[ "${profile_list}" == "${expected_list}" ]] \
@@ -103,6 +151,15 @@ jq -e '.network == {mode: "restricted", allow: [
     {cidr: "10.20.30.0/24", tcpPorts: [5432]}
 ]}' "${HOME_DIR}/profiles/network-copy/profile.json" >/dev/null \
     || fail "profile creation did not preserve a restricted network policy"
+cp "${development_config}" "${TMP}/network-rules.before"
+expect_failure env PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" network mode offline
+cmp "${TMP}/network-rules.before" "${development_config}" \
+    || fail "refused network mode change discarded manual rules"
+network_output="$(PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" \
+    network mode offline --discard-rules)"
+[[ "$(jq -c '.network' "${development_config}")" == '{"mode":"offline"}' &&
+   "${network_output}" == *'Discarded manual allow rules: 2'* ]] \
+    || fail "explicit network rule discard was not applied"
 
 cp "${HOME_DIR}/config.json" "${TMP}/config.before"
 expect_failure env PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" profile default missing

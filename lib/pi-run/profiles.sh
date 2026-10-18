@@ -49,10 +49,9 @@ resolve_profile_directory() {
     resolve_named_profile_directory "${PROFILE}"
 }
 
-validate_profile_config() {
-    local profile_dir="$1"
+validate_profile_config_file() {
+    local config="$1"
     local name="$2"
-    local config="${profile_dir}/profile.json"
     if ! jq -e --arg name "${name}" '
         def hostname:
             type == "string" and length <= 253 and
@@ -98,8 +97,16 @@ validate_profile_config() {
         (.resources | keys == ["shared"]) and
         (.resources.shared == "disabled" or .resources.shared == "read-write")
     ' "${config}" >/dev/null; then
-        fail "invalid profile configuration: ${config}"
+        return 1
     fi
+}
+
+validate_profile_config() {
+    local profile_dir="$1"
+    local name="$2"
+    local config="${profile_dir}/profile.json"
+    validate_profile_config_file "${config}" "${name}" \
+        || fail "invalid profile configuration: ${config}"
 }
 
 validate_profile_definition_files() {
@@ -188,6 +195,78 @@ set_default_profile() {
     mv "${staging}" "${config}"
     trap - RETURN
     printf 'Default profile: %s\n' "${name}"
+}
+
+show_profile_network() {
+    local profile_dir config mode source rule_count
+    profile_dir="$(resolve_profile_directory)"
+    validate_profile_config "${profile_dir}" "${PROFILE}"
+    validate_profile_definition_files "${profile_dir}"
+    config="${profile_dir}/profile.json"
+    if jq -e 'has("network")' "${config}" >/dev/null; then
+        mode="$(jq -r '.network.mode' "${config}")"
+        source=configured
+    else
+        mode=host
+        source="compatibility default"
+    fi
+    rule_count="$(jq -r '(.network.allow // []) | length' "${config}")"
+    printf 'Profile: %s\nNetwork mode: %s (%s)\nManual allow rules: %s\n' \
+        "${PROFILE}" "${mode}" "${source}" "${rule_count}"
+}
+
+set_profile_network_mode() {
+    local mode="$1" discard_rules="$2"
+    local profile_dir config current_mode has_network rule_count staging profile_lock_fd
+    case "${mode}" in
+        host|offline|restricted) ;;
+        *) fail "invalid network mode: ${mode}" ;;
+    esac
+    if [[ "${discard_rules}" == true && "${mode}" == restricted ]]; then
+        fail "--discard-rules is valid only with host or offline mode"
+    fi
+
+    profile_dir="$(resolve_profile_directory)"
+    exec {profile_lock_fd}<"${profile_dir}" \
+        || fail "could not open profile directory for locking: ${profile_dir}"
+    flock -x "${profile_lock_fd}" \
+        || fail "could not lock profile directory: ${profile_dir}"
+    validate_profile_config "${profile_dir}" "${PROFILE}"
+    validate_profile_definition_files "${profile_dir}"
+    config="${profile_dir}/profile.json"
+    current_mode="$(jq -r '.network.mode // "host"' "${config}")"
+    has_network="$(jq -r 'has("network")' "${config}")"
+    rule_count="$(jq -r '(.network.allow // []) | length' "${config}")"
+
+    if [[ "${mode}" != restricted && "${rule_count}" -gt 0 && "${discard_rules}" == false ]]; then
+        fail "network mode change would discard ${rule_count} manual allow rule(s); use --discard-rules"
+    fi
+    if [[ "${current_mode}" == "${mode}" && "${has_network}" == true ]]; then
+        printf 'Network mode for %s: %s (unchanged)\n' "${PROFILE}" "${mode}"
+        printf 'Changes apply to new launches; running sessions are unchanged.\n'
+        return 0
+    fi
+
+    staging="${profile_dir}/.profile.json.tmp.$$"
+    [[ ! -e "${staging}" && ! -L "${staging}" ]] \
+        || fail "profile configuration staging path already exists: ${staging}"
+    trap 'rm -f "${staging:-}"' RETURN
+    if ! jq --arg mode "${mode}" '.network = {mode: $mode}' "${config}" > "${staging}"; then
+        rm -f "${staging}"
+        fail "could not stage profile network mode"
+    fi
+    chmod 0600 "${staging}"
+    if ! validate_profile_config_file "${staging}" "${PROFILE}"; then
+        rm -f "${staging}"
+        fail "staged profile network configuration is invalid"
+    fi
+    mv "${staging}" "${config}"
+    trap - RETURN
+    printf 'Network mode for %s: %s\n' "${PROFILE}" "${mode}"
+    if [[ "${rule_count}" -gt 0 ]]; then
+        printf 'Discarded manual allow rules: %s\n' "${rule_count}"
+    fi
+    printf 'Changes apply to new launches; running sessions are unchanged.\n'
 }
 
 run_profile_ssh_key_command() {
