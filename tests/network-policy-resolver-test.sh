@@ -105,6 +105,12 @@ printf '%s\n' \
 expect_failure 'provider github-copilot uses a credential-derived endpoint unsupported by restricted networking'
 [[ "${failure_output}" != *private-copilot.example.test* ]] \
     || fail "resolver printed a Copilot token-derived domain"
+printf '%s\n' \
+    '{"github-copilot":{"type":"oauth","access":"RESOLVER_SECRET_MUST_NOT_APPEAR;proxy-ep=proxy.individual.githubcopilot.com;"}}' \
+    > "${PROFILE}/auth.json"
+expected_copilot_hosts='["api.github.com","api.individual.githubcopilot.com","github.com","pi.dev"]'
+[[ "$(run_resolver | jq -c '[.modelRules[].host]')" == "${expected_copilot_hosts}" ]] \
+    || fail "personal Copilot policy omitted a deterministic endpoint"
 
 printf '%s\n' '{}' > "${PROFILE}/models.json"
 printf '%s\n' '{"defaultProvider":"amazon-bedrock"}' > "${PROFILE}/settings.json"

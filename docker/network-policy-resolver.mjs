@@ -10,7 +10,7 @@ const MAX_CONFIG_BYTES = 4 * 1024 * 1024;
 const PI_PACKAGE = "/usr/local/lib/node_modules/@earendil-works/pi-coding-agent/package.json";
 const AUXILIARY_HOSTS = {
   anthropic: ["claude.ai", "platform.claude.com"],
-  "github-copilot": ["github.com"],
+  "github-copilot": ["api.github.com", "github.com"],
   "kimi-coding": ["auth.kimi.com"],
   meta: ["auth.meta.com"],
   openai: ["auth.openai.com"],
