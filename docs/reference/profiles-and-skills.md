@@ -38,21 +38,30 @@ or offline explicitly replaces the network object and reports the number of
 removed rules; it is invalid with restricted mode. No mode command changes an
 active launch.
 
-`network allow list` displays every configured manual host, domain, and CIDR
-rule. Host and domain rules can be changed with:
+`network allow list` displays every configured manual host, domain, CIDR, and
+public-internet rule. Host and domain rules can be changed with:
 
 ```text
 network allow add <host|domain> <name> (--tcp-port <port>...|--all-tcp)
 network allow remove <host|domain> <name> (--tcp-port <port>...|--all-tcp)
 ```
 
+The single public-internet rule uses:
+
+```text
+network allow add internet (--tcp-port <port>...|--all-tcp)
+network allow remove internet
+```
+
 Add and remove require restricted mode. Names are normalized to lowercase;
 ports are normalized to ascending integers and must be unique and in the range
-1–65535. All-port authority requires `--all-tcp`. Removal matches the exact
-normalized selector and port set. Duplicate additions, absent removals, and
-combining explicit ports with `--all-tcp` fail without replacing the profile.
-Existing unrelated rules, including CIDRs, remain unchanged. CIDR mutation is
-not currently provided by the host CLI.
+1–65535. All-port authority requires `--all-tcp`. Host and domain removal
+matches the exact normalized selector and port set. Internet removal needs no
+port options because only one internet rule may exist. Duplicate additions,
+absent removals, extra internet-removal arguments, and combining explicit ports
+with `--all-tcp` fail without replacing the profile. Existing unrelated rules,
+including CIDRs, remain unchanged. CIDR mutation is not currently provided by
+the host CLI.
 
 ## Profile creation semantics
 
@@ -136,11 +145,14 @@ The supported resource values are:
 - `network` may be absent for v0.6 compatibility or contain one mode: `host`,
   `offline`, or `restricted`. Host and offline objects contain only `mode`.
 - A restricted network object may contain `allow`, an array of unique rules.
-  Each rule has exactly one `host`, `domain`, or `cidr` selector and optional
-  unique integer `tcpPorts` from 1 through 65535. Omitted ports mean all TCP.
+  Each rule has exactly one `host`, `domain`, `cidr`, or `internet` selector and
+  optional unique integer `tcpPorts` from 1 through 65535. Omitted ports mean
+  all TCP. `internet` must be `true`, and at most one internet rule may exist.
 - Host and domain values are lowercase multi-label DNS names. CIDRs are
   semantically normalized by the isolated resolver; blocked special ranges and
-  malformed prefixes fail restricted startup.
+  malformed prefixes fail restricted startup. Internet rules cover public TCP
+  destinations while excluding private and special-purpose ranges; explicit
+  CIDR rules can separately grant selected private networks.
 - A legacy or arbitrary top-level `guardian` field is not accepted.
 
 The restricted resolver also reads provider identities and endpoints from
@@ -156,8 +168,8 @@ network, and skill changes take effect only on a new launch.
 
 The host interface has no profile deletion, general definition show/edit,
 import, export, profile-only backup, or CIDR rule-management command. Network
-mode and host/domain rule management use the dedicated commands above. Do not
-infer other commands from direct file ownership.
+mode and host/domain/internet rule management use the dedicated commands above.
+Do not infer other commands from direct file ownership.
 
 ## Skill names and metadata
 

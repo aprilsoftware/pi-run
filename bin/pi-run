@@ -21,6 +21,8 @@ Usage:
   pi-run [--home <path>] [--profile <name>] network mode <host|offline|restricted> [--discard-rules]
   pi-run [--home <path>] [--profile <name>] network allow list
   pi-run [--home <path>] [--profile <name>] network allow <add|remove> <host|domain> <name> (--tcp-port <port>...|--all-tcp)
+  pi-run [--home <path>] [--profile <name>] network allow add internet (--tcp-port <port>...|--all-tcp)
+  pi-run [--home <path>] [--profile <name>] network allow remove internet
   pi-run [--home <path>] [--profile <name>] skill list
   pi-run [--home <path>] workspace list
   pi-run [--home <path>] workspace link <workspace-id> <path>
@@ -466,9 +468,23 @@ case "${COMMAND}" in
                         [[ $# -eq 3 ]] || usage
                         list_profile_network_rules
                         ;;
-                    add|remove)
-                        [[ $# -ge 6 ]] || usage
-                        change_profile_network_rule "$3" "$4" "$5" "${@:6}"
+                    add)
+                        if [[ "${4:-}" == internet ]]; then
+                            [[ $# -ge 5 ]] || usage
+                            change_profile_network_rule add internet "" "${@:5}"
+                        else
+                            [[ $# -ge 6 ]] || usage
+                            change_profile_network_rule add "$4" "$5" "${@:6}"
+                        fi
+                        ;;
+                    remove)
+                        if [[ "${4:-}" == internet ]]; then
+                            [[ $# -eq 4 ]] || usage
+                            change_profile_network_rule remove internet ""
+                        else
+                            [[ $# -ge 6 ]] || usage
+                            change_profile_network_rule remove "$4" "$5" "${@:6}"
+                        fi
                         ;;
                     *) usage ;;
                 esac

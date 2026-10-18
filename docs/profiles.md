@@ -96,20 +96,25 @@ the destructive change:
 pi-run --profile operations network mode host --discard-rules
 ```
 
-List manual rules or manage exact host and domain rules while restricted mode is
-configured:
+List manual rules or manage exact host, domain, and public-internet rules while
+restricted mode is configured:
 
 ```bash
 pi-run --profile operations network allow list
 pi-run --profile operations network allow add host git.example.com --tcp-port 22
 pi-run --profile operations network allow add domain example.com --tcp-port 80 --tcp-port 443
+pi-run --profile operations network allow add internet --all-tcp
 pi-run --profile operations network allow remove host git.example.com --tcp-port 22
+pi-run --profile operations network allow remove internet
 ```
 
-Ports are normalized and must be repeated exactly when removing a rule. Granting
-all TCP ports requires the explicit `--all-tcp` option. CIDR rule management is
-not currently provided by the CLI and still requires editing `profile.json`.
-Every network change takes effect on the next launch.
+Ports are normalized and must be repeated exactly when removing a host or domain
+rule. An internet rule is unique, so removal needs no port options. Granting all
+TCP ports requires the explicit `--all-tcp` option. Public-internet access still
+excludes private and special-purpose ranges; add selected private ranges with
+CIDR rules. CIDR rule management is not currently provided by the CLI and still
+requires editing `profile.json`. Every network change takes effect on the next
+launch.
 
 ## Configure resources and skills
 
@@ -143,10 +148,12 @@ like:
 | `resources.shared: "disabled"` | Do not mount `/shared`. |
 
 Restricted mode accepts an optional `network.allow` array. Each entry contains
-exactly one of `host`, `domain`, or `cidr`, plus optional `tcpPorts`. A domain
-matches its apex and subdomains; omitted ports mean every TCP port for that
-rule. Provider hosts already represented by `auth.json`, `models.json`, or
-`settings.json` are added automatically as exact TCP/443 rules. For example:
+exactly one of `host`, `domain`, `cidr`, or `internet`, plus optional `tcpPorts`.
+The internet selector is written as `"internet": true`, and only one such rule
+is allowed. A domain matches its apex and subdomains; omitted ports mean every
+TCP port for that rule. Provider hosts already represented by `auth.json`,
+`models.json`, or `settings.json` are added automatically as exact TCP/443
+rules. For example:
 
 ```json
 "network": {
@@ -154,7 +161,8 @@ rule. Provider hosts already represented by `auth.json`, `models.json`, or
   "allow": [
     {"host": "git.example.com", "tcpPorts": [22]},
     {"domain": "example.com", "tcpPorts": [80, 443]},
-    {"cidr": "10.20.30.0/24", "tcpPorts": [5432]}
+    {"cidr": "10.20.30.0/24", "tcpPorts": [5432]},
+    {"internet": true}
   ]
 }
 ```
@@ -197,9 +205,9 @@ and keep snapshot recovery secrets separately. Snapshots include every profile
 and its credentials.
 
 Pi-Run currently provides profile listing, creation, default selection, one-run
-selection, network-mode changes, and host/domain manual-rule management. It does
-not provide profile deletion, import, definition export, or CIDR rule-management
-commands.
+selection, network-mode changes, and host/domain/internet manual-rule
+management. It does not provide profile deletion, import, definition export,
+or CIDR rule-management commands.
 
 For exact file layout, creation permissions, schema validation, inherited and
 reset fields, and unsupported operations, see the

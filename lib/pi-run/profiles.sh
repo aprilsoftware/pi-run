@@ -312,10 +312,17 @@ change_profile_network_rule() {
     declare -A seen_ports=()
 
     case "${action}" in add|remove) ;; *) fail "invalid network rule action: ${action}" ;; esac
-    case "${selector}" in host|domain) ;; *) fail "unsupported network rule selector: ${selector}" ;; esac
-    destination="${destination,,}"
-    validate_network_rule_hostname "${destination}" \
-        || fail "invalid ${selector} network rule: ${destination}"
+    case "${selector}" in
+        host|domain)
+            destination="${destination,,}"
+            validate_network_rule_hostname "${destination}" \
+                || fail "invalid ${selector} network rule: ${destination}"
+            ;;
+        internet)
+            [[ -z "${destination}" ]] || fail "internet network rules do not take a destination"
+            ;;
+        *) fail "unsupported network rule selector: ${selector}" ;;
+    esac
 
     while [[ $# -gt 0 ]]; do
         argument="$1"
@@ -344,17 +351,31 @@ change_profile_network_rule() {
     if [[ "${all_tcp}" == true && ${#ports[@]} -gt 0 ]]; then
         fail "--all-tcp cannot be combined with --tcp-port"
     fi
-    if [[ "${all_tcp}" == false && ${#ports[@]} -eq 0 ]]; then
+    if [[ "${selector}" == internet && "${action}" == remove ]]; then
+        [[ "${all_tcp}" == false && ${#ports[@]} -eq 0 ]] \
+            || fail "internet rule removal does not take port options"
+    elif [[ "${all_tcp}" == false && ${#ports[@]} -eq 0 ]]; then
         fail "specify at least one --tcp-port or --all-tcp"
     fi
 
-    if [[ "${all_tcp}" == true ]]; then
-        rule="$(jq -cn --arg selector "${selector}" --arg destination "${destination}" \
-            '{($selector): $destination}')"
+    if [[ "${selector}" == internet && "${action}" == remove ]]; then
+        rule=''
+    elif [[ "${all_tcp}" == true ]]; then
+        if [[ "${selector}" == internet ]]; then
+            rule='{"internet":true}'
+        else
+            rule="$(jq -cn --arg selector "${selector}" --arg destination "${destination}" \
+                '{($selector): $destination}')"
+        fi
     else
         ports_json="$(printf '%s\n' "${ports[@]}" | jq -s 'sort')"
-        rule="$(jq -cn --arg selector "${selector}" --arg destination "${destination}" \
-            --argjson ports "${ports_json}" '{($selector): $destination, tcpPorts: $ports}')"
+        if [[ "${selector}" == internet ]]; then
+            rule="$(jq -cn --argjson ports "${ports_json}" \
+                '{internet: true, tcpPorts: $ports}')"
+        else
+            rule="$(jq -cn --arg selector "${selector}" --arg destination "${destination}" \
+                --argjson ports "${ports_json}" '{($selector): $destination, tcpPorts: $ports}')"
+        fi
     fi
 
     profile_dir="$(resolve_profile_directory)"
@@ -368,10 +389,17 @@ change_profile_network_rule() {
     current_mode="$(jq -r '.network.mode // "host"' "${config}")"
     [[ "${current_mode}" == restricted ]] \
         || fail "manual network rules require restricted mode; current mode is ${current_mode}"
-    match_count="$(jq -r --argjson rule "${rule}" '
-        def canonical: if .tcpPorts then .tcpPorts |= sort else . end;
-        [(.network.allow // [])[] | select((. | canonical) == $rule)] | length
-    ' "${config}")"
+    if [[ "${selector}" == internet ]]; then
+        match_count="$(jq -r '[.network.allow[]? | select(.internet == true)] | length' "${config}")"
+        if [[ "${action}" == remove && "${match_count}" -gt 0 ]]; then
+            rule="$(jq -c '.network.allow[] | select(.internet == true)' "${config}")"
+        fi
+    else
+        match_count="$(jq -r --argjson rule "${rule}" '
+            def canonical: if .tcpPorts then .tcpPorts |= sort else . end;
+            [(.network.allow // [])[] | select((. | canonical) == $rule)] | length
+        ' "${config}")"
+    fi
     if [[ "${action}" == add && "${match_count}" -gt 0 ]]; then
         fail "manual network rule already exists"
     fi
@@ -386,6 +414,11 @@ change_profile_network_rule() {
     if [[ "${action}" == add ]]; then
         jq --argjson rule "${rule}" \
             '.network.allow = ((.network.allow // []) + [$rule])' "${config}" > "${staging}"
+    elif [[ "${selector}" == internet ]]; then
+        jq '
+            .network.allow = [(.network.allow // [])[] | select(.internet != true)] |
+            if (.network.allow | length) == 0 then del(.network.allow) else . end
+        ' "${config}" > "${staging}"
     else
         jq --argjson rule "${rule}" '
             def canonical: if .tcpPorts then .tcpPorts |= sort else . end;
@@ -402,6 +435,7 @@ change_profile_network_rule() {
     trap - RETURN
     port="$(jq -r 'if .tcpPorts then (.tcpPorts | map(tostring) | join("|")) else "all" end' <<< "${rule}")"
     [[ "${action}" == add ]] && verb=Added || verb=Removed
+    [[ "${selector}" == internet ]] && destination=public
     printf '%s manual network rule for %s: %s=%s tcp=%s\n' \
         "${verb}" "${PROFILE}" "${selector}" "${destination}" "${port}"
     printf 'Changes apply to new launches; running sessions are unchanged.\n'
