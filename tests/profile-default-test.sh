@@ -22,7 +22,31 @@ expect_failure() {
 
 HOME_DIR="${TMP}/Pi Run"
 WORKSPACE="${TMP}/workspace"
-mkdir -p "${WORKSPACE}" "${TMP}/fake-bin"
+mkdir -p "${WORKSPACE}" "${TMP}/fake-bin" "${TMP}/cidr-bin"
+export CIDR_DOCKER_LOG="${TMP}/cidr-docker.log"
+cat > "${TMP}/cidr-bin/docker" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> "${CIDR_DOCKER_LOG:?}"
+case "${1:-}" in
+    image)
+        [[ "${2:-}" == inspect && "${3:-}" != missing:test ]]
+        ;;
+    run)
+        value="${*: -1}"
+        case "${value}" in
+            10.20.30.17/24|10.20.30.99/24) printf '%s\n' '10.20.30.0/24' ;;
+            10.40.50.17/24|10.40.50.99/24) printf '%s\n' '10.40.50.0/24' ;;
+            2001:0DB8:0:0::1/64|2001:db8::99/64) printf '%s\n' '2001:db8::/64' ;;
+            127.0.0.1/32) exit 1 ;;
+            *) printf '%s\n' "${value}" ;;
+        esac
+        ;;
+    *) exit 2 ;;
+esac
+EOF
+chmod 0755 "${TMP}/cidr-bin/docker"
+export PATH="${TMP}/cidr-bin:${PATH}"
 
 PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" init >/dev/null
 [[ "$(jq -r '.network.mode' "${HOME_DIR}/profiles/default/profile.json")" == host ]] \
@@ -83,6 +107,49 @@ mv "${default_config}.tmp" "${default_config}"
 network_output="$(PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" network allow list)"
 [[ "${network_output}" == $'Profile: default\nManual allow rules: 1\ncidr=10.20.30.0/24 tcp=5432' ]] \
     || fail "manual network rule list was incorrect"
+expect_failure env PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" network allow add \
+    cidr 10.20.30.17/24 --tcp-port 5432
+cp "${default_config}" "${TMP}/cidr-image-unavailable.before"
+expect_failure env PI_RUN_HOME="${HOME_DIR}" PI_RUN_IMAGE=missing:test \
+    "${ROOT}/bin/pi-run" network allow add cidr 10.40.50.17/24 --all-tcp
+cmp "${TMP}/cidr-image-unavailable.before" "${default_config}" \
+    || fail "unavailable CIDR normalizer image changed the profile"
+network_output="$(PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" network allow add \
+    cidr 2001:0DB8:0:0::1/64 --tcp-port 5432 --tcp-port 22)"
+[[ "${network_output}" == *'Added manual network rule for default: cidr=2001:db8::/64 tcp=22|5432'* ]] \
+    || fail "IPv6 CIDR rule was not normalized"
+PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" network allow add \
+    cidr 10.40.50.17/24 --all-tcp >/dev/null
+jq -e '.network.allow == [
+    {cidr: "10.20.30.0/24", tcpPorts: [5432]},
+    {cidr: "2001:db8::/64", tcpPorts: [22, 5432]},
+    {cidr: "10.40.50.0/24"}
+]' "${default_config}" >/dev/null || fail "CIDR rule additions were not canonical"
+expect_failure env PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" network allow remove \
+    cidr 2001:db8::99/64 --tcp-port 22
+PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" network allow remove \
+    cidr 2001:db8::99/64 --tcp-port 5432 --tcp-port 22 >/dev/null
+PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" network allow remove \
+    cidr 10.40.50.99/24 --all-tcp >/dev/null
+jq -e '.network.allow == [{cidr: "10.20.30.0/24", tcpPorts: [5432]}]' \
+    "${default_config}" >/dev/null || fail "CIDR removal changed an unrelated rule"
+grep -E '^image inspect .+' "${CIDR_DOCKER_LOG}" >/dev/null \
+    || fail "CIDR normalizer did not require a local runtime image"
+! grep -E '^pull( |$)' "${CIDR_DOCKER_LOG}" >/dev/null \
+    || fail "CIDR normalizer attempted to pull an image"
+grep -F -- '--pull never' "${CIDR_DOCKER_LOG}" >/dev/null \
+    || fail "CIDR normalizer did not disable implicit image pulls"
+grep -F -- '--network none' "${CIDR_DOCKER_LOG}" >/dev/null \
+    || fail "CIDR normalizer did not use offline networking"
+grep -F -- '--cap-drop=ALL' "${CIDR_DOCKER_LOG}" >/dev/null \
+    || fail "CIDR normalizer did not drop capabilities"
+grep -F -- '--security-opt=no-new-privileges' "${CIDR_DOCKER_LOG}" >/dev/null \
+    || fail "CIDR normalizer did not set no-new-privileges"
+grep -F -- '--read-only' "${CIDR_DOCKER_LOG}" >/dev/null \
+    || fail "CIDR normalizer did not use a read-only image filesystem"
+if grep -F -- '--mount' "${CIDR_DOCKER_LOG}" >/dev/null; then
+    fail "CIDR normalizer received an unexpected mount"
+fi
 exec {network_rule_lock_fd}<"${HOME_DIR}/profiles/default"
 flock -x "${network_rule_lock_fd}"
 PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" network allow add internet \
@@ -122,7 +189,7 @@ expect_failure env PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" network allow 
 expect_failure env PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" network allow add \
     host invalid --tcp-port 22
 expect_failure env PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" network allow add \
-    cidr 10.0.0.0/8 --all-tcp
+    cidr 127.0.0.1/32 --all-tcp
 expect_failure env PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" network allow add \
     internet --all-tcp
 expect_failure env PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" network allow add \

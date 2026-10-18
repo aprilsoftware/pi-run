@@ -303,6 +303,28 @@ validate_network_rule_hostname() {
     ' >/dev/null
 }
 
+normalize_network_rule_cidr() {
+    local value="$1" image output
+    image="${PI_RUN_IMAGE:-${DEFAULT_IMAGE}}"
+    docker image inspect "${image}" >/dev/null 2>&1 \
+        || fail "runtime image is unavailable for CIDR normalization: ${image}"
+    if ! output="$(docker run --rm \
+        --pull never \
+        --network none \
+        --user "$(id -u):$(id -g)" \
+        --cap-drop=ALL \
+        --security-opt=no-new-privileges \
+        --read-only \
+        --entrypoint /usr/local/bin/pi-run-network-policy-resolver \
+        "${image}" --normalize-cidr "${value}")"; then
+        fail "invalid or blocked CIDR network rule"
+    fi
+    [[ -n "${output}" && "${output}" != *$'\n'* &&
+       "${output}" =~ ^[0-9A-Fa-f:.]+/[0-9]{1,3}$ ]] \
+        || fail "CIDR normalizer returned invalid output"
+    printf '%s\n' "${output}"
+}
+
 change_profile_network_rule() {
     local action="$1" selector="$2" destination="$3"
     shift 3
@@ -317,6 +339,9 @@ change_profile_network_rule() {
             destination="${destination,,}"
             validate_network_rule_hostname "${destination}" \
                 || fail "invalid ${selector} network rule: ${destination}"
+            ;;
+        cidr)
+            destination="$(normalize_network_rule_cidr "${destination}")"
             ;;
         internet)
             [[ -z "${destination}" ]] || fail "internet network rules do not take a destination"

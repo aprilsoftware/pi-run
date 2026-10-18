@@ -96,25 +96,28 @@ the destructive change:
 pi-run --profile operations network mode host --discard-rules
 ```
 
-List manual rules or manage exact host, domain, and public-internet rules while
-restricted mode is configured:
+List manual rules or manage exact host, domain, CIDR, and public-internet rules
+while restricted mode is configured:
 
 ```bash
 pi-run --profile operations network allow list
 pi-run --profile operations network allow add host git.example.com --tcp-port 22
 pi-run --profile operations network allow add domain example.com --tcp-port 80 --tcp-port 443
+pi-run --profile operations network allow add cidr 10.20.30.17/24 --tcp-port 5432
 pi-run --profile operations network allow add internet --all-tcp
 pi-run --profile operations network allow remove host git.example.com --tcp-port 22
+pi-run --profile operations network allow remove cidr 10.20.30.0/24 --tcp-port 5432
 pi-run --profile operations network allow remove internet
 ```
 
-Ports are normalized and must be repeated exactly when removing a host or domain
-rule. An internet rule is unique, so removal needs no port options. Granting all
-TCP ports requires the explicit `--all-tcp` option. Public-internet access still
-excludes private and special-purpose ranges; add selected private ranges with
-CIDR rules. CIDR rule management is not currently provided by the CLI and still
-requires editing `profile.json`. Every network change takes effect on the next
-launch.
+Ports are normalized and must be repeated exactly when removing a host, domain,
+or CIDR rule. CIDRs are semantically normalized, so the example addition stores
+`10.20.30.0/24`. Normalization runs without networking, capabilities, or mounts
+in the already-installed version-matched runtime image. An internet rule is
+unique, so removal needs no port options. Granting all TCP ports requires the
+explicit `--all-tcp` option. Public-internet access still excludes private and
+special-purpose ranges; add selected private ranges with CIDR rules. Every
+network change takes effect on the next launch.
 
 ## Configure resources and skills
 
@@ -205,9 +208,8 @@ and keep snapshot recovery secrets separately. Snapshots include every profile
 and its credentials.
 
 Pi-Run currently provides profile listing, creation, default selection, one-run
-selection, network-mode changes, and host/domain/internet manual-rule
-management. It does not provide profile deletion, import, definition export,
-or CIDR rule-management commands.
+selection, network-mode changes, and host/domain/CIDR/internet manual-rule
+management. It does not provide profile deletion, import, or definition export.
 
 For exact file layout, creation permissions, schema validation, inherited and
 reset fields, and unsupported operations, see the

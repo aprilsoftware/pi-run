@@ -20,7 +20,7 @@ Usage:
   pi-run [--home <path>] [--profile <name>] network show
   pi-run [--home <path>] [--profile <name>] network mode <host|offline|restricted> [--discard-rules]
   pi-run [--home <path>] [--profile <name>] network allow list
-  pi-run [--home <path>] [--profile <name>] network allow <add|remove> <host|domain> <name> (--tcp-port <port>...|--all-tcp)
+  pi-run [--home <path>] [--profile <name>] network allow <add|remove> <host|domain|cidr> <value> (--tcp-port <port>...|--all-tcp)
   pi-run [--home <path>] [--profile <name>] network allow add internet (--tcp-port <port>...|--all-tcp)
   pi-run [--home <path>] [--profile <name>] network allow remove internet
   pi-run [--home <path>] [--profile <name>] skill list

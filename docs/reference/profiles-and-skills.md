@@ -39,11 +39,11 @@ removed rules; it is invalid with restricted mode. No mode command changes an
 active launch.
 
 `network allow list` displays every configured manual host, domain, CIDR, and
-public-internet rule. Host and domain rules can be changed with:
+public-internet rule. Host, domain, and CIDR rules can be changed with:
 
 ```text
-network allow add <host|domain> <name> (--tcp-port <port>...|--all-tcp)
-network allow remove <host|domain> <name> (--tcp-port <port>...|--all-tcp)
+network allow add <host|domain|cidr> <value> (--tcp-port <port>...|--all-tcp)
+network allow remove <host|domain|cidr> <value> (--tcp-port <port>...|--all-tcp)
 ```
 
 The single public-internet rule uses:
@@ -54,14 +54,19 @@ network allow remove internet
 ```
 
 Add and remove require restricted mode. Names are normalized to lowercase;
-ports are normalized to ascending integers and must be unique and in the range
-1–65535. All-port authority requires `--all-tcp`. Host and domain removal
-matches the exact normalized selector and port set. Internet removal needs no
-port options because only one internet rule may exist. Duplicate additions,
-absent removals, extra internet-removal arguments, and combining explicit ports
-with `--all-tcp` fail without replacing the profile. Existing unrelated rules,
-including CIDRs, remain unchanged. CIDR mutation is not currently provided by
-the host CLI.
+CIDRs are semantically normalized to their canonical network; ports are sorted
+and must be unique integers from 1 through 65535. All-port authority requires
+`--all-tcp`. Host, domain, and CIDR removal matches the exact normalized
+selector and port set. Internet removal needs no port options because only one
+internet rule may exist. Duplicate additions, absent removals, extra
+internet-removal arguments, and combining explicit ports with `--all-tcp` fail
+without replacing the profile. Existing unrelated rules remain unchanged.
+
+CIDR normalization runs in the locally available, version-matched runtime image
+with network-none, no capabilities, no-new-privileges, a read-only image
+filesystem, the host UID/GID, and no mounts. The command does not implicitly
+pull an unavailable image. Invalid prefixes and CIDRs overlapping blocked
+special ranges fail before the profile is locked or changed.
 
 ## Profile creation semantics
 
@@ -167,9 +172,9 @@ global package with the same active local name creates a conflict. Resource,
 network, and skill changes take effect only on a new launch.
 
 The host interface has no profile deletion, general definition show/edit,
-import, export, profile-only backup, or CIDR rule-management command. Network
-mode and host/domain/internet rule management use the dedicated commands above.
-Do not infer other commands from direct file ownership.
+import, export, or profile-only backup command. Network mode and
+host/domain/CIDR/internet rule management use the dedicated commands above. Do
+not infer other commands from direct file ownership.
 
 ## Skill names and metadata
 

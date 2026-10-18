@@ -42,6 +42,16 @@ run_resolver() {
     PI_RUN_PROVIDER_METADATA_FILE="${TMP}/metadata.json" node "${RESOLVER}" "${PROFILE}"
 }
 
+[[ "$(node "${RESOLVER}" --normalize-cidr 10.20.30.17/24)" == '10.20.30.0/24' ]] \
+    || fail "IPv4 CIDR utility normalization failed"
+[[ "$(node "${RESOLVER}" --normalize-cidr 2001:0DB8:0:0::1/64)" == '2001:db8::/64' ]] \
+    || fail "IPv6 CIDR utility normalization failed"
+for invalid_cidr in 10.0.0.0/99 127.0.0.1/32 invalid; do
+    if node "${RESOLVER}" --normalize-cidr "${invalid_cidr}" >/dev/null 2>&1; then
+        fail "CIDR utility accepted invalid or blocked input: ${invalid_cidr}"
+    fi
+done
+
 output="$(run_resolver)"
 expected_model_hosts='["api.openai.com","auth.openai.com","chatgpt.com","inference.example.test","pi.dev","vision.example.test"]'
 [[ "$(jq -c '[.modelRules[].host]' <<< "${output}")" == "${expected_model_hosts}" ]] \

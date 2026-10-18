@@ -418,7 +418,16 @@ async function main() {
   })}\n`);
 }
 
-main().catch((error) => {
+async function run() {
+  if (process.argv[2] === "--normalize-cidr") {
+    if (process.argv.length !== 4) fail("usage: pi-run-network-policy-resolver --normalize-cidr <cidr>");
+    process.stdout.write(`${normalizeCidr(process.argv[3])}\n`);
+    return;
+  }
+  await main();
+}
+
+run().catch((error) => {
   process.stderr.write(`pi-run-network-policy-resolver: ${error.message}\n`);
   process.exitCode = 1;
 });
