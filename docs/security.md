@@ -91,8 +91,10 @@ receive data by design.
 
 The launcher freezes normalized rules in private temporary state mounted only
 into the sidecar. Pi receives no `NET_ADMIN` and cannot read or alter that active
-policy. Startup reports `model-tcp`, `ssh-tcp`, and `manual-tcp`; stop if they
-differ from your intent. The managed SSH credential directory is separately
+policy. Startup reports `model-tcp`, `manual-tcp`, and the `ssh-tcp` target
+count and port. It does not print the inferred SSH target inventory; request that
+explicitly with `pi-run ssh-key list`. Stop if the reported authority differs
+from your intent. The managed SSH credential directory is separately
 over-mounted read-only in normal sessions. Changes made through SSH management
 or to `profile.json`, `auth.json`, `models.json`, or `settings.json` can affect
 the next launch but not a running sidecar.

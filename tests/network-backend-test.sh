@@ -159,8 +159,10 @@ grep -F 'pi-run: network=docker-restricted' "${TMP}/stderr" >/dev/null \
     || fail "restricted backend was not reported"
 grep -F 'pi-run: model-tcp=model.example.test:443' "${TMP}/stderr" >/dev/null \
     || fail "model TCP exposure was not reported"
-grep -F 'pi-run: ssh-tcp=ssh.example.test:22' "${TMP}/stderr" >/dev/null \
-    || fail "managed SSH TCP exposure was not reported"
+grep -F 'pi-run: ssh-tcp=1 managed target on port 22' "${TMP}/stderr" >/dev/null \
+    || fail "managed SSH TCP exposure count was not reported"
+[[ "$(< "${TMP}/stderr")" != *ssh.example.test* ]] \
+    || fail "managed SSH hostname was disclosed in startup output"
 grep -F 'pi-run: manual-tcp=cidr=10.20.30.0/24:5432,domain=example.net:*,host=git.example.test:22|443' \
     "${TMP}/stderr" >/dev/null || fail "manual TCP exposure was not reported"
 jq -e '. == {schemaVersion: 1, rules: [

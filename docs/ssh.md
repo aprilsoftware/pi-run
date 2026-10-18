@@ -28,9 +28,10 @@ accepting it.
 
 On the next restricted launch, every complete matching managed pair
 automatically permits its exact hostname on TCP/22. An IPv4 target permits only
-that address as a `/32` on TCP/22. Startup reports these derived rules as
-`ssh-tcp`; `profile.json` manual rules are unnecessary for standard SSH. Host
-mode already has broad network access, while offline mode remains network-none.
+that address as a `/32` on TCP/22. Startup reports their count as `ssh-tcp`
+without printing the target inventory; `pi-run ssh-key list` shows it explicitly.
+`profile.json` manual rules are unnecessary for standard SSH. Host mode already
+has broad network access, while offline mode remains network-none.
 Credential presence supplies authentication and reachability, not authorization
 for a remote task.
 

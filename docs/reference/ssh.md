@@ -72,9 +72,10 @@ unrelated entries when the pair is absent. It never edits remote
 Before a restricted launch, the offline resolver inspects the managed SSH store.
 Each complete, matching, unencrypted pair contributes an exact hostname TCP/22
 rule; an IPv4 target contributes an exact `/32` TCP/22 rule. Rules are normalized,
-deduplicated, reported as `ssh-tcp`, and frozen with model and manual rules.
-Private material, public keys, comments, and fingerprints never enter policy
-output.
+deduplicated, and frozen with model and manual rules. Startup reports only the
+`ssh-tcp` target count and port; use `pi-run ssh-key list` to request the target
+inventory explicitly. Private material, public keys, comments, and fingerprints
+never enter policy output.
 
 Incomplete, invalid, encrypted, mismatched, linked, unsafely permissioned, or
 hostname-ambiguous stores fail restricted resolution rather than granting

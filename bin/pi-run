@@ -717,10 +717,9 @@ if [[ "${NETWORK_MODE}" == restricted ]]; then
         end
     ' <<< "${RESOLVED_POLICY}")"
     SSH_RULES_DISPLAY="$(jq -r '
-        if (.sshRules | length) == 0 then "none" else
-            [.sshRules[] |
-                (if has("host") then .host else .cidr end) +
-                ":" + (.tcpPorts | map(tostring) | join("|"))] | join(",")
+        if (.sshRules | length) == 0 then "none"
+        elif (.sshRules | length) == 1 then "1 managed target on port 22"
+        else "\(.sshRules | length) managed targets on port 22"
         end
     ' <<< "${RESOLVED_POLICY}")"
     MANUAL_RULES_DISPLAY="$(jq -r '
