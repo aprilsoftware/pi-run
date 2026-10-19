@@ -140,6 +140,110 @@ ensure_worktree_machine_metadata() {
     printf '%s\n' "${machine}"
 }
 
+WORKTREE_REPOSITORY_NAME=""
+WORKTREE_REPOSITORY_COMMON_DIR=""
+WORKTREE_REPOSITORY_PRIMARY_PATH=""
+
+resolve_worktree_repository() {
+    local selected top common_raw common primary name path
+    command -v git >/dev/null 2>&1 || fail "git is required for worktree management"
+    selected="$(realpath .)"
+    [[ "$(git -C "${selected}" rev-parse --is-inside-work-tree 2>/dev/null)" == true &&
+       "$(git -C "${selected}" rev-parse --is-bare-repository 2>/dev/null)" == false ]] \
+        || fail "current directory is not inside a supported non-bare Git repository"
+    top="$(git -C "${selected}" rev-parse --path-format=absolute --show-toplevel)" \
+        || fail "could not resolve the selected Git worktree"
+    common_raw="$(git -C "${selected}" rev-parse --path-format=absolute --git-common-dir)" \
+        || fail "could not resolve the common Git directory"
+    common="$(realpath "${common_raw}")"
+    top="$(realpath "${top}")"
+    [[ "${common_raw}" == "${common}" && "${common}" == */.git ]] \
+        || fail "repository must use an ordinary canonical .git directory"
+    primary="${common%/.git}"
+    [[ -d "${primary}" && ! -L "${primary}" && -d "${common}" && ! -L "${common}" &&
+       -d "${top}" && ! -L "${top}" ]] \
+        || fail "repository paths must be ordinary non-symlink directories"
+    for path in "${primary}" "${common}" "${top}"; do
+        [[ "$(stat -c %u "${path}")" == "$(id -u)" ]] \
+            || fail "repository path must be owned by the current user: ${path}"
+    done
+    [[ "$(git -C "${primary}" rev-parse --path-format=absolute --show-toplevel 2>/dev/null)" == "${primary}" &&
+       "$(git -C "${primary}" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" == "${common}" ]] \
+        || fail "common Git metadata does not match its primary checkout"
+    name="$(basename "${primary}")"
+    jq -en --arg name "${name}" --arg common "${common}" --arg primary "${primary}" '
+        ($name | length > 0 and length <= 255 and test("^[^\\x00-\\x1f\\x7f]+$")) and
+        ($common | test("^/[\\x20-\\x7e]*$")) and ($primary | test("^/[\\x20-\\x7e]*$"))
+    ' >/dev/null || fail "repository name or paths cannot be represented safely"
+    WORKTREE_REPOSITORY_NAME="${name}"
+    WORKTREE_REPOSITORY_COMMON_DIR="${common}"
+    WORKTREE_REPOSITORY_PRIMARY_PATH="${primary}"
+}
+
+print_worktree_preference() {
+    local machine="$1" record
+    record="$(jq -c --arg common "${WORKTREE_REPOSITORY_COMMON_DIR}" \
+        '.repositories[]? | select(.commonGitDir == $common)' "${machine}")"
+    printf 'Repository: %s\n' "$(sanitize_display "${WORKTREE_REPOSITORY_NAME}")"
+    if [[ -z "${record}" ]]; then
+        printf 'Repository ID: -\nWorktree mode: disabled (not registered)\nManaged workspaces: 0\n'
+    else
+        jq -r '
+            "Repository ID: \(.id)",
+            "Worktree mode: \(if .enabled then "enabled" else "disabled" end)",
+            "Managed workspaces: \(.managedWorkspaces | length)"
+        ' <<< "${record}"
+    fi
+    printf 'Primary checkout: %s\n' "$(sanitize_display "${WORKTREE_REPOSITORY_PRIMARY_PATH}")"
+}
+
+show_worktree_preference() {
+    local machine
+    resolve_worktree_repository
+    machine="$(ensure_worktree_machine_metadata)"
+    print_worktree_preference "${machine}"
+}
+
+set_worktree_preference() {
+    local enabled="$1" machine count current id created changed=false
+    resolve_worktree_repository
+    machine="$(ensure_worktree_machine_metadata)"
+    acquire_workspace_lock
+    validate_worktree_machine_file "${machine}"
+    validate_workspace_metadata "${machine}"
+    count="$(jq -r --arg common "${WORKTREE_REPOSITORY_COMMON_DIR}" \
+        '[.repositories[] | select(.commonGitDir == $common)] | length' "${machine}")"
+    [[ "${count}" == 0 || "${count}" == 1 ]] || fail "repository metadata is ambiguous"
+    if [[ "${count}" == 0 && "${enabled}" == true ]]; then
+        id="$(new_workspace_id)"
+        created="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        # shellcheck disable=SC2016 # Dollar-prefixed names are jq variables.
+        update_json "${machine}" --arg id "${id}" --arg name "${WORKTREE_REPOSITORY_NAME}" \
+            --arg common "${WORKTREE_REPOSITORY_COMMON_DIR}" --arg primary "${WORKTREE_REPOSITORY_PRIMARY_PATH}" \
+            --arg created "${created}" \
+            '.repositories += [{id:$id,name:$name,commonGitDir:$common,primaryPath:$primary,enabled:true,createdAt:$created,managedWorkspaces:[]}]'
+        changed=true
+    elif [[ "${count}" == 1 ]]; then
+        current="$(jq -r --arg common "${WORKTREE_REPOSITORY_COMMON_DIR}" \
+            '.repositories[] | select(.commonGitDir == $common) | .enabled' "${machine}")"
+        if [[ "${current}" != "${enabled}" ]]; then
+            # shellcheck disable=SC2016 # Dollar-prefixed names are jq variables.
+            update_json "${machine}" --arg common "${WORKTREE_REPOSITORY_COMMON_DIR}" --argjson enabled "${enabled}" \
+                '(.repositories[] | select(.commonGitDir == $common) | .enabled) = $enabled'
+            changed=true
+        fi
+    fi
+    validate_worktree_machine_file "${machine}"
+    validate_workspace_metadata "${machine}"
+    release_workspace_lock
+    print_worktree_preference "${machine}"
+    if [[ "${changed}" == true ]]; then
+        printf 'Preference updated; existing workspaces and sessions are unchanged.\n'
+    else
+        printf 'Preference unchanged.\n'
+    fi
+}
+
 WORKSPACE_LOCK=""
 acquire_workspace_lock() {
     WORKSPACE_LOCK="${PI_RUN_HOME_RESOLVED}/workspaces/.registry.lock"

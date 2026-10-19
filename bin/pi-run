@@ -26,6 +26,7 @@ Usage:
   pi-run [--home <path>] [--profile <name>] skill list
   pi-run [--home <path>] workspace list
   pi-run [--home <path>] workspace link <workspace-id> <path>
+  pi-run [--home <path>] worktree <status|enable|disable>
   pi-run [--home <path>] session list [<workspace-id>]
   pi-run [--home <path>] resume [<profile> <workspace-id>]
   pi-run [--home <path>] [--profile <name>] ssh-key list
@@ -516,6 +517,18 @@ case "${COMMAND}" in
             *)
                 usage
                 ;;
+        esac
+        exit 0
+        ;;
+    worktree)
+        initialize_home
+        require_jq
+        [[ $# -eq 2 ]] || usage
+        case "$2" in
+            status) show_worktree_preference ;;
+            enable) set_worktree_preference true ;;
+            disable) set_worktree_preference false ;;
+            *) usage ;;
         esac
         exit 0
         ;;
