@@ -666,14 +666,19 @@ else
     EXTRA_PI_ARGS=("$@")
 fi
 
+MANAGED_CONTINUATION=false
 if [[ "${WORKTREE_REQUESTED}" == true ]]; then
+    MANAGED_CONTINUATION_COUNT=0
     for argument in "${EXTRA_PI_ARGS[@]}"; do
         case "${argument}" in
             -c|--continue|-r|--resume)
-                fail "--worktree currently creates only fresh sessions; continuation and resume are not yet supported"
+                MANAGED_CONTINUATION=true
+                MANAGED_CONTINUATION_COUNT=$((MANAGED_CONTINUATION_COUNT + 1))
                 ;;
         esac
     done
+    (( MANAGED_CONTINUATION_COUNT <= 1 )) \
+        || fail "--worktree accepts exactly one continuation or resume selector"
 fi
 [[ -d "${WORKSPACE_INPUT}" ]] \
     || fail "workspace does not exist: ${WORKSPACE_INPUT}"
@@ -688,24 +693,32 @@ MANAGED_WORKTREE=false
 MANAGED_WORKTREE_BRANCH=""
 MANAGED_WORKTREE_BASE=""
 MANAGED_WORKTREE_COMMON_DIR=""
+MANAGED_WORKTREE_CONTINUATION=false
 if [[ "${WORKTREE_REQUESTED}" == true ]]; then
     SOURCE_WORKSPACE="${WORKSPACE}"
-    REPOSITORY_ID="$(ensure_worktree_repository_record "${SOURCE_WORKSPACE}")"
-    WORKSPACE_ID="$(new_workspace_id)"
-    CREATED_WORKTREE="$(create_managed_worktree_checkout "${WORKSPACE_ID}" "${SOURCE_WORKSPACE}")"
-    IFS=$'\t' read -r CREATED_ID CREATED_REPOSITORY_ID MANAGED_WORKTREE_BRANCH WORKSPACE MANAGED_WORKTREE_BASE \
-        <<< "${CREATED_WORKTREE}"
-    [[ "${CREATED_ID}" == "${WORKSPACE_ID}" && "${CREATED_REPOSITORY_ID}" == "${REPOSITORY_ID}" &&
-       "${WORKSPACE}" == "${PI_RUN_HOME_RESOLVED}/worktrees/${REPOSITORY_ID}/${WORKSPACE_ID}" ]] \
-        || fail "managed worktree creation returned inconsistent identity metadata"
-    publish_managed_worktree_metadata \
-        "${WORKSPACE_ID}" "${REPOSITORY_ID}" "${MANAGED_WORKTREE_BRANCH}" "${WORKSPACE}" >/dev/null
-    MACHINE_METADATA="$(machine_file)"
-    MANAGED_WORKTREE_COMMON_DIR="$(jq -r --arg id "${REPOSITORY_ID}" \
-        '.repositories[] | select(.id == $id) | .commonGitDir' "${MACHINE_METADATA}")"
-    [[ "$(git -C "${WORKSPACE}" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" == \
-       "${MANAGED_WORKTREE_COMMON_DIR}" ]] \
-        || fail "published managed worktree no longer matches its common Git directory"
+    if [[ "${MANAGED_CONTINUATION}" == true ]]; then
+        SELECTED_WORKTREE="$(select_managed_repository_session_workspace "${SOURCE_WORKSPACE}" "${PROFILE}")"
+        IFS=$'\t' read -r WORKSPACE_ID WORKSPACE MANAGED_WORKTREE_BRANCH \
+            MANAGED_WORKTREE_COMMON_DIR MANAGED_WORKTREE_BASE <<< "${SELECTED_WORKTREE}"
+        MANAGED_WORKTREE_CONTINUATION=true
+    else
+        REPOSITORY_ID="$(ensure_worktree_repository_record "${SOURCE_WORKSPACE}")"
+        WORKSPACE_ID="$(new_workspace_id)"
+        CREATED_WORKTREE="$(create_managed_worktree_checkout "${WORKSPACE_ID}" "${SOURCE_WORKSPACE}")"
+        IFS=$'\t' read -r CREATED_ID CREATED_REPOSITORY_ID MANAGED_WORKTREE_BRANCH WORKSPACE MANAGED_WORKTREE_BASE \
+            <<< "${CREATED_WORKTREE}"
+        [[ "${CREATED_ID}" == "${WORKSPACE_ID}" && "${CREATED_REPOSITORY_ID}" == "${REPOSITORY_ID}" &&
+           "${WORKSPACE}" == "${PI_RUN_HOME_RESOLVED}/worktrees/${REPOSITORY_ID}/${WORKSPACE_ID}" ]] \
+            || fail "managed worktree creation returned inconsistent identity metadata"
+        publish_managed_worktree_metadata \
+            "${WORKSPACE_ID}" "${REPOSITORY_ID}" "${MANAGED_WORKTREE_BRANCH}" "${WORKSPACE}" >/dev/null
+        MACHINE_METADATA="$(machine_file)"
+        MANAGED_WORKTREE_COMMON_DIR="$(jq -r --arg id "${REPOSITORY_ID}" \
+            '.repositories[] | select(.id == $id) | .commonGitDir' "${MACHINE_METADATA}")"
+        [[ "$(git -C "${WORKSPACE}" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" == \
+           "${MANAGED_WORKTREE_COMMON_DIR}" ]] \
+            || fail "published managed worktree no longer matches its common Git directory"
+    fi
     MANAGED_WORKTREE=true
 else
     WORKSPACE_ID="$(ensure_workspace_registered "${WORKSPACE}")"
@@ -986,7 +999,11 @@ echo "pi-run: home=${PI_RUN_HOME_RESOLVED}" >&2
 echo "pi-run: profile=${PROFILE} workspace=${WORKSPACE}" >&2
 if [[ "${MANAGED_WORKTREE}" == true ]]; then
     echo "pi-run: managed-worktree workspace-id=${WORKSPACE_ID}" >&2
-    echo "pi-run: managed-worktree branch=${MANAGED_WORKTREE_BRANCH} base=${MANAGED_WORKTREE_BASE}" >&2
+    if [[ "${MANAGED_WORKTREE_CONTINUATION}" == true ]]; then
+        echo "pi-run: managed-worktree branch=${MANAGED_WORKTREE_BRANCH} head=${MANAGED_WORKTREE_BASE}" >&2
+    else
+        echo "pi-run: managed-worktree branch=${MANAGED_WORKTREE_BRANCH} base=${MANAGED_WORKTREE_BASE}" >&2
+    fi
     echo "pi-run: managed-worktree host=$(sanitize_display "${WORKSPACE}")" >&2
 fi
 echo "pi-run: network=${NETWORK_BACKEND}" >&2

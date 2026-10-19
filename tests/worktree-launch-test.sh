@@ -179,7 +179,7 @@ if [[ "${LIVE_DOCKER}" != 1 ]]; then
         if run_pi --worktree "${REPOSITORY}" "${resume_argument}" >/dev/null 2>"${TMP}/resume.err"; then
             fail "managed fresh launch accepted ${resume_argument}"
         fi
-        grep -F 'creates only fresh sessions' "${TMP}/resume.err" >/dev/null \
+        grep -F 'no managed worktree sessions are available' "${TMP}/resume.err" >/dev/null \
             || fail "managed continuation rejection was unclear"
     done
     [[ "$(jq -r '.repositories[0].managedWorkspaces | length' "${MACHINE}")" == "${managed_count}" &&
