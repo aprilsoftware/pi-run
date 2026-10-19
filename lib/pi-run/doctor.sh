@@ -40,9 +40,10 @@ doctor_wsl_home_filesystem() {
 }
 
 run_doctor() {
-    local command_name image profile_dir mode configured_default default_dir kernel
+    local command_name runtime_image egress_image profile_dir mode configured_default default_dir kernel
     local wsl=false
-    image="${PI_RUN_IMAGE:-${DEFAULT_IMAGE}}"
+    runtime_image="${PI_RUN_IMAGE:-${DEFAULT_IMAGE}}"
+    egress_image="${PI_RUN_EGRESS_IMAGE:-${DEFAULT_EGRESS_IMAGE}}"
 
     if [[ "$(uname -s)" == Linux && "$(uname -m)" =~ ^(x86_64|amd64)$ ]]; then
         kernel="$(uname -r)"
@@ -100,10 +101,15 @@ run_doctor() {
     if command -v docker >/dev/null 2>&1; then
         if docker info >/dev/null 2>&1; then
             doctor_ok "Docker daemon is reachable"
-            if docker image inspect "${image}" >/dev/null 2>&1; then
-                doctor_ok "runtime image available: ${image}"
+            if docker image inspect "${runtime_image}" >/dev/null 2>&1; then
+                doctor_ok "runtime image available: ${runtime_image}"
             else
-                doctor_fail "runtime image unavailable locally: ${image}; run: docker pull ${image}"
+                doctor_fail "runtime image unavailable locally: ${runtime_image}; run: docker pull ${runtime_image}"
+            fi
+            if docker image inspect "${egress_image}" >/dev/null 2>&1; then
+                doctor_ok "egress image available: ${egress_image}"
+            else
+                doctor_fail "egress image unavailable locally: ${egress_image}; run: docker pull ${egress_image}"
             fi
         else
             doctor_fail "Docker daemon is unavailable"

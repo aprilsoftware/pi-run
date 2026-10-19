@@ -32,10 +32,13 @@ When enabled, Guardian uses a separate evidence-aware reviewer for acting-agent
 otherwise it cancels the invocation and opens a human-arbitrated dispute. The
 agent's structured position receives an advisory reassessment but cannot grant
 itself authority or release the action. Guardian starts Off and is not a sandbox.
-The container narrows exposure, but selected mounts remain writable and normal
-sessions use host networking. Profiles, credentials, and external permissions
-bound authority; instructions, Guardian, and human review reduce the likelihood
-of harmful actions.
+The container narrows exposure, but selected mounts contain real host data and
+the default backend uses host networking. Explicit offline and experimental
+restricted TCP modes narrow session networking with exact hosts, domains,
+CIDRs, or public-internet rules without hiding mounted credentials. Profiles,
+credentials, and external permissions bound authority;
+instructions, Guardian, and human review reduce the likelihood of harmful
+actions.
 
 These controls assume something unexpected can still pass. Git history can
 recover committed project content, while an independent workspace backup can
@@ -52,8 +55,8 @@ essays.
 
 | Component | Benefit |
 | --- | --- |
-| [Runtime and installation](installation.md) | Pi, Node.js, language toolchains, diagnostics, service clients, and baseline extensions arrive in one matching image instead of separate host installations. Application upgrades leave user data untouched. |
-| [Security boundaries](security.md) | A disposable container receives the selected workspace and profile—not the complete host home, every profile, or the Docker socket. Optional resources remain deliberate. |
+| [Runtime and installation](installation.md) | Pi, Node.js, language toolchains, diagnostics, service clients, and baseline extensions arrive in a versioned runtime image, paired with the restricted-egress image. Application upgrades leave user data untouched. |
+| [Security boundaries](security.md) | A disposable container receives the selected workspace and profile—not the complete host home, every profile, or the Docker socket. Choose host, offline, or experimental restricted TCP session networking explicitly. |
 | [Profiles](profiles.md) | Select a purpose-specific identity, credentials, instructions, skills, preferences, and conversations. Only that profile is mounted, and all of it is available to the run. |
 | [Skills](skills.md) and [shared files](security.md#treat-mounted-data-as-exposed) | Reuse reviewed expertise and supporting material across tasks without copying it into every request or every profile. |
 | [Workspaces and sessions](workspaces-and-sessions.md) | Continue named conversations by stable workspace identity, find them across profiles, and reconnect them after a directory move or workstation recovery. |

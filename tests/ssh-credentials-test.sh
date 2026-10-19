@@ -13,6 +13,7 @@ fail() {
 }
 
 new_case() {
+    NETWORK_MODE=host
     CASE_ROOT="$(mktemp -d "${TMP}/case.XXXXXX")"
     PROFILE="${CASE_ROOT}/profile"
     RUNTIME_HOME="${CASE_ROOT}/home"
@@ -29,7 +30,7 @@ make_key() {
 
 run_configure() {
     HOME="${RUNTIME_HOME}" PI_RUN_PROFILE_DIR="${PROFILE}" \
-        "${HELPER}" configure
+        PI_RUN_NETWORK_MODE="${NETWORK_MODE}" "${HELPER}" configure
 }
 
 expect_failure() {
@@ -43,8 +44,9 @@ expect_failure() {
         || fail "failure did not contain '${expected}': ${FAILURE_OUTPUT}"
 }
 
-# A private key is sufficient; startup must not require or modify its public key.
+# A private key is sufficient; restricted startup adds proxy configuration.
 new_case
+NETWORK_MODE=restricted
 make_key deploy@server.example.test
 rm "${PROFILE}/credentials/ssh/deploy@server.example.test.pub"
 printf 'server.example.test ssh-ed25519 fixture\n' > "${PROFILE}/credentials/ssh/known_hosts"
@@ -62,6 +64,8 @@ resolved="$(ssh -G -F "${config}" server.example.test 2>/dev/null)"
     || fail "private key path was not selected"
 [[ "${resolved}" == *"userknownhostsfile ${PROFILE}/credentials/ssh/known_hosts"* ]] \
     || fail "profile known_hosts was not selected"
+[[ "${resolved}" == *'proxycommand /usr/bin/nc -X connect -x 127.0.0.1:3128 %h %p'* ]] \
+    || fail "restricted SSH proxy was not configured"
 set +e
 ssh -F "${config}" -o BatchMode=yes -o ProxyCommand=false server.example.test \
     >"${CASE_ROOT}/ssh.log" 2>&1
@@ -69,11 +73,19 @@ ssh_status=$?
 set -e
 (( ssh_status != 0 )) || fail "local failing ProxyCommand unexpectedly connected"
 
-# No credentials means no runtime SSH files.
+# No credentials creates no host-mode files but restricted mode still gets a proxy.
 new_case
 rmdir "${PROFILE}/credentials/ssh"
 run_configure
-[[ ! -e "${RUNTIME_HOME}/.ssh/config" ]] || fail "empty credentials created a config"
+[[ ! -e "${RUNTIME_HOME}/.ssh/config" ]] || fail "empty host profile created a config"
+new_case
+NETWORK_MODE=restricted
+rmdir "${PROFILE}/credentials/ssh"
+run_configure
+config="${RUNTIME_HOME}/.ssh/config"
+resolved="$(ssh -G -F "${config}" server.example.test 2>/dev/null)"
+[[ "${resolved}" == *'proxycommand /usr/bin/nc -X connect -x 127.0.0.1:3128 %h %p'* ]] \
+    || fail "credential-free restricted profile did not configure the SSH proxy"
 
 # Existing runtime configuration is never overwritten.
 new_case

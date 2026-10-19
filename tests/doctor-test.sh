@@ -26,8 +26,8 @@ case "$1" in
         ;;
     image)
         [ "$2" = inspect ] || exit 2
-        printf '%s\n' "$3" > "${DOCKER_IMAGE_CAPTURE:?}"
-        [ "${DOCKER_IMAGE_FAIL:-0}" = 0 ]
+        printf '%s\n' "$3" >> "${DOCKER_IMAGE_CAPTURE:?}"
+        [ "$3" != "${DOCKER_IMAGE_FAIL:-}" ]
         ;;
     *) exit 2 ;;
 esac
@@ -41,9 +41,14 @@ for command_name in bash dirname readlink realpath tr; do
     ln -s "${command_path}" "${TMP}/minimal-bin/${command_name}"
 done
 version_output="$(PATH="${TMP}/minimal-bin" PI_RUN_HOME="${TMP}/never-created" "${PI_RUN}" version)"
-assert_contains "${version_output}" "pi-run v0.6.3"
-assert_contains "${version_output}" "runtime ghcr.io/aprilsoftware/pi-run:0.6.3"
+assert_contains "${version_output}" "pi-run v0.7.2"
+assert_contains "${version_output}" "runtime ghcr.io/aprilsoftware/pi-run:0.7.2"
+assert_contains "${version_output}" "egress ghcr.io/aprilsoftware/pi-run-egress:0.7.2"
 [[ ! -e "${TMP}/never-created" ]] || fail "version created Pi-Run home"
+version_output="$(PATH="${TMP}/minimal-bin" PI_RUN_IMAGE=example.invalid/pi-run:test \
+    PI_RUN_EGRESS_IMAGE=example.invalid/pi-run-egress:test "${PI_RUN}" version)"
+assert_contains "${version_output}" "runtime example.invalid/pi-run:test"
+assert_contains "${version_output}" "egress example.invalid/pi-run-egress:test"
 
 if [[ -s /etc/machine-id ]]; then
     machine_source="$(< /etc/machine-id)"
@@ -62,18 +67,26 @@ output="$(PATH="${TMP}/fake-bin:${PATH}" PI_RUN_HOME="${TMP}/uninitialized" "${P
 assert_contains "${output}" "WARN  Pi-Run home is not initialized"
 assert_contains "${output}" "Doctor: PASS"
 [[ ! -e "${TMP}/uninitialized" ]] || fail "doctor initialized Pi-Run home"
-[[ "$(cat "${TMP}/image")" == "ghcr.io/aprilsoftware/pi-run:0.6.3" ]] \
-    || fail "doctor inspected the wrong default image"
+grep -Fx 'ghcr.io/aprilsoftware/pi-run:0.7.2' "${TMP}/image" >/dev/null \
+    || fail "doctor inspected the wrong default runtime image"
+grep -Fx 'ghcr.io/aprilsoftware/pi-run-egress:0.7.2' "${TMP}/image" >/dev/null \
+    || fail "doctor inspected the wrong default egress image"
+[[ "$(wc -l < "${TMP}/image")" -eq 2 ]] || fail "doctor inspected an unexpected image set"
 
-# An initialized home and an image override pass validation.
+# An initialized home and both image overrides pass validation.
 PI_RUN_HOME="${TMP}/healthy home" "${PI_RUN}" init >/dev/null
+: > "${TMP}/image"
 output="$(PATH="${TMP}/fake-bin:${PATH}" PI_RUN_HOME="${TMP}/healthy home" \
-    PI_RUN_IMAGE="example.invalid/pi-run:test" "${PI_RUN}" doctor)"
+    PI_RUN_IMAGE="example.invalid/pi-run:test" \
+    PI_RUN_EGRESS_IMAGE="example.invalid/pi-run-egress:test" "${PI_RUN}" doctor)"
 assert_contains "${output}" "home configuration is valid"
 assert_contains "${output}" "selected profile configuration is valid: default"
 assert_contains "${output}" "Doctor: PASS"
-[[ "$(cat "${TMP}/image")" == "example.invalid/pi-run:test" ]] \
+grep -Fx 'example.invalid/pi-run:test' "${TMP}/image" >/dev/null \
     || fail "doctor ignored PI_RUN_IMAGE"
+grep -Fx 'example.invalid/pi-run-egress:test' "${TMP}/image" >/dev/null \
+    || fail "doctor ignored PI_RUN_EGRESS_IMAGE"
+[[ "$(wc -l < "${TMP}/image")" -eq 2 ]] || fail "doctor inspected an unexpected override image set"
 
 # Malformed state and unsafe permissions are failures, not repairs.
 printf '%s\n' '{"schemaVersion":99}' > "${TMP}/healthy home/config.json"
@@ -87,6 +100,7 @@ assert_contains "${output}" "Pi-Run home permissions must be 700"
 assert_contains "${output}" "home configuration is missing or invalid"
 
 # Docker daemon and image failures produce a nonzero result.
+: > "${TMP}/image"
 set +e
 output="$(PATH="${TMP}/fake-bin:${PATH}" PI_RUN_HOME="${TMP}/absent-a" \
     DOCKER_INFO_FAIL=1 "${PI_RUN}" doctor 2>&1)"
@@ -94,14 +108,23 @@ status=$?
 set -e
 [[ ${status} -ne 0 ]] || fail "doctor accepted an unavailable Docker daemon"
 assert_contains "${output}" "Docker daemon is unavailable"
+[[ ! -s "${TMP}/image" ]] || fail "doctor inspected images while Docker was unavailable"
 
-set +e
-output="$(PATH="${TMP}/fake-bin:${PATH}" PI_RUN_HOME="${TMP}/absent-b" \
-    DOCKER_IMAGE_FAIL=1 "${PI_RUN}" doctor 2>&1)"
-status=$?
-set -e
-[[ ${status} -ne 0 ]] || fail "doctor accepted a missing runtime image"
-assert_contains "${output}" "runtime image unavailable locally"
+for role in runtime egress; do
+    case "${role}" in
+        runtime) missing_image='ghcr.io/aprilsoftware/pi-run:0.7.2' ;;
+        egress) missing_image='ghcr.io/aprilsoftware/pi-run-egress:0.7.2' ;;
+    esac
+    : > "${TMP}/image"
+    set +e
+    output="$(PATH="${TMP}/fake-bin:${PATH}" PI_RUN_HOME="${TMP}/absent-b-${role}" \
+        DOCKER_IMAGE_FAIL="${missing_image}" "${PI_RUN}" doctor 2>&1)"
+    status=$?
+    set -e
+    [[ ${status} -ne 0 ]] || fail "doctor accepted a missing ${role} image"
+    assert_contains "${output}" "${role} image unavailable locally: ${missing_image}"
+    assert_contains "${output}" "docker pull ${missing_image}"
+done
 
 # Remove Docker from PATH while retaining every other required diagnostic tool.
 mkdir -p "${TMP}/no-docker-bin"

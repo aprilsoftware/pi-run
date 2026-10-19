@@ -1,8 +1,9 @@
 # Install, upgrade, and uninstall Pi-Run
 
-Pi-Run installs a small host launcher and a matching container image. Pi,
-Node.js, and the bundled toolchain stay in the image, while profiles, credentials,
-and sessions remain in a separate private data directory.
+Pi-Run installs a small host launcher and matching versioned runtime and egress
+container images. Pi, Node.js, and the bundled toolchain stay in the runtime
+image, while profiles, credentials, and sessions remain in a separate private
+data directory.
 
 Run these commands in your **host terminal** as your normal user with Docker
 access.
@@ -14,7 +15,7 @@ access.
 - Bash and a working Docker daemon accessible to your user.
 - `curl`, `jq`, `tar`, `flock`, and standard GNU command-line tools.
 - The host CA bundle at `/etc/ssl/certs/ca-certificates.crt`.
-- Access to the selected GitHub release and its container image.
+- Access to the selected GitHub release and its runtime and egress images.
 
 Docker access is highly privileged on the host. Pi-Run does not mount the Docker
 socket into normal Pi sessions; see [Security and isolation](security.md).
@@ -121,7 +122,9 @@ sh ./install.sh
 
 The downloaded installer is bound to its release version. It downloads the
 matching archive and checksum, verifies the archive, pulls the matching runtime
-image, and activates the application.
+and egress images, and activates the application only after both pulls succeed.
+The egress image supports the experimental `docker-restricted` launcher backend;
+the default remains `docker-host`.
 
 A checksum detects an archive mismatch; it is not a signature or independent
 verification of the installer you chose to run. Obtain the installer from a
@@ -172,9 +175,10 @@ pi-run home
 pi-run doctor
 ```
 
-`version` prints the installed launcher version and selected image. `home` prints
-the resolved data location. `doctor` checks host requirements, Docker access,
-the local runtime image, application resources, and selected profile.
+`version` prints the installed launcher version and selected runtime and egress
+images. `home` prints the resolved data location. `doctor` checks host
+requirements, Docker access, both local images, application resources, and the
+selected profile.
 
 Doctor reports `OK`, `WARN`, and `FAIL` and exits nonzero for failed requirements.
 It does not initialize or repair state, pull images, contact registries, or
@@ -196,9 +200,11 @@ Apply the newest eligible release:
 pi-run upgrade
 ```
 
-Upgrade verifies the new archive, pulls its matching image, installs it beside
-older application releases, and activates it. It preserves profiles,
-credentials, sessions, skills, and other data-home contents.
+Upgrade verifies the new archive, pulls its matching runtime and egress images,
+installs it beside older application releases, and activates it. If either image
+pull fails, the previous release remains active; any layers already downloaded
+may remain in Docker's cache. Upgrade preserves profiles, credentials, sessions,
+skills, and other data-home contents.
 
 There is no background upgrade, automatic rollback, or automatic removal of old
 application releases. Upgrade requires an active installed release; it does not

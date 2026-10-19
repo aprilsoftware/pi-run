@@ -2,6 +2,9 @@
   "schemaVersion": 1,
   "name": "default",
   "skills": null,
+  "network": {
+    "mode": "host"
+  },
   "resources": {
     "shared": "read-write"
   }

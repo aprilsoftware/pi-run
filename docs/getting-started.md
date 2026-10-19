@@ -20,10 +20,10 @@ pi-run init
 pi-run doctor
 ```
 
-`version` identifies the launcher and runtime image. `init` creates the initial
-profile and persistent data directories, normally under `~/Pi-Run`. `doctor`
-reports `OK`, `WARN`, and `FAIL` without repairing state or printing credential
-contents.
+`version` identifies the launcher plus its runtime and egress images. `init`
+creates the initial profile and persistent data directories, normally under
+`~/Pi-Run`. `doctor` reports `OK`, `WARN`, and `FAIL` without repairing state or
+printing credential contents.
 
 Required checks should pass before launch. If a command or check fails, use the
 [startup troubleshooting reference](reference/getting-started.md#troubleshoot-startup).
@@ -33,16 +33,17 @@ Required checks should pass before launch. If a command or check fails, use the
 | Concept | What it gives you |
 | --- | --- |
 | Workspace | The host directory Pi works in, mounted read-write at `/workspace`. |
-| Profile | Selected instructions, settings, credentials, skills, and sessions, mounted read-write at `/profile`. |
+| Profile | Selected instructions, settings, credentials, skills, and sessions at `/profile`; `profile.json` and managed SSH credentials are read-only during a run while other permitted Pi-owned state remains writable. |
 | Pi-Run home | Persistent Pi-Run data, normally `~/Pi-Run`; separate from the installed application. |
 
 The initial profile is `default`. Purpose-specific profiles help keep unrelated
 accounts, sessions, and instructions out of a run.
 
-The workspace and profile are real writable host data. The default profile also
-exposes writable shared files at `/shared`, and normal sessions use host
-networking. Containerization does not make files, localhost services, or remote
-systems disposable. Open only the directory and access needed for the task; see
+The workspace and most profile state are real writable host data. The default
+profile also exposes writable shared files at `/shared`, and its `host` mode uses
+Docker host networking. Containerization and alternate network modes do not make
+files, credentials, localhost services, or remote systems disposable. Open only
+the directory and access needed for the task; see
 [Security and isolation](security.md).
 
 ## 3. Open a workspace
@@ -53,10 +54,35 @@ Change to the directory you want Pi to use, then run:
 pi-run .
 ```
 
+Networking belongs to the selected profile. New and existing v0.6 profiles use
+host networking unless their `profile.json` selects another mode. For example,
+a restricted profile can contain:
+
+```json
+{
+  "network": {
+    "mode": "restricted",
+    "allow": [
+      {"host": "git.example.com", "tcpPorts": [22, 443]},
+      {"domain": "example.com", "tcpPorts": [80, 443]},
+      {"cidr": "10.20.30.0/24", "tcpPorts": [22]}
+    ]
+  }
+}
+```
+
+Use `"mode": "offline"` for Docker network-none. In restricted mode, `host` is
+exact, `domain` includes the apex and subdomains, and `cidr` selects a subnet.
+Omitting `tcpPorts` permits every TCP port for that rule. External UDP remains blocked.
+Pi-Run automatically adds exact TCP/443 rules for model providers already
+represented by the profile, so they do not belong in `allow`.
+
 You can pass another existing directory instead of `.`. Pi-Run reports the data
-home, selected profile, workspace, Guardian state, and enabled optional mounts,
-then opens Pi's interactive terminal interface. The normal terminal mode keeps
-standard scrollback.
+home, selected profile, workspace, effective Docker backend, Guardian state, and
+enabled optional mounts, then opens Pi's interactive terminal interface.
+Restricted mode reports model-derived and manual TCP exposure separately. The
+normal terminal mode keeps standard scrollback. See [Profiles](profiles.md) for
+configuration and [Security and isolation](security.md) for enforcement limits.
 
 The first launch also initializes a missing data home and registers this
 workspace. For profile selection and exact startup behavior, see the

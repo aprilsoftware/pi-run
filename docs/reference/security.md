@@ -11,14 +11,19 @@ A launcher-managed Pi session uses these host-backed resources:
 | Host resource | Container path | Access |
 | --- | --- | --- |
 | Selected workspace | `/workspace` | Read-write |
-| Selected profile | `/profile` | Read-write |
+| Selected profile | `/profile` | Read-write base mount |
+| Profile network configuration | `/profile/profile.json` | Read-only nested over-mount |
+| Managed SSH credential directory, when present | `/profile/credentials/ssh` | Read-only nested over-mount |
 | Shared directory, when enabled | `/shared` | Read-write |
 | Selected global skills | `/skills/<name>` | Read-only |
 | Host CA bundle | `/etc/ssl/certs/ca-certificates.crt` | Read-only |
 | Private per-launch snapshot request directory | `/run/pi-run-snapshot` | Read-write control channel |
 
-Profile-local skills are part of the writable profile mount. Core skills and
-baseline extensions come from the runtime image. The snapshot request channel
+Profile-local skills and Pi-owned provider, settings, and session state remain
+part of the writable profile mount. Normal sessions cannot rewrite the active
+profile network configuration or managed SSH credentials through their nested
+over-mounts. Core skills and baseline extensions come from the runtime image.
+The snapshot request channel
 contains a bounded request and token; it does not expose the repository,
 recovery secrets, S3 credentials, Docker socket, or complete Pi-Run home.
 
@@ -53,9 +58,10 @@ to the invoking host UID/GID, updates its container home when needed, configures
 profile SSH credentials, and executes Pi through `gosu node`.
 
 This limits runtime privilege but does not make writable mounts disposable. The
-container shares the host kernel and normal sessions share host networking, so
-it is neither a virtual machine nor protection against every kernel or container
-runtime vulnerability.
+container shares the host kernel, and the default backend shares host networking,
+so it is neither a virtual machine nor protection against every kernel or
+container runtime vulnerability. Alternate network backends narrow routes, not
+the shared-kernel or writable-mount boundary.
 
 The host user must have Docker-daemon access to launch Pi-Run. That access is
 itself highly privileged. Pi-Run deliberately withholds the Docker socket from
@@ -64,26 +70,89 @@ boundary.
 
 ## Networking and service authority
 
-Normal sessions use `--network host`. Loopback can reach Docker-host services,
-and surrounding routes can expose LAN, internet, cloud, cluster, and database
-endpoints. Package managers, web tools, service clients, and generated commands
-can transfer data over that network.
+The profile's `host` mode produces the `docker-host` backend and uses Docker
+`--network host`. Loopback can reach Docker-host services, and surrounding
+routes can expose LAN, internet, cloud, cluster, and database endpoints.
+Profiles created by stable v0.6 releases may omit `network`; omission retains
+this compatibility behavior. New profiles state `host` explicitly.
 
-Pi-Run does not apply an internal network allowlist. Service authentication and
-remote authorization remain independent controls. A credential, kubeconfig,
-client binary, or reachable port is capability—not user permission for an
-unrelated operation.
+`offline` produces `docker-offline` and maps strictly to Docker `--network none`
+for every Pi container in that launch. `restricted` produces
+`docker-restricted` and uses an ephemeral version-matched sidecar. Normal launch
+arguments cannot override the profile's network authority.
 
-Snapshot and SSH management containers can use different network modes for their
-bounded operations. Consult their task/reference guides rather than applying
-normal-session assumptions to every host command.
+Before restricted startup, the launcher runs the runtime image's policy
+resolver with Docker network-none, all capabilities dropped, the host UID/GID,
+and the selected profile mounted read-only. The resolver derives exact TCP/443
+model rules from `auth.json`, `models.json`, `settings.json`, and bundled
+provider metadata, validates complete matching managed SSH pairs into exact
+hostname or IPv4 `/32` TCP/22 rules, then normalizes manual `host`, `domain`,
+`cidr`, and public-internet rules from `profile.json`. It emits destination and
+port structure, never credential values, private or public keys, fingerprints,
+URL paths, headers, or query strings.
+
+Endpoint derivation must be deterministic before startup. Azure and Google
+Vertex require an explicit HTTPS provider `baseUrl` in `models.json`.
+Credential- or token-derived enterprise GitHub Copilot endpoints and Amazon
+Bedrock endpoints selected through a stored region, AWS profile, or ARN model
+are rejected with provider-specific diagnostics. These diagnostics omit
+credential, endpoint, account, and region values. Static personal Copilot and
+bundled Bedrock endpoint metadata remain accepted when no dynamic override applies.
+
+The launcher validates the output again, combines and deduplicates rules, and
+writes private `rules.json` staging with mode `0600`. Only the sidecar receives
+that read-only file. Workspaces containing `/tmp`, including `/` and `/tmp`, are
+rejected so staging cannot appear through `/workspace`. `profile.json` and the
+managed SSH credential directory are separately over-mounted read-only in Pi,
+while `auth.json`, `models.json`, and `settings.json` remain writable for Pi's
+supported workflows.
+
+The sidecar receives `NET_ADMIN`; Pi does not. Both share one network namespace
+whose IPv4 and IPv6 output policies default to deny. Squid permits CONNECT when
+a requested exact host, domain suffix, CIDR, or public-internet destination and
+TCP port match a rule. CIDR and internet rules also allow matching direct TCP
+from Pi's mapped UID. Internet rules exclude private and special-purpose ranges;
+explicit CIDRs can separately grant selected private networks. External UDP,
+alternate DNS, unlisted destinations, gateway access, direct TCP loopback other
+than the local proxy, link-local, multicast, unspecified, and configured
+adjacent ports remain blocked.
+
+The launcher supplies HTTP proxy variables and enables Node's environment proxy
+support. In restricted mode it also generates an OpenSSH `ProxyCommand` using
+`nc -X connect`, so SSH, SCP, SFTP, Git-over-SSH, and OpenSSH-based Ansible use
+the sidecar. Other hostname/domain clients must support HTTP CONNECT; arbitrary
+non-proxy-aware TCP clients require an applicable CIDR or public-internet rule.
+There is no TLS or application-protocol interception.
+
+Resolver failure, invalid output, empty policy, sidecar startup failure, and
+readiness failure all prevent Pi from starting without a host-network retry.
+The normalized policy is frozen for that launcher process, including
+snapshot-triggered Pi restarts. Startup reports exact model and manual TCP
+rules plus the inferred SSH target count and port; it does not print the SSH
+inventory. Profile or managed-key changes can influence a later launch but
+cannot change the active firewall or proxy policy.
+
+Offline or restricted networking does not hide credentials, undo prior writes,
+or turn the container into a VM. An allowed endpoint can receive arbitrary data;
+public-internet TCP authority is broad exfiltration authority even if an
+enterprise firewall independently blocks some traffic. Authentication and
+remote authorization remain separate controls. A credential, kubeconfig,
+client, or reachable port is capability—not user permission for an unrelated
+operation.
+
+Snapshot and SSH-key management containers can use different network modes for
+their bounded operations. An offline or restricted Pi container may request a
+snapshot whose separate host-managed operation uses its documented backend.
+Consult those task/reference guides rather than applying session networking
+assumptions to every host command.
 
 ## Profile, shared, and skill exposure
 
 The selected profile is Pi's configuration directory and can include
 `auth.json`, model settings, Git configuration, SSH keys, local skills, Guardian
-logs, and sessions. It is writable as a whole so Pi can safely update files
-through atomic replacement.
+logs, and sessions. Most Pi-owned state remains writable for atomic replacement;
+`profile.json` is separately mounted read-only because it defines launch-time
+resource and network authority.
 
 `/shared` is writable when `resources.shared` is `read-write`. Content is not
 automatically loaded as context, but any available tool can read or change it.

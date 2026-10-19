@@ -49,11 +49,29 @@ resolve_profile_directory() {
     resolve_named_profile_directory "${PROFILE}"
 }
 
-validate_profile_config() {
-    local profile_dir="$1"
+validate_profile_config_file() {
+    local config="$1"
     local name="$2"
-    local config="${profile_dir}/profile.json"
     if ! jq -e --arg name "${name}" '
+        def hostname:
+            type == "string" and length <= 253 and
+            test("^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$") and
+            (test("^([0-9]{1,3}\\.){3}[0-9]{1,3}$") | not);
+        def ports:
+            (has("tcpPorts") | not) or
+            ((.tcpPorts | type == "array") and (.tcpPorts | length > 0) and
+             ((.tcpPorts | unique | length) == (.tcpPorts | length)) and
+             all(.tcpPorts[]; type == "number" and floor == . and . >= 1 and . <= 65535));
+        def rule:
+            type == "object" and
+            ((keys - ["cidr", "domain", "host", "internet", "tcpPorts"]) | length == 0) and
+            ([has("host"), has("domain"), has("cidr"), has("internet")] | map(select(.)) | length == 1) and
+            ((has("host") | not) or (.host | hostname)) and
+            ((has("domain") | not) or (.domain | hostname)) and
+            ((has("cidr") | not) or
+                (.cidr | type == "string" and test("^[0-9A-Fa-f:.]+/[0-9]{1,3}$"))) and
+            ((has("internet") | not) or .internet == true) and
+            ports;
         .schemaVersion == 1 and
         .name == $name and
         ((has("skills") | not) or .skills == null or
@@ -64,12 +82,33 @@ validate_profile_config() {
                 test("^[a-z0-9]+(-[a-z0-9]+)*$") and
                 . != "pi-run" and . != "profile-management"))) and
         (has("guardian") | not) and
+        ((has("network") | not) or
+            ((.network | type == "object") and
+             (if .network.mode == "restricted" then
+                ((.network | keys) == ["mode"] or
+                 ((.network | keys) == ["allow", "mode"] and
+                  (.network.allow | type == "array") and
+                  ((.network.allow | unique | length) == (.network.allow | length)) and
+                  ([.network.allow[] | select(has("internet"))] | length <= 1) and
+                  all(.network.allow[]; rule)))
+              else
+                ((.network.mode == "host" or .network.mode == "offline") and
+                 (.network | keys) == ["mode"])
+              end))) and
         (.resources | type == "object") and
         (.resources | keys == ["shared"]) and
         (.resources.shared == "disabled" or .resources.shared == "read-write")
     ' "${config}" >/dev/null; then
-        fail "invalid profile configuration: ${config}"
+        return 1
     fi
+}
+
+validate_profile_config() {
+    local profile_dir="$1"
+    local name="$2"
+    local config="${profile_dir}/profile.json"
+    validate_profile_config_file "${config}" "${name}" \
+        || fail "invalid profile configuration: ${config}"
 }
 
 validate_profile_definition_files() {
@@ -158,6 +197,273 @@ set_default_profile() {
     mv "${staging}" "${config}"
     trap - RETURN
     printf 'Default profile: %s\n' "${name}"
+}
+
+show_profile_network() {
+    local profile_dir config mode source rule_count
+    profile_dir="$(resolve_profile_directory)"
+    validate_profile_config "${profile_dir}" "${PROFILE}"
+    validate_profile_definition_files "${profile_dir}"
+    config="${profile_dir}/profile.json"
+    if jq -e 'has("network")' "${config}" >/dev/null; then
+        mode="$(jq -r '.network.mode' "${config}")"
+        source=configured
+    else
+        mode=host
+        source="compatibility default"
+    fi
+    rule_count="$(jq -r '(.network.allow // []) | length' "${config}")"
+    printf 'Profile: %s\nNetwork mode: %s (%s)\nManual allow rules: %s\n' \
+        "${PROFILE}" "${mode}" "${source}" "${rule_count}"
+}
+
+set_profile_network_mode() {
+    local mode="$1" discard_rules="$2"
+    local profile_dir config current_mode has_network rule_count staging profile_lock_fd
+    case "${mode}" in
+        host|offline|restricted) ;;
+        *) fail "invalid network mode: ${mode}" ;;
+    esac
+    if [[ "${discard_rules}" == true && "${mode}" == restricted ]]; then
+        fail "--discard-rules is valid only with host or offline mode"
+    fi
+
+    profile_dir="$(resolve_profile_directory)"
+    exec {profile_lock_fd}<"${profile_dir}" \
+        || fail "could not open profile directory for locking: ${profile_dir}"
+    flock -x "${profile_lock_fd}" \
+        || fail "could not lock profile directory: ${profile_dir}"
+    validate_profile_config "${profile_dir}" "${PROFILE}"
+    validate_profile_definition_files "${profile_dir}"
+    config="${profile_dir}/profile.json"
+    current_mode="$(jq -r '.network.mode // "host"' "${config}")"
+    has_network="$(jq -r 'has("network")' "${config}")"
+    rule_count="$(jq -r '(.network.allow // []) | length' "${config}")"
+
+    if [[ "${mode}" != restricted && "${rule_count}" -gt 0 && "${discard_rules}" == false ]]; then
+        fail "network mode change would discard ${rule_count} manual allow rule(s); use --discard-rules"
+    fi
+    if [[ "${current_mode}" == "${mode}" && "${has_network}" == true ]]; then
+        printf 'Network mode for %s: %s (unchanged)\n' "${PROFILE}" "${mode}"
+        printf 'Changes apply to new launches; running sessions are unchanged.\n'
+        return 0
+    fi
+
+    staging="${profile_dir}/.profile.json.tmp.$$"
+    [[ ! -e "${staging}" && ! -L "${staging}" ]] \
+        || fail "profile configuration staging path already exists: ${staging}"
+    trap 'rm -f "${staging:-}"' RETURN
+    if ! jq --arg mode "${mode}" '.network = {mode: $mode}' "${config}" > "${staging}"; then
+        rm -f "${staging}"
+        fail "could not stage profile network mode"
+    fi
+    chmod 0600 "${staging}"
+    if ! validate_profile_config_file "${staging}" "${PROFILE}"; then
+        rm -f "${staging}"
+        fail "staged profile network configuration is invalid"
+    fi
+    mv "${staging}" "${config}"
+    trap - RETURN
+    printf 'Network mode for %s: %s\n' "${PROFILE}" "${mode}"
+    if [[ "${rule_count}" -gt 0 ]]; then
+        printf 'Discarded manual allow rules: %s\n' "${rule_count}"
+    fi
+    printf 'Changes apply to new launches; running sessions are unchanged.\n'
+}
+
+list_profile_network_rules() {
+    local profile_dir config rule_count
+    profile_dir="$(resolve_profile_directory)"
+    validate_profile_config "${profile_dir}" "${PROFILE}"
+    validate_profile_definition_files "${profile_dir}"
+    config="${profile_dir}/profile.json"
+    rule_count="$(jq -r '(.network.allow // []) | length' "${config}")"
+    printf 'Profile: %s\nManual allow rules: %s\n' "${PROFILE}" "${rule_count}"
+    jq -r '
+        def selector:
+            if .host then "host=" + .host
+            elif .domain then "domain=" + .domain
+            elif .cidr then "cidr=" + .cidr
+            else "internet=public"
+            end;
+        def ports:
+            if .tcpPorts then (.tcpPorts | sort | map(tostring) | join("|"))
+            else "all"
+            end;
+        (.network.allow // [])[] | selector + " tcp=" + ports
+    ' "${config}"
+}
+
+validate_network_rule_hostname() {
+    local value="$1"
+    jq -en --arg value "${value}" '
+        $value | type == "string" and length <= 253 and
+        test("^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$") and
+        (test("^([0-9]{1,3}\\.){3}[0-9]{1,3}$") | not)
+    ' >/dev/null
+}
+
+normalize_network_rule_cidr() {
+    local value="$1" image output
+    image="${PI_RUN_IMAGE:-${DEFAULT_IMAGE}}"
+    docker image inspect "${image}" >/dev/null 2>&1 \
+        || fail "runtime image is unavailable for CIDR normalization: ${image}"
+    if ! output="$(docker run --rm \
+        --pull never \
+        --network none \
+        --user "$(id -u):$(id -g)" \
+        --cap-drop=ALL \
+        --security-opt=no-new-privileges \
+        --read-only \
+        --entrypoint /usr/local/bin/pi-run-network-policy-resolver \
+        "${image}" --normalize-cidr "${value}")"; then
+        fail "invalid or blocked CIDR network rule"
+    fi
+    [[ -n "${output}" && "${output}" != *$'\n'* &&
+       "${output}" =~ ^[0-9A-Fa-f:.]+/[0-9]{1,3}$ ]] \
+        || fail "CIDR normalizer returned invalid output"
+    printf '%s\n' "${output}"
+}
+
+change_profile_network_rule() {
+    local action="$1" selector="$2" destination="$3"
+    shift 3
+    local all_tcp=false argument port ports_json rule profile_dir config current_mode
+    local match_count staging profile_lock_fd verb
+    local -a ports=()
+    declare -A seen_ports=()
+
+    case "${action}" in add|remove) ;; *) fail "invalid network rule action: ${action}" ;; esac
+    case "${selector}" in
+        host|domain)
+            destination="${destination,,}"
+            validate_network_rule_hostname "${destination}" \
+                || fail "invalid ${selector} network rule: ${destination}"
+            ;;
+        cidr)
+            destination="$(normalize_network_rule_cidr "${destination}")"
+            ;;
+        internet)
+            [[ -z "${destination}" ]] || fail "internet network rules do not take a destination"
+            ;;
+        *) fail "unsupported network rule selector: ${selector}" ;;
+    esac
+
+    while [[ $# -gt 0 ]]; do
+        argument="$1"
+        case "${argument}" in
+            --tcp-port)
+                [[ $# -ge 2 ]] || fail "--tcp-port requires a value"
+                port="$2"
+                if [[ ! "${port}" =~ ^[0-9]{1,5}$ ]] ||
+                   (( 10#${port} < 1 || 10#${port} > 65535 )); then
+                    fail "invalid TCP port: ${port}"
+                fi
+                port="$((10#${port}))"
+                [[ -z "${seen_ports[${port}]:-}" ]] || fail "duplicate TCP port: ${port}"
+                seen_ports["${port}"]=1
+                ports+=("${port}")
+                shift 2
+                ;;
+            --all-tcp)
+                [[ "${all_tcp}" == false ]] || fail "duplicate --all-tcp"
+                all_tcp=true
+                shift
+                ;;
+            *) fail "unknown network rule option: ${argument}" ;;
+        esac
+    done
+    if [[ "${all_tcp}" == true && ${#ports[@]} -gt 0 ]]; then
+        fail "--all-tcp cannot be combined with --tcp-port"
+    fi
+    if [[ "${selector}" == internet && "${action}" == remove ]]; then
+        [[ "${all_tcp}" == false && ${#ports[@]} -eq 0 ]] \
+            || fail "internet rule removal does not take port options"
+    elif [[ "${all_tcp}" == false && ${#ports[@]} -eq 0 ]]; then
+        fail "specify at least one --tcp-port or --all-tcp"
+    fi
+
+    if [[ "${selector}" == internet && "${action}" == remove ]]; then
+        rule=''
+    elif [[ "${all_tcp}" == true ]]; then
+        if [[ "${selector}" == internet ]]; then
+            rule='{"internet":true}'
+        else
+            rule="$(jq -cn --arg selector "${selector}" --arg destination "${destination}" \
+                '{($selector): $destination}')"
+        fi
+    else
+        ports_json="$(printf '%s\n' "${ports[@]}" | jq -s 'sort')"
+        if [[ "${selector}" == internet ]]; then
+            rule="$(jq -cn --argjson ports "${ports_json}" \
+                '{internet: true, tcpPorts: $ports}')"
+        else
+            rule="$(jq -cn --arg selector "${selector}" --arg destination "${destination}" \
+                --argjson ports "${ports_json}" '{($selector): $destination, tcpPorts: $ports}')"
+        fi
+    fi
+
+    profile_dir="$(resolve_profile_directory)"
+    exec {profile_lock_fd}<"${profile_dir}" \
+        || fail "could not open profile directory for locking: ${profile_dir}"
+    flock -x "${profile_lock_fd}" \
+        || fail "could not lock profile directory: ${profile_dir}"
+    validate_profile_config "${profile_dir}" "${PROFILE}"
+    validate_profile_definition_files "${profile_dir}"
+    config="${profile_dir}/profile.json"
+    current_mode="$(jq -r '.network.mode // "host"' "${config}")"
+    [[ "${current_mode}" == restricted ]] \
+        || fail "manual network rules require restricted mode; current mode is ${current_mode}"
+    if [[ "${selector}" == internet ]]; then
+        match_count="$(jq -r '[.network.allow[]? | select(.internet == true)] | length' "${config}")"
+        if [[ "${action}" == remove && "${match_count}" -gt 0 ]]; then
+            rule="$(jq -c '.network.allow[] | select(.internet == true)' "${config}")"
+        fi
+    else
+        match_count="$(jq -r --argjson rule "${rule}" '
+            def canonical: if .tcpPorts then .tcpPorts |= sort else . end;
+            [(.network.allow // [])[] | select((. | canonical) == $rule)] | length
+        ' "${config}")"
+    fi
+    if [[ "${action}" == add && "${match_count}" -gt 0 ]]; then
+        fail "manual network rule already exists"
+    fi
+    if [[ "${action}" == remove && "${match_count}" -eq 0 ]]; then
+        fail "manual network rule does not exist"
+    fi
+
+    staging="${profile_dir}/.profile.json.tmp.$$"
+    [[ ! -e "${staging}" && ! -L "${staging}" ]] \
+        || fail "profile configuration staging path already exists: ${staging}"
+    trap 'rm -f "${staging:-}"' RETURN
+    if [[ "${action}" == add ]]; then
+        jq --argjson rule "${rule}" \
+            '.network.allow = ((.network.allow // []) + [$rule])' "${config}" > "${staging}"
+    elif [[ "${selector}" == internet ]]; then
+        jq '
+            .network.allow = [(.network.allow // [])[] | select(.internet != true)] |
+            if (.network.allow | length) == 0 then del(.network.allow) else . end
+        ' "${config}" > "${staging}"
+    else
+        jq --argjson rule "${rule}" '
+            def canonical: if .tcpPorts then .tcpPorts |= sort else . end;
+            .network.allow = [(.network.allow // [])[] | select((. | canonical) != $rule)] |
+            if (.network.allow | length) == 0 then del(.network.allow) else . end
+        ' "${config}" > "${staging}"
+    fi
+    chmod 0600 "${staging}"
+    if ! validate_profile_config_file "${staging}" "${PROFILE}"; then
+        rm -f "${staging}"
+        fail "staged manual network rule is invalid"
+    fi
+    mv "${staging}" "${config}"
+    trap - RETURN
+    port="$(jq -r 'if .tcpPorts then (.tcpPorts | map(tostring) | join("|")) else "all" end' <<< "${rule}")"
+    [[ "${action}" == add ]] && verb=Added || verb=Removed
+    [[ "${selector}" == internet ]] && destination=public
+    printf '%s manual network rule for %s: %s=%s tcp=%s\n' \
+        "${verb}" "${PROFILE}" "${selector}" "${destination}" "${port}"
+    printf 'Changes apply to new launches; running sessions are unchanged.\n'
 }
 
 run_profile_ssh_key_command() {

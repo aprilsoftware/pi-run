@@ -17,6 +17,12 @@ Usage:
   pi-run [--home <path>] profile list
   pi-run [--home <path>] profile default [<name>]
   pi-run [--home <path>] profile create <name> [--from <profile>]
+  pi-run [--home <path>] [--profile <name>] network show
+  pi-run [--home <path>] [--profile <name>] network mode <host|offline|restricted> [--discard-rules]
+  pi-run [--home <path>] [--profile <name>] network allow list
+  pi-run [--home <path>] [--profile <name>] network allow <add|remove> <host|domain|cidr> <value> (--tcp-port <port>...|--all-tcp)
+  pi-run [--home <path>] [--profile <name>] network allow add internet (--tcp-port <port>...|--all-tcp)
+  pi-run [--home <path>] [--profile <name>] network allow remove internet
   pi-run [--home <path>] [--profile <name>] skill list
   pi-run [--home <path>] workspace list
   pi-run [--home <path>] workspace link <workspace-id> <path>
@@ -46,7 +52,7 @@ Examples:
   pi-run doctor
   pi-run upgrade
   pi-run upgrade --check
-  pi-run upgrade v0.6.3
+  pi-run upgrade v0.7.2
   pi-run snapshot
   pi-run home
 EOF
@@ -68,6 +74,12 @@ validate_profile_name() {
     local name="$1"
     [[ "${name}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] \
         || fail "invalid profile name: ${name}"
+}
+
+path_is_within() {
+    local path="${1%/}" root="${2%/}"
+    [[ -n "${root}" ]] || root=/
+    [[ "${root}" == / || "${path}" == "${root}" || "${path}" == "${root}/"* ]]
 }
 
 validate_skill_name() {
@@ -92,6 +104,7 @@ PI_RUN_VERSION="$(tr -d '\r\n' < "${VERSION_FILE}")"
 [[ "${PI_RUN_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
     || fail "installation has an invalid VERSION: ${VERSION_FILE}"
 DEFAULT_IMAGE="ghcr.io/aprilsoftware/pi-run:${PI_RUN_VERSION}"
+DEFAULT_EGRESS_IMAGE="ghcr.io/aprilsoftware/pi-run-egress:${PI_RUN_VERSION}"
 CA_BUNDLE="/etc/ssl/certs/ca-certificates.crt"
 PROFILE_TEMPLATE_ROOT="${INSTALL_ROOT}/templates/profiles"
 PI_RUN_LIB_ROOT="${INSTALL_ROOT}/lib/pi-run"
@@ -356,7 +369,10 @@ fi
 case "${COMMAND}" in
     version)
         [[ $# -eq 1 ]] || usage
-        printf 'pi-run v%s\nruntime %s\n' "${PI_RUN_VERSION}" "${PI_RUN_IMAGE:-${DEFAULT_IMAGE}}"
+        printf 'pi-run v%s\nruntime %s\negress %s\n' \
+            "${PI_RUN_VERSION}" \
+            "${PI_RUN_IMAGE:-${DEFAULT_IMAGE}}" \
+            "${PI_RUN_EGRESS_IMAGE:-${DEFAULT_EGRESS_IMAGE}}"
         exit 0
         ;;
     machine-id)
@@ -425,6 +441,55 @@ case "${COMMAND}" in
             *)
                 usage
                 ;;
+        esac
+        exit 0
+        ;;
+    network)
+        initialize_home
+        require_jq
+        resolve_configured_profile true
+        case "${2:-}" in
+            show)
+                [[ $# -eq 2 ]] || usage
+                show_profile_network
+                ;;
+            mode)
+                if [[ $# -eq 3 ]]; then
+                    set_profile_network_mode "$3" false
+                elif [[ $# -eq 4 && "$4" == --discard-rules ]]; then
+                    set_profile_network_mode "$3" true
+                else
+                    usage
+                fi
+                ;;
+            allow)
+                case "${3:-}" in
+                    list)
+                        [[ $# -eq 3 ]] || usage
+                        list_profile_network_rules
+                        ;;
+                    add)
+                        if [[ "${4:-}" == internet ]]; then
+                            [[ $# -ge 5 ]] || usage
+                            change_profile_network_rule add internet "" "${@:5}"
+                        else
+                            [[ $# -ge 6 ]] || usage
+                            change_profile_network_rule add "$4" "$5" "${@:6}"
+                        fi
+                        ;;
+                    remove)
+                        if [[ "${4:-}" == internet ]]; then
+                            [[ $# -eq 4 ]] || usage
+                            change_profile_network_rule remove internet ""
+                        else
+                            [[ $# -ge 6 ]] || usage
+                            change_profile_network_rule remove "$4" "$5" "${@:6}"
+                        fi
+                        ;;
+                    *) usage ;;
+                esac
+                ;;
+            *) usage ;;
         esac
         exit 0
         ;;
@@ -605,15 +670,131 @@ validate_profile_definition_files "${PROFILE_DIR}"
 
 [[ -f "${CA_BUNDLE}" ]] || fail "CA bundle does not exist: ${CA_BUNDLE}"
 
+HOST_UID="$(id -u)"
+HOST_GID="$(id -g)"
+IMAGE="${PI_RUN_IMAGE:-${DEFAULT_IMAGE}}"
+EGRESS_IMAGE="${PI_RUN_EGRESS_IMAGE:-${DEFAULT_EGRESS_IMAGE}}"
+NETWORK_MODE="$(jq -r '.network.mode // "host"' "${PROFILE_CONFIG}")"
+NETWORK_BACKEND="docker-${NETWORK_MODE}"
+MODEL_RULES_DISPLAY="none"
+SSH_RULES_DISPLAY="none"
+MANUAL_RULES_DISPLAY="none"
+POLICY_JSON=""
+if [[ "${NETWORK_MODE}" == restricted ]]; then
+    if path_is_within /tmp "${WORKSPACE}"; then
+        fail "restricted runtime policy staging would overlap workspace: ${WORKSPACE}"
+    fi
+    if ! RESOLVER_OUTPUT="$(docker run --rm --pull never \
+        --network none --cap-drop=ALL --security-opt=no-new-privileges \
+        --user "${HOST_UID}:${HOST_GID}" \
+        --mount "type=bind,src=${PROFILE_DIR},dst=/profile,readonly" \
+        --entrypoint /usr/local/bin/pi-run-network-policy-resolver "${IMAGE}")"; then
+        fail "restricted network policy resolution failed"
+    fi
+    if ! RESOLVED_POLICY="$(jq -cse '
+        def hostname:
+            type == "string" and length <= 253 and
+            test("^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$") and
+            (test("^([0-9]{1,3}\\.){3}[0-9]{1,3}$") | not);
+        def ports:
+            (has("tcpPorts") | not) or
+            ((.tcpPorts | type == "array") and (.tcpPorts | length > 0) and
+             ((.tcpPorts | unique | length) == (.tcpPorts | length)) and
+             all(.tcpPorts[]; type == "number" and floor == . and . >= 1 and . <= 65535));
+        def rule:
+            type == "object" and
+            ((keys - ["cidr", "domain", "host", "internet", "tcpPorts"]) | length == 0) and
+            ([has("host"), has("domain"), has("cidr"), has("internet")] | map(select(.)) | length == 1) and
+            ((has("host") | not) or (.host | hostname)) and
+            ((has("domain") | not) or (.domain | hostname)) and
+            ((has("cidr") | not) or
+                (.cidr | type == "string" and test("^[0-9A-Fa-f:.]+/[0-9]{1,3}$"))) and
+            ((has("internet") | not) or .internet == true) and ports;
+        if length == 1 and (.[0] |
+            type == "object" and keys == ["manualRules", "modelRules", "schemaVersion", "sshRules"] and
+            .schemaVersion == 1 and (.modelRules | type == "array") and
+            (.sshRules | type == "array") and (.manualRules | type == "array") and
+            all(.modelRules[]; keys == ["host", "tcpPorts"] and
+                (.host | hostname) and .tcpPorts == [443]) and
+            all(.sshRules[]; rule and (has("domain") | not) and .tcpPorts == [22] and
+                (has("host") or (.cidr | test("^(?:[0-9]{1,3}\\.){3}[0-9]{1,3}/32$")))) and
+            all(.manualRules[]; rule) and
+            ([.manualRules[] | select(has("internet"))] | length <= 1) and
+            ((.modelRules | length) + (.sshRules | length) + (.manualRules | length) > 0))
+        then .[0] else error("invalid policy") end
+    ' <<< "${RESOLVER_OUTPUT}" 2>/dev/null)"; then
+        fail "restricted network policy resolver returned invalid output"
+    fi
+    POLICY_JSON="$(jq -c '{
+        schemaVersion: 1,
+        rules: ((.modelRules + .sshRules + .manualRules) | unique_by(tojson) | sort_by(tojson))
+    }' <<< "${RESOLVED_POLICY}")"
+    MODEL_RULES_DISPLAY="$(jq -r '
+        if (.modelRules | length) == 0 then "none" else
+            [.modelRules[] | (.host + ":" + (.tcpPorts | map(tostring) | join("|")))] | join(",")
+        end
+    ' <<< "${RESOLVED_POLICY}")"
+    SSH_RULES_DISPLAY="$(jq -r '
+        if (.sshRules | length) == 0 then "none"
+        elif (.sshRules | length) == 1 then "1 managed target on port 22"
+        else "\(.sshRules | length) managed targets on port 22"
+        end
+    ' <<< "${RESOLVED_POLICY}")"
+    MANUAL_RULES_DISPLAY="$(jq -r '
+        def ports: if has("tcpPorts") then (.tcpPorts | map(tostring) | join("|")) else "*" end;
+        if (.manualRules | length) == 0 then "none" else
+            [.manualRules[] |
+                (if has("host") then "host=" + .host
+                 elif has("domain") then "domain=" + .domain
+                 elif has("cidr") then "cidr=" + .cidr
+                 else "internet=public" end) + ":" + ports] | join(",")
+        end
+    ' <<< "${RESOLVED_POLICY}")"
+fi
+
 SESSION_DIR_HOST="${PROFILE_DIR}/sessions/${WORKSPACE_ID}"
 SESSION_DIR_CONTAINER="/profile/sessions/${WORKSPACE_ID}"
 mkdir -p "${SESSION_DIR_HOST}"
 prepare_snapshot_launch_request
-trap cleanup_snapshot_launch_request EXIT
+SIDECAR_NAME=""
+SIDECAR_ID_FILE=""
+EGRESS_POLICY_DIR=""
+cleanup_launch_resources() {
+    local cleanup_failed=false sidecar_id=""
+    if [[ -n "${SIDECAR_ID_FILE}" && -s "${SIDECAR_ID_FILE}" ]]; then
+        sidecar_id="$(< "${SIDECAR_ID_FILE}")"
+        if [[ ! "${sidecar_id}" =~ ^[0-9a-f]{12,64}$ ]] ||
+           ! docker rm -f "${sidecar_id}" >/dev/null 2>&1; then
+            echo "pi-run: warning: could not remove restricted egress sidecar: ${SIDECAR_NAME}" >&2
+            cleanup_failed=true
+        fi
+    fi
+    if [[ -n "${EGRESS_POLICY_DIR}" ]]; then
+        if rm -rf -- "${EGRESS_POLICY_DIR}"; then
+            EGRESS_POLICY_DIR=""
+        else
+            echo "pi-run: warning: could not remove restricted egress policy copy" >&2
+            cleanup_failed=true
+        fi
+    fi
+    cleanup_snapshot_launch_request || cleanup_failed=true
+    [[ "${cleanup_failed}" == false ]]
+}
+trap cleanup_launch_resources EXIT
 
-HOST_UID="$(id -u)"
-HOST_GID="$(id -g)"
-IMAGE="${PI_RUN_IMAGE:-${DEFAULT_IMAGE}}"
+case "${NETWORK_MODE}" in
+    host) DOCKER_NETWORK_MODE=host ;;
+    offline) DOCKER_NETWORK_MODE=none ;;
+    restricted)
+        SIDECAR_NAME="pi-egress-${PROFILE}-$$"
+        DOCKER_NETWORK_MODE="container:${SIDECAR_NAME}"
+        EGRESS_POLICY_DIR="$(mktemp -d /tmp/pi-run-egress.XXXXXX)"
+        SIDECAR_ID_FILE="${EGRESS_POLICY_DIR}/sidecar.cid"
+        chmod 0700 "${EGRESS_POLICY_DIR}"
+        printf '%s\n' "${POLICY_JSON}" > "${EGRESS_POLICY_DIR}/rules.json"
+        chmod 0600 "${EGRESS_POLICY_DIR}/rules.json"
+        ;;
+esac
 
 DOCKER_ARGS=(
     --rm
@@ -625,10 +806,11 @@ DOCKER_ARGS=(
     --cap-add=SETGID
     --cap-add=DAC_READ_SEARCH
     --security-opt=no-new-privileges
-    --network host
+    --network "${DOCKER_NETWORK_MODE}"
     --workdir /workspace
     --mount "type=bind,src=${WORKSPACE},dst=/workspace"
     --mount "type=bind,src=${PROFILE_DIR},dst=/profile"
+    --mount "type=bind,src=${PROFILE_CONFIG},dst=/profile/profile.json,readonly"
     --mount "type=bind,src=${SNAPSHOT_LAUNCH_REQUEST_DIR},dst=/run/pi-run-snapshot"
     --mount "type=bind,src=${CA_BUNDLE},dst=/etc/ssl/certs/ca-certificates.crt,readonly"
     --env NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt
@@ -636,11 +818,28 @@ DOCKER_ARGS=(
     --env "HOST_UID=${HOST_UID}"
     --env "HOST_GID=${HOST_GID}"
     --env "PI_RUN_PROFILE=${PROFILE}"
+    --env "PI_RUN_NETWORK_MODE=${NETWORK_MODE}"
     --env PI_RUN_PROFILE_DIR=/profile
     --env PI_CODING_AGENT_DIR=/profile
     --env PI_RUN_SNAPSHOT_REQUEST_DIR=/run/pi-run-snapshot
     --env "PI_RUN_SNAPSHOT_TOKEN=${SNAPSHOT_LAUNCH_REQUEST_TOKEN}"
 )
+SSH_CREDENTIAL_DIR="${PROFILE_DIR}/credentials/ssh"
+if [[ -e "${SSH_CREDENTIAL_DIR}" || -L "${SSH_CREDENTIAL_DIR}" ]]; then
+    [[ -d "${SSH_CREDENTIAL_DIR}" && ! -L "${SSH_CREDENTIAL_DIR}" &&
+       "$(realpath "${SSH_CREDENTIAL_DIR}")" == "${SSH_CREDENTIAL_DIR}" ]] \
+        || fail "SSH credentials must be a contained non-symlink directory: ${SSH_CREDENTIAL_DIR}"
+    DOCKER_ARGS+=(
+        --mount "type=bind,src=${SSH_CREDENTIAL_DIR},dst=/profile/credentials/ssh,readonly"
+    )
+fi
+if [[ "${NETWORK_BACKEND}" == docker-restricted ]]; then
+    DOCKER_ARGS+=(
+        --env HTTPS_PROXY=http://127.0.0.1:3128
+        --env https_proxy=http://127.0.0.1:3128
+        --env NODE_USE_ENV_PROXY=1
+    )
+fi
 
 SHARED_MODE="$(jq -r '.resources.shared' "${PROFILE_CONFIG}")"
 if [[ "${SHARED_MODE}" == "read-write" ]]; then
@@ -694,8 +893,37 @@ done
 
 echo "pi-run: home=${PI_RUN_HOME_RESOLVED}" >&2
 echo "pi-run: profile=${PROFILE} workspace=${WORKSPACE}" >&2
+echo "pi-run: network=${NETWORK_BACKEND}" >&2
+if [[ "${NETWORK_BACKEND}" == docker-restricted ]]; then
+    echo "pi-run: model-tcp=${MODEL_RULES_DISPLAY}" >&2
+    echo "pi-run: ssh-tcp=${SSH_RULES_DISPLAY}" >&2
+    echo "pi-run: manual-tcp=${MANUAL_RULES_DISPLAY}" >&2
+fi
 echo "pi-run: Guardian loaded; review mode starts Off" >&2
 [[ "${SHARED_MODE}" == "read-write" ]] && echo "pi-run: shared=/shared (read-write)" >&2
+
+if [[ "${NETWORK_BACKEND}" == docker-restricted ]]; then
+    if ! docker run -d --name "${SIDECAR_NAME}" \
+        --cidfile "${SIDECAR_ID_FILE}" \
+        --env "PI_RUN_WORKLOAD_UID=${HOST_UID}" \
+        --cap-add NET_ADMIN \
+        --ulimit nofile=4096:4096 \
+        --security-opt no-new-privileges=true \
+        --mount "type=bind,src=${EGRESS_POLICY_DIR}/rules.json,dst=/policy/rules.json,readonly" \
+        "${EGRESS_IMAGE}" >/dev/null; then
+        fail "restricted egress sidecar failed to start"
+    fi
+    [[ -s "${SIDECAR_ID_FILE}" ]] \
+        || fail "restricted egress sidecar did not record its container ID"
+    for _ in $(seq 1 50); do
+        docker exec "${SIDECAR_NAME}" test -f /tmp/pi-run-egress-ready >/dev/null 2>&1 && break
+        sleep 0.2
+    done
+    if ! docker exec "${SIDECAR_NAME}" test -f /tmp/pi-run-egress-ready >/dev/null 2>&1; then
+        docker logs "${SIDECAR_NAME}" >&2 || true
+        fail "restricted egress sidecar did not become ready"
+    fi
+fi
 
 CURRENT_PI_ARGS=("${EXTRA_PI_ARGS[@]}")
 while true; do
@@ -726,7 +954,10 @@ while true; do
         "${SNAPSHOT_LAUNCH_RESTART_SESSION_ID}" "${SNAPSHOT_LAUNCH_RESTART_SESSION_FILE}" >&2
     CURRENT_PI_ARGS=(--session "${SESSION_DIR_CONTAINER}/${SNAPSHOT_LAUNCH_RESTART_SESSION_FILE}")
 done
-cleanup_snapshot_launch_request
+if ! cleanup_launch_resources; then
+    trap - EXIT
+    exit 1
+fi
 trap - EXIT
 if [[ "${SNAPSHOT_LAUNCH_REQUEST_HANDLED}" == false ]]; then
     create_automatic_snapshot_on_exit

@@ -19,6 +19,55 @@ Profile commands and launches must use the same `--home` or `PI_RUN_HOME` when a
 non-default data home is selected. Changing the default does not affect running
 containers, transfer sessions, or move credentials.
 
+## Network mode commands
+
+`network show` reports the selected profile, effective mode, configuration
+source, and manual-rule count. A missing `network` object is reported as the
+v0.6 compatibility host default.
+
+`network mode <host|offline|restricted>` validates the existing profile, locks
+the profile directory against another network-mode command, stages a complete
+replacement, validates it, sets mode `0600`, and atomically replaces
+`profile.json`. An explicit `--profile` selects the target; otherwise the saved
+default is used. Selecting the already-configured mode does not rewrite the
+file.
+
+Host and offline objects cannot contain manual allow rules. A change from
+restricted mode therefore refuses when rules exist. `--discard-rules` with host
+or offline explicitly replaces the network object and reports the number of
+removed rules; it is invalid with restricted mode. No mode command changes an
+active launch.
+
+`network allow list` displays every configured manual host, domain, CIDR, and
+public-internet rule. Host, domain, and CIDR rules can be changed with:
+
+```text
+network allow add <host|domain|cidr> <value> (--tcp-port <port>...|--all-tcp)
+network allow remove <host|domain|cidr> <value> (--tcp-port <port>...|--all-tcp)
+```
+
+The single public-internet rule uses:
+
+```text
+network allow add internet (--tcp-port <port>...|--all-tcp)
+network allow remove internet
+```
+
+Add and remove require restricted mode. Names are normalized to lowercase;
+CIDRs are semantically normalized to their canonical network; ports are sorted
+and must be unique integers from 1 through 65535. All-port authority requires
+`--all-tcp`. Host, domain, and CIDR removal matches the exact normalized
+selector and port set. Internet removal needs no port options because only one
+internet rule may exist. Duplicate additions, absent removals, extra
+internet-removal arguments, and combining explicit ports with `--all-tcp` fail
+without replacing the profile. Existing unrelated rules remain unchanged.
+
+CIDR normalization runs in the locally available, version-matched runtime image
+with network-none, no capabilities, no-new-privileges, a read-only image
+filesystem, the host UID/GID, and no mounts. The command does not implicitly
+pull an unavailable image. Invalid prefixes and CIDRs overlapping blocked
+special ranges fail before the profile is locked or changed.
+
 ## Profile creation semantics
 
 `profile create <name>` always derives from the profile literally named
@@ -43,9 +92,9 @@ Creation does not copy `auth.json`, `models.json`, `settings.json`, `gitconfig`,
 general credentials, SSH keys, sessions, Guardian preferences, or logs. It does
 not overwrite an existing profile or select the new one.
 
-Resource fields are copied as part of `profile.json`, so shared access remains
-enabled or disabled as in the source. Resetting `skills` to `null` selects all
-global skills, even if the source selected fewer.
+Resource and network fields are copied as part of `profile.json`, so shared and
+network exposure remain as in the source. Resetting `skills` to `null` selects
+all global skills, even if the source selected fewer.
 
 ## Profile file layout
 
@@ -87,6 +136,9 @@ The supported resource values are:
   "schemaVersion": 1,
   "name": "operations",
   "skills": null,
+  "network": {
+    "mode": "host"
+  },
   "resources": {
     "shared": "disabled"
   }
@@ -95,15 +147,34 @@ The supported resource values are:
 
 - `skills` may be absent, `null`, or an array of unique valid global skill names.
 - `resources` contains only `shared`, which is `disabled` or `read-write`.
+- `network` may be absent for v0.6 compatibility or contain one mode: `host`,
+  `offline`, or `restricted`. Host and offline objects contain only `mode`.
+- A restricted network object may contain `allow`, an array of unique rules.
+  Each rule has exactly one `host`, `domain`, `cidr`, or `internet` selector and
+  optional unique integer `tcpPorts` from 1 through 65535. Omitted ports mean
+  all TCP. `internet` must be `true`, and at most one internet rule may exist.
+- Host and domain values are lowercase multi-label DNS names. CIDRs are
+  semantically normalized by the isolated resolver; blocked special ranges and
+  malformed prefixes fail restricted startup. Internet rules cover public TCP
+  destinations while excluding private and special-purpose ranges; explicit
+  CIDR rules can separately grant selected private networks.
 - A legacy or arbitrary top-level `guardian` field is not accepted.
+
+The restricted resolver also reads provider identities and endpoints from
+`auth.json`, `models.json`, and `settings.json`, plus bundled metadata. It adds
+model TCP/443 rules independently of `allow`. Unsupported endpoint forms or
+configured providers without resolvable metadata fail closed. This structure is
+resolved and frozen before Pi starts.
 
 Every selected global name must exist, and reserved core names are invalid in
 the global filter. Profile-local names do not belong in that filter; selecting a
-global package with the same active local name creates a conflict. Resource and
-skill changes take effect only on a new launch.
+global package with the same active local name creates a conflict. Resource,
+network, and skill changes take effect only on a new launch.
 
-The host interface has no profile deletion, show, edit, import, export, or
-profile-only backup command. Do not infer commands from direct file ownership.
+The host interface has no profile deletion, general definition show/edit,
+import, export, or profile-only backup command. Network mode and
+host/domain/CIDR/internet rule management use the dedicated commands above. Do
+not infer other commands from direct file ownership.
 
 ## Skill names and metadata
 
@@ -164,8 +235,9 @@ instructions and executable files.
 
 ## Security and lifecycle boundaries
 
-- The selected profile is mounted read-write and exposes all of its private
-  runtime state to that session.
+- The selected profile exposes its private runtime state to that session. Most
+  Pi-owned files are writable; `profile.json` and the managed SSH credential
+  directory are over-mounted read-only.
 - Global skills are read-only only at their package mount; their instructions and
   scripts can still affect other writable or network resources.
 - Profile-local packages are writable and can be changed by the selected run.

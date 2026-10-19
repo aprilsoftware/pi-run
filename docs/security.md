@@ -17,7 +17,7 @@ A normal Pi-Run session can access:
 | Resource | Exposure |
 | --- | --- |
 | Selected workspace | Writable at `/workspace` |
-| Selected profile | Writable at `/profile`, including its credentials and sessions |
+| Selected profile | Available at `/profile`; `profile.json` and managed SSH credentials are read-only, while provider state, settings, and sessions remain writable |
 | Shared directory | Writable at `/shared` when enabled by the profile |
 | Profile-local skills | Writable inside the selected profile |
 | Selected global skills | Mounted read-only |
@@ -31,20 +31,90 @@ workspace mappings, snapshot repositories and recovery secrets, or the Docker
 socket. Technical mounts and operation-specific management containers are
 listed in the [security reference](reference/security.md#normal-session-mounts).
 
-## Account for host networking
+## Choose profile networking
 
-Normal sessions use host networking. From Pi-Run, `localhost` can reach services
-on the Docker host, and LAN, internet, cloud, cluster, or database endpoints may
-also be reachable.
+Networking is selected by the profile, not by normal launch arguments:
 
-Filesystem exposure can therefore be narrow while network authority is broad.
-A credential can turn a reachable endpoint into real access. Do not assume a
-service is disposable because it is called local, dev, or runs in a container.
-Name the actual host, account, cluster, namespace, database, operation, and
-intended effect for administrative work.
+| Profile mode | Session-container network |
+| --- | --- |
+| `host` | Docker host networking, including Docker-host loopback and surrounding routes |
+| `offline` | Docker network-none; loopback remains but there is no external interface |
+| `restricted` | Experimental default-deny namespace with a version-matched egress sidecar |
 
-Pi-Run does not provide a per-session network allowlist. Enforce stronger
-network separation outside Pi-Run when a task requires it.
+A missing `network` object preserves host networking for profiles created by
+stable v0.6 releases. New profiles explicitly contain `"mode": "host"`. A
+restricted profile can add typed rules:
+
+```json
+{
+  "network": {
+    "mode": "restricted",
+    "allow": [
+      {"host": "git.example.com", "tcpPorts": [22, 443]},
+      {"domain": "example.com", "tcpPorts": [80, 443]},
+      {"cidr": "10.20.30.0/24", "tcpPorts": [22, 5432]},
+      {"internet": true}
+    ]
+  }
+}
+```
+
+Each rule has exactly one selector. `host` is an exact lowercase DNS hostname;
+`domain` covers the named apex and all subdomains; `cidr` is a normalized IPv4
+or IPv6 subnet; `internet: true` permits public destinations while excluding
+private and special-purpose ranges. `tcpPorts` contains unique ports from 1
+through 65535. Omitting it permits all TCP ports for that rule. External UDP,
+loopback TCP other than the local proxy, link-local, multicast, unspecified, and
+other reserved destinations remain blocked.
+
+Before the sidecar starts, an offline resolver reads provider identities and
+HTTPS endpoints from the selected profile and adds exact TCP/443 model rules.
+Complete matching managed SSH pairs add exact hostname (or IPv4 `/32`) TCP/22
+rules. The resolver validates those pairs but emits no private material, public
+keys, fingerprints, or provider credential values. Providers whose endpoint
+depends on runtime or credential state fail with a provider-specific diagnostic
+unless a stable endpoint can be established. Azure and Google Vertex currently
+require an explicit HTTPS provider `baseUrl` in `models.json`. Enterprise or token-derived
+GitHub Copilot endpoints and region/profile/ARN-derived Amazon Bedrock endpoints
+are currently unsupported. Diagnostics do not print credential, endpoint,
+account, or region values.
+
+Unsupported or unsafe provider endpoints, invalid manual rules, an empty
+effective policy, malformed output, or sidecar failure prevents Pi from
+starting; there is no host-network fallback.
+
+Host and domain rules are enforced by hostname-aware HTTP CONNECT. HTTP clients
+receive loopback proxy variables, and restricted sessions configure OpenSSH to
+use the same proxy for SSH, SCP, SFTP, Git-over-SSH, and Ansible. Other
+hostname-based clients must support CONNECT. CIDR and public-internet rules are
+also enforced by the firewall and can support ordinary direct TCP clients.
+Public-internet authority is broad exfiltration authority even when enterprise
+firewalls independently restrict it. Pi-Run does not inspect TLS, application
+methods, paths, or transferred data. Any allowed service can receive data by
+design.
+
+The launcher freezes normalized rules in private temporary state mounted only
+into the sidecar. Pi receives no `NET_ADMIN` and cannot read or alter that active
+policy. Startup reports `model-tcp`, `manual-tcp`, and the `ssh-tcp` target
+count and port. It does not print the inferred SSH target inventory; request that
+explicitly with `pi-run ssh-key list`. Stop if the reported authority differs
+from your intent. The managed SSH credential directory is separately
+over-mounted read-only in normal sessions. Changes made through SSH management
+or to `profile.json`, `auth.json`, `models.json`, or `settings.json` can affect
+the next launch but not a running sidecar.
+
+These modes constrain Pi session containers, not every host-managed operation.
+Snapshot and SSH-key management use separately documented containers. Offline
+and restricted modes do not hide selected-profile credentials, undo prior
+writes, revoke remote authority, or turn the shared-kernel container into a
+sandbox or VM.
+
+With host mode, `localhost` can reach Docker-host services, and LAN, internet,
+cloud, cluster, or database endpoints may also be reachable. Filesystem
+exposure can therefore be narrow while network authority is broad. A credential
+can turn a reachable or allowed endpoint into real access. Name the actual host,
+account, cluster, namespace, database, operation, and intended effect for
+administrative work.
 
 ## Treat mounted data as exposed
 
@@ -101,13 +171,15 @@ human review as control layers while keeping technical exposure small.
    workspace mode.
 2. **Use a purpose-specific profile.** Keep unrelated provider accounts, remote
    credentials, sessions, and private skills elsewhere.
-3. **Disable optional resources.** Turn off shared access and filter global
+3. **Choose profile networking.** Use offline mode when no remote access is
+   needed, or restricted rules when their TCP and proxy compatibility limits fit.
+4. **Disable optional resources.** Turn off shared access and filter global
    skills. Restart after changing exposure.
-4. **Review the runtime and project.** Use a trusted image and inspect unfamiliar
+5. **Review the runtime and project.** Use trusted images and inspect unfamiliar
    instructions, extensions, and skill packages.
-5. **State operational boundaries.** Name targets, effects, sequencing, and
+6. **State operational boundaries.** Name targets, effects, sequencing, and
    prohibitions. Reachability and credentials do not grant blanket authority.
-6. **Prepare recovery.** Commit or back up workspace source and use
+7. **Prepare recovery.** Commit or back up workspace source and use
    [encrypted snapshots](snapshots.md) for portable Pi-Run state.
 
 Useful host-side checks are:

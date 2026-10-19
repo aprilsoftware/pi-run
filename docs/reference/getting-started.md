@@ -32,6 +32,17 @@ as `--home` and `--profile` belong before the workspace:
 pi-run --home /private/pi-run --profile operations /srv/runbooks -r
 ```
 
+Network selection belongs to `profile.json`. `host` maps to Docker host
+networking, `offline` maps to Docker network-none, and experimental `restricted`
+resolves model-provider TCP/443 endpoints plus the profile's typed manual rules.
+The removed prerelease `--network` and `--allow-host` launch options are not
+competing policy sources.
+
+The selected profile is re-evaluated on each launch or resume. Its normalized
+restricted policy remains frozen across snapshot-triggered Pi restarts in that
+launcher process. Host-side edits and writable model/authentication settings can
+change the next launch, not the active sidecar.
+
 ## Initialization behavior
 
 `pi-run init` resolves the data home, validates its path, creates missing base
@@ -92,14 +103,14 @@ These checks do not have the same effect:
 
 | Command | Purpose |
 | --- | --- |
-| `pi-run version` | Print the launcher version and selected runtime image. |
+| `pi-run version` | Print the launcher version and selected runtime and egress images. |
 | `pi-run home` | Print the resolved data-home path without initializing it. |
-| `pi-run doctor` | Validate host commands, installation, image, and selected profile; do not repair them. |
+| `pi-run doctor` | Validate host commands, installation, both images, and selected profile; do not repair them. |
 | `pi-run init` | Create missing persistent data-home structure and the initial profile. |
 
 `doctor` reports `OK`, `WARN`, and `FAIL` and exits nonzero when required checks
-fail. An uninitialized home is a warning. Doctor does not pull an image, contact
-a registry, initialize or repair state, or reveal credential contents.
+fail. An uninitialized home is a warning. Doctor does not pull images, contact a
+registry, initialize or repair state, or reveal credential contents.
 
 When checking another profile or data home, select it explicitly:
 
@@ -130,6 +141,10 @@ the host CA bundle, skills, and session paths. On launch it reports:
 ```text
 pi-run: home=<resolved-data-home>
 pi-run: profile=<profile> workspace=<resolved-workspace>
+pi-run: network=<docker-host|docker-offline|docker-restricted>
+pi-run: model-tcp=<provider-host>:443[...]                 # restricted only
+pi-run: ssh-tcp=<count> managed targets on port 22          # restricted only
+pi-run: manual-tcp=<selector>=<destination>:<ports>[...]   # restricted only
 pi-run: Guardian loaded; review mode starts Off
 ```
 
@@ -188,12 +203,14 @@ intended daemon access. Docker access is highly privileged. Do not solve a
 permission error by exposing the Docker socket inside Pi or broadly changing
 unrelated filesystem ownership.
 
-### The runtime image is missing
+### A runtime or egress image is missing
 
-Run `pi-run version` to identify the exact selected image. Follow the specific
-Doctor diagnostic and confirm required registry authentication before pulling
-it. Do not substitute an unrelated image; `PI_RUN_IMAGE` is a development
-boundary that grants an alternate image the selected mounts and privileges.
+Run `pi-run version` to identify both exact selected images. Follow the
+role-specific Doctor diagnostic and confirm required registry authentication
+before pulling it. Do not substitute an unrelated runtime image;
+`PI_RUN_IMAGE` is a development boundary that grants an alternate image the
+selected mounts and privileges. `PI_RUN_EGRESS_IMAGE` is the corresponding
+maintainer override for the policy-enforcement sidecar image.
 
 ### Initialization is refused
 

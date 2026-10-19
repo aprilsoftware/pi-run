@@ -39,8 +39,9 @@ This check does not inspect workspace storage, create directories, change
 permissions, move data, or introduce a runtime storage rejection. Existing
 permission checks remain unchanged.
 
-Doctor checks daemon reachability and local image presence, not the active
-Docker context's locality, host-network behavior, container-visible permissions,
+Doctor checks daemon reachability and local presence of both versioned images,
+not the active Docker context's locality, host-network behavior,
+container-visible permissions,
 locking, or restore durability. Distribution-local Engine host networking
 shares WSL networking; Windows service access needs separate verification.
 WSL-specific diagnostics have automated coverage, but the maintainer does not
@@ -61,11 +62,16 @@ pi-run-X.Y.Z.tar.gz
 pi-run-X.Y.Z.tar.gz.sha256
 ```
 
-Its matching image is:
+Its matching versioned images are:
 
 ```text
 ghcr.io/aprilsoftware/pi-run:X.Y.Z
+ghcr.io/aprilsoftware/pi-run-egress:X.Y.Z
 ```
+
+The installer requires both images even before the restricted backend is exposed
+as a normal launcher option. This keeps installed application and image versions
+paired rather than deferring an unverified image pull to a later launch.
 
 The public latest-release URL redirects to the installer attached to GitHub's
 current Latest release. The installer contains its own default version and uses
@@ -101,10 +107,12 @@ managed by the selected installation. After extraction it requires the expected 
 launcher, version match, installer, and safe component files. Archives containing
 symlinks or special files under the package directory are refused.
 
-The matching image must pull successfully before application activation. The
+Both matching images must pull successfully before application activation. The
 installer then copies the package through a temporary release directory and
 atomically replaces the `current` and executable symlinks. A failed download,
-checksum, validation, or image pull does not activate that release.
+checksum, validation, or either image pull does not activate that release. A
+successful first pull may remain cached when the second pull fails; image-cache
+rollback is not part of the application activation transaction.
 
 Installation also refuses an already-present release directory, a symlink or
 non-directory installation root, a non-symlink `current` path, unsafe metadata,
@@ -159,15 +167,15 @@ pi-run version
 Persist that change using the appropriate shell configuration only after
 confirming the path.
 
-`pi-run version` reports the launcher version and selected image without checking
-Docker. `pi-run home` resolves the data path without initializing it. `pi-run
-doctor` checks the platform, required commands, UUID source, Docker daemon,
-local image, CA bundle, installed templates, data-home safety, and selected
-profile.
+`pi-run version` reports the launcher version and selected runtime and egress
+images without checking Docker. `pi-run home` resolves the data path without
+initializing it. `pi-run doctor` checks the platform, required commands, UUID
+source, Docker daemon, both local images, CA bundle, installed templates,
+data-home safety, and selected profile.
 
-Doctor never repairs failures. It reports the exact image to pull when that
-image is unavailable locally. Confirm the tag and registry authentication before
-following that instruction.
+Doctor never repairs failures. It reports the exact role and image to pull when
+either image is unavailable locally. Confirm the tag and registry authentication
+before following that instruction.
 
 ## Upgrade selection and activation
 
