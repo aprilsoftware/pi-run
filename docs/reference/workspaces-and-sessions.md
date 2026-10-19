@@ -35,7 +35,24 @@ changes.
 
 Registration is directory-based. Different clones or directories are distinct
 even when their names and Git remotes match. Pi-Run does not infer identity from
-Git metadata.
+Git metadata for ordinary workspaces.
+
+Managed Git worktrees add a machine-local repository UUID keyed by the validated
+canonical common Git directory. Each managed checkout still receives its own
+portable workspace UUID and profile-scoped session directory. Repository records
+store the primary path, preference, creation time, and child workspace/branch
+associations; authoritative concrete paths remain in `workspacePaths`.
+
+Managed checkout content lives at:
+
+```text
+<Pi-Run home>/worktrees/<repository-id>/<workspace-id>/
+```
+
+Git's linked-worktree administration remains under the repository's common Git
+directory. Machine repository associations, managed paths, and checkout content
+are excluded from snapshots. The portable registry contains no remote URL,
+source content, or reconstruction instructions.
 
 ## Workspace and session inventory
 
@@ -77,6 +94,84 @@ branching, naming, individual selection, and deletion.
 
 Changing the selected profile changes the session directory and authentication
 context. It does not copy conversations or credentials between profiles.
+
+## Managed-worktree selection and creation
+
+`worktree enable`, `disable`, and `status` resolve the repository containing the
+current directory. The preference is machine-local and repository-wide; it is
+neither committed nor profile-specific. `worktree list` is repository-grouped,
+deterministically sorted, sanitized for terminal display, and inspection-only.
+It also shows registered repositories with no managed children.
+
+Fresh-launch precedence is explicit `--worktree`, explicit `--no-worktree`, the
+repository preference, then direct behavior. Conflicting explicit flags fail
+before mutation. A per-launch override does not update the preference, and
+`disable` never changes existing managed associations.
+
+Creation accepts a supported non-bare repository with attached or detached
+committed `HEAD` and rejects an unborn repository. Pi-Run resolves `HEAD^{commit}`
+before creation and reports dirty source state as excluded. It allocates one UUID
+and strictly preflights the branch, worktree path, Git administration path, and
+metadata. Collisions fail instead of selecting another identity.
+
+The branch is `pi-run/<workspace-uuid>`. Pi-Run first runs `git worktree add
+--no-checkout` on the host, then materializes the recorded commit in a temporary
+version-matched runtime container. Materialization uses `--pull never`, network
+none, the host UID/GID, a read-only root, dropped capabilities,
+no-new-privileges, checkout hooks disabled, and no profile, credential, shared,
+or Docker-socket mount. Repository content filters may run only inside that
+container; missing dependencies fail creation without a host fallback.
+
+Portable metadata is published only after the machine path and repository
+association. A machine-only association can therefore appear as `pending` after
+interruption. Completion is allowed only when the exact recorded Git and
+metadata relationship still validates. Conflicting, partial, moved, or
+registry-only state fails closed. Creation rollback removes only provably new,
+empty, unchanged state from that invocation; ambiguous state is preserved.
+
+`worktree list` statuses are:
+
+| Status | Meaning |
+| --- | --- |
+| `available` | Expected path, portable record, ownership, Git administration, common directory, and branch validate. |
+| `missing` | Expected mapped checkout path does not exist. |
+| `pending` | Complete machine association exists without its portable workspace entry. |
+| `path-conflict` | Authoritative path mapping differs from the required managed path. |
+| `git-conflict` | The safe path exists but its common directory, administration directory, or branch differs. |
+| `unsafe` | Repository, path, ownership, symlink, hard-link, permission, or administration checks prevent trusted inspection. |
+
+Metadata-level contradictions that cannot be represented safely fail the whole
+command rather than being reduced to a row status. Schema-version-1 machine
+metadata is listed as having no managed repositories without migration. Other
+worktree operations migrate valid version-1 metadata atomically when needed.
+
+## Managed continuation and locking
+
+For repository-local `-c` and `-r`, managed routing filters by exact repository,
+selected profile, complete metadata, expected branch and administration, and at
+least one valid transcript. The candidate with the newest transcript
+modification time is selected. No candidate and a tie for newest activity both
+fail without creating a workspace. Transcript modification time is a routing
+signal, not trusted provenance or authorization.
+
+Global resume is association-driven and ignores the current repository
+preference. Selecting a managed group reopens its immutable recorded path and
+uses managed Git mounts; selecting an ordinary group keeps direct behavior. A
+known managed group unavailable on this machine is never silently reconnected
+as an ordinary checkout.
+
+Each managed launch holds a private machine-local lock through Pi execution,
+snapshot-requested restarts, egress-sidecar lifetime, and final cleanup. The
+owner records machine ID, PID, Linux process-start token, random ownership token,
+workspace ID, and creation time. A matching live owner blocks launch. Only a
+well-formed same-machine record with an absent PID or changed start token is
+recovered as stale; Pi-Run never signals the process. Ownership-token mismatch,
+foreign-machine, malformed, linked, or ambiguous lock state fails closed.
+Different managed workspace UUIDs can run concurrently.
+
+Pi-Run has no automatic managed-worktree removal operation. Disable changes
+future launch selection only. Ordinary launch and exit do not prune, merge,
+rebase, push, reset, remove a worktree, or delete a branch.
 
 ## Resume across workspaces
 
@@ -146,9 +241,11 @@ arguments, output, paths, and secrets. It belongs to the private profile and is
 included in complete encrypted snapshots.
 
 Restoring sessions does not restore workspace source or remote-system state.
-Reconnection attaches an existing local directory to a portable identity; it
-never creates, clones, resets, or validates the contents as the original
-checkout.
+Reconnection attaches an existing local directory to a portable ordinary
+identity; it never creates, clones, resets, or validates the contents as the
+original checkout. Known managed associations are not eligible for this direct
+reconnection path: their machine-local repository association and exact
+worktree must already validate.
 
 Use launcher commands for mapping changes. Manual edits to registry, machine, or
 session files can create unregistered groups, duplicate IDs, or unsafe metadata

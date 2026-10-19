@@ -128,7 +128,12 @@ The downloaded installer contains its matching version. It verifies the
 versioned application archive, pulls the matching runtime and egress images,
 and installs the `pi-run` command. `pi-run init` creates the data home and
 initial profile;
-`pi-run .` opens the current directory as a writable workspace.
+`pi-run .` opens the current directory as a writable workspace. For parallel
+repository sessions, `pi-run --worktree .` creates a persistent host-visible Git
+worktree, or `pi-run worktree enable` makes that behavior the repository default.
+Use `pi-run --no-worktree .` for an explicit direct-checkout launch. See
+[workspaces and sessions](docs/workspaces-and-sessions.md) for continuation,
+inspection, and security boundaries.
 
 Restricted assets require the
 [private-release access procedure](docs/maintainers/private-release-access.md).

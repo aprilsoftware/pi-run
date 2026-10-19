@@ -21,6 +21,7 @@ A normal Pi-Run session can access:
 | Shared directory | Writable at `/shared` when enabled by the profile |
 | Profile-local skills | Writable inside the selected profile |
 | Selected global skills | Mounted read-only |
+| Managed worktree Git metadata | Writable common Git directory when a managed workspace is selected |
 
 The image filesystem is temporary and removed after the run. Host-backed files
 are not temporary: changes under `/workspace`, `/profile`, and optional `/shared`
@@ -132,6 +133,45 @@ restart Pi-Run.
 Read-only global skill mounts prevent package modification, not execution of
 scripts or influence on writable files and services. Review complete packages
 before selecting them; see [skill trust](skills.md#validation-and-trust).
+
+## Understand managed-worktree boundaries
+
+A managed Git worktree provides a separate branch, index, and working files for
+parallel Pi-Run sessions. It reduces accidental checkout conflicts, but it is
+not a sandbox and does not make agents mutually untrusted.
+
+The selected managed checkout is mounted at `/workspace`; primary and sibling
+working files are not mounted merely for convenience. Normal Git operation also
+requires writable linked-worktree administration and the repository's common
+Git directory. A process with that access can affect shared objects, refs,
+configuration, hooks, remotes, and metadata used by every checkout. Repository
+hooks or content filters may later run during ordinary agent-initiated Git
+commands with the selected profile and network authority.
+
+Worktrees also do not isolate credentials, shared build caches, dependency
+caches, databases, service ports, network routes, remote repositories, or files
+reachable through separately selected mounts. A branch and path being available
+does not authorize commits, merges, rebases, pushes, branch deletion,
+publication, or external operations.
+
+Fresh managed materialization is narrower than a normal session. Pi-Run creates
+the host worktree with `--no-checkout`, disables checkout hooks, and materializes
+the recorded commit in an offline, capability-free, no-new-privileges container
+without profile credentials, shared files, or the Docker socket. Configured
+content filters can execute there, but unavailable dependencies cause failure
+instead of host execution. These bootstrap restrictions do not remain an
+independent security boundary after Pi starts.
+
+Managed source trees and machine associations are host-visible persistent state
+and are excluded from encrypted snapshots. Pi-Run does not automatically stash,
+commit, reset, clean, merge, rebase, push, remove a worktree, or delete a branch.
+Stopping a run, disabling the repository preference, or finding no transcript is
+not evidence that the checkout can be discarded.
+
+Use `pi-run worktree list` to inspect recorded state and stop if it reports
+`pending`, `missing`, `path-conflict`, `git-conflict`, or `unsafe`. See the
+[managed-worktree guide](workspaces-and-sessions.md#use-managed-git-worktrees)
+for commands and status meanings.
 
 ## Treat content and code as untrusted
 

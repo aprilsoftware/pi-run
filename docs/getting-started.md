@@ -88,6 +88,38 @@ The first launch also initializes a missing data home and registers this
 workspace. For profile selection and exact startup behavior, see the
 [Getting Started reference](reference/getting-started.md#how-launch-selection-works).
 
+### Optional: open an isolated Git worktree
+
+For parallel work on a normal Git repository, create a fresh managed worktree:
+
+```bash
+pi-run --worktree .
+```
+
+Pi-Run creates a host-visible branch named `pi-run/<workspace-uuid>` under
+`<Pi-Run home>/worktrees/`, starts it at the selected checkout's committed
+`HEAD`, and mounts only that checkout at `/workspace`. Uncommitted and untracked
+source-checkout changes are reported but are not copied. Pi-Run never stashes,
+commits, resets, or discards them.
+
+Make managed worktrees the default for future launches of this repository:
+
+```bash
+pi-run worktree enable
+pi-run worktree status
+```
+
+Use `pi-run --no-worktree .` when one launch should use the direct checkout, or
+`pi-run worktree disable` to change the future default. Disabling does not remove
+existing branches, worktrees, source changes, identities, or sessions.
+
+Managed worktrees isolate working files and indexes for parallel sessions, not
+Git authority or external systems. Git objects, refs, configuration, hooks,
+remotes, credentials, caches, network access, databases, and service ports can
+remain shared. Review the full [managed-worktree guide](workspaces-and-sessions.md#use-managed-git-worktrees)
+and [security boundaries](security.md#understand-managed-worktree-boundaries)
+before relying on them.
+
 ## 4. Connect a model
 
 In Pi, enter:

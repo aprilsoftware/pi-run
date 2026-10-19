@@ -64,6 +64,101 @@ work, relinking a moved directory, or diagnosing restored state. See the
 [identity reference](reference/workspaces-and-sessions.md#identity-and-storage)
 for storage paths and identifier differences.
 
+## Use managed Git worktrees
+
+Managed worktrees let separate Pi-Run sessions use independent branches,
+indexes, and working files from one normal non-bare Git repository. They are
+persistent, host-visible source checkouts—not temporary container state and not
+a security boundary.
+
+Create one managed workspace explicitly:
+
+```bash
+pi-run --worktree .
+```
+
+Or control the repository default for future launches:
+
+```bash
+pi-run worktree status
+pi-run worktree enable
+pi-run worktree disable
+```
+
+Launch selection follows this order:
+
+1. explicit `--worktree`;
+2. explicit `--no-worktree`;
+3. the repository preference; and
+4. direct-checkout behavior when no managed choice applies.
+
+`--worktree` and `--no-worktree` are mutually exclusive. Explicit overrides do
+not alter the saved preference. Separate clones remain separate repository
+identities even when their remotes match.
+
+A fresh managed launch records the selected checkout's exact committed `HEAD`,
+creates `pi-run/<workspace-uuid>`, and places the checkout at:
+
+```text
+<Pi-Run home>/worktrees/<repository-id>/<workspace-id>/
+```
+
+Attached and detached committed `HEAD` are accepted; an unborn repository is
+not. Dirty source state is allowed, but staged, modified, untracked, and other
+uncommitted changes are excluded from the new checkout. Pi-Run does not stash,
+copy, commit, clean, reset, merge, rebase, push, remove worktrees, or delete
+branches automatically.
+
+Startup reports the managed workspace UUID, branch, base or current commit, and
+host path. Continue the newest managed session for the selected repository and
+profile with:
+
+```bash
+pi-run --worktree . -c
+pi-run --worktree . -r
+```
+
+When the repository default is enabled, the same routing applies without the
+explicit flag. Pi-Run selects the managed workspace whose valid transcript has
+the newest modification time. Equal newest times fail as ambiguous. `-c`
+delegates continue behavior to Pi; `-r` delegates individual transcript
+selection. To choose a specific older group, use `pi-run resume` or
+`pi-run resume <profile> <workspace-id>`.
+
+Only one Pi-Run process may use a managed workspace at a time. A private
+machine-local ownership lock detects active use and safely recovers only
+well-formed stale records. Different managed workspaces may run concurrently.
+
+Inspect every registered repository and managed checkout from any directory:
+
+```bash
+pi-run worktree list
+```
+
+Statuses mean:
+
+| Status | Meaning |
+| --- | --- |
+| `available` | Path, portable identity, branch, and Git administration match. |
+| `missing` | The recorded managed checkout is absent. |
+| `pending` | Machine association exists, but portable publication is incomplete. |
+| `path-conflict` | The mapped path is not the required managed path. |
+| `git-conflict` | The present checkout does not match recorded Git state. |
+| `unsafe` | Ownership, links, or filesystem structure are unsafe to trust. |
+
+Listing and disabling are non-destructive. Pi-Run currently provides no
+worktree-removal command. Use ordinary Git and filesystem tools only after
+reviewing sessions, changes, active locks, and branch retention; do not treat a
+missing transcript as proof that a checkout is disposable.
+
+Managed source trees and machine associations are excluded from encrypted
+snapshots. Portable identities and sessions can be restored, but Pi-Run does not
+recreate a repository, branch, or worktree from names or remotes. If this
+machine still records the managed association but its checkout is unavailable,
+resume refuses to reconnect it as an ordinary workspace. On a machine without
+that association, restored portable metadata alone cannot prove or reconstruct
+the former managed layout.
+
 ## List workspaces and saved conversations
 
 ```bash
@@ -156,6 +251,8 @@ data home and snapshot metadata rather than inventing an ID.
 - The selected workspace is a real writable host directory.
 - Profile choice determines which sessions and credentials are available.
 - Workspace registration does not clone, move, restore, or back up source files.
+- Managed worktrees isolate checkout files and indexes, but share Git objects,
+  refs, configuration, hooks, remotes, credentials, and repository-wide effects.
 - Session files can contain prompts, source excerpts, commands, tool output, and
   secrets; keep profiles private.
 - Use encrypted snapshots for portable Pi-Run state and version control or an
