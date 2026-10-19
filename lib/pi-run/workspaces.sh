@@ -143,6 +143,7 @@ ensure_worktree_machine_metadata() {
 WORKTREE_REPOSITORY_NAME=""
 WORKTREE_REPOSITORY_COMMON_DIR=""
 WORKTREE_REPOSITORY_PRIMARY_PATH=""
+WORKTREE_REPOSITORY_SELECTED_PATH=""
 
 resolve_worktree_repository() {
     local selected top common_raw common primary name path
@@ -178,6 +179,7 @@ resolve_worktree_repository() {
     WORKTREE_REPOSITORY_NAME="${name}"
     WORKTREE_REPOSITORY_COMMON_DIR="${common}"
     WORKTREE_REPOSITORY_PRIMARY_PATH="${primary}"
+    WORKTREE_REPOSITORY_SELECTED_PATH="${top}"
 }
 
 print_worktree_preference() {
@@ -203,6 +205,144 @@ show_worktree_preference() {
     machine="$(ensure_worktree_machine_metadata)"
     print_worktree_preference "${machine}"
 }
+
+create_managed_worktree_checkout() (
+    local workspace_id="$1" machine registry record_count repository_id branch base dirty
+    local root repository_root worktree admin_dir image pointer="" git_dir output status
+    local root_created=false repository_root_created=false
+    [[ "${workspace_id}" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] \
+        || fail "invalid managed workspace UUID: ${workspace_id}"
+    command -v docker >/dev/null 2>&1 || fail "docker is required for managed worktree creation"
+    resolve_worktree_repository
+    machine="$(ensure_worktree_machine_metadata)"
+    registry="${PI_RUN_HOME_RESOLVED}/workspaces/registry.json"
+    image="${PI_RUN_IMAGE:-${DEFAULT_IMAGE}}"
+    docker image inspect "${image}" >/dev/null 2>&1 \
+        || fail "runtime image is unavailable locally: ${image}"
+
+    base="$(git -C "${WORKTREE_REPOSITORY_SELECTED_PATH}" rev-parse --verify 'HEAD^{commit}' 2>/dev/null)" \
+        || fail "selected repository does not have a committed HEAD"
+    [[ "${base}" =~ ^[0-9a-f]{40,64}$ ]] || fail "selected repository returned an invalid HEAD commit"
+    dirty="$(git -c core.fsmonitor=false -c core.untrackedCache=false \
+        -C "${WORKTREE_REPOSITORY_SELECTED_PATH}" status --porcelain --untracked-files=normal)" \
+        || fail "could not inspect the selected checkout state"
+    if [[ -n "${dirty}" ]]; then
+        printf 'pi-run: selected checkout has uncommitted changes; managed worktree %s starts at %s and excludes them\n' \
+            "${workspace_id}" "${base}" >&2
+    fi
+
+    acquire_workspace_lock
+    trap 'rm -f "${pointer:-}"; rmdir "${WORKSPACE_LOCK:-}" 2>/dev/null || true' EXIT
+    validate_worktree_machine_file "${machine}"
+    validate_workspace_metadata "${machine}"
+    record_count="$(jq -r --arg common "${WORKTREE_REPOSITORY_COMMON_DIR}" \
+        '[.repositories[] | select(.commonGitDir == $common)] | length' "${machine}")"
+    [[ "${record_count}" == 1 ]] || fail "repository is not registered uniquely for managed worktrees"
+    repository_id="$(jq -r --arg common "${WORKTREE_REPOSITORY_COMMON_DIR}" \
+        '.repositories[] | select(.commonGitDir == $common) | .id' "${machine}")"
+    [[ "${repository_id}" =~ ^[0-9a-f-]{36}$ ]] || fail "repository metadata has an invalid identity"
+    [[ "$(jq -r --arg id "${workspace_id}" \
+        '[.workspacePaths[], .repositories[].managedWorkspaces[] | select(.workspaceId == $id)] | length' \
+        "${machine}")" == 0 ]] || fail "managed workspace UUID already exists in machine metadata: ${workspace_id}"
+    [[ "$(jq -r --arg id "${workspace_id}" \
+        '[.workspaces[] | select(.id == $id)] | length' "${registry}")" == 0 ]] \
+        || fail "managed workspace UUID already exists in the workspace registry: ${workspace_id}"
+
+    branch="pi-run/${workspace_id}"
+    git check-ref-format --branch "${branch}" >/dev/null 2>&1 \
+        || fail "invalid managed worktree branch: ${branch}"
+    if git -C "${WORKTREE_REPOSITORY_SELECTED_PATH}" show-ref --verify --quiet "refs/heads/${branch}"; then
+        fail "managed worktree branch already exists: ${branch}"
+    fi
+    root="${PI_RUN_HOME_RESOLVED}/worktrees"
+    repository_root="${root}/${repository_id}"
+    worktree="${repository_root}/${workspace_id}"
+    admin_dir="${WORKTREE_REPOSITORY_COMMON_DIR}/worktrees/${workspace_id}"
+    for output in "${root}" "${repository_root}" "${worktree}" "${WORKTREE_REPOSITORY_COMMON_DIR}"; do
+        [[ "${output}" != *,* ]] || fail "managed worktree paths containing commas are not supported: ${output}"
+    done
+    for output in "${worktree}" "${admin_dir}"; do
+        [[ ! -e "${output}" && ! -L "${output}" ]] \
+            || fail "managed worktree path already exists: ${output}"
+    done
+    for output in "${root}" "${repository_root}"; do
+        if [[ -e "${output}" || -L "${output}" ]]; then
+            [[ -d "${output}" && ! -L "${output}" && "$(realpath "${output}")" == "${output}" &&
+               "$(stat -c %u "${output}")" == "$(id -u)" && "$(stat -c %a "${output}")" == 700 ]] \
+                || fail "managed worktree directory is unsafe: ${output}"
+        else
+            mkdir "${output}"
+            chmod 0700 "${output}"
+            if [[ "${output}" == "${root}" ]]; then
+                root_created=true
+            else
+                repository_root_created=true
+            fi
+        fi
+    done
+
+    if ! git -C "${WORKTREE_REPOSITORY_SELECTED_PATH}" worktree add --no-checkout -q \
+        -b "${branch}" "${worktree}" "${base}"; then
+        if [[ ! -e "${worktree}" && ! -L "${worktree}" && ! -e "${admin_dir}" &&
+              "$(git -C "${WORKTREE_REPOSITORY_SELECTED_PATH}" rev-parse --verify "refs/heads/${branch}" 2>/dev/null || true)" == "${base}" ]]; then
+            git -C "${WORKTREE_REPOSITORY_SELECTED_PATH}" branch -D "${branch}" >/dev/null 2>&1 || true
+        fi
+        if [[ -e "${worktree}" || -e "${admin_dir}" ||
+              -n "$(git -C "${WORKTREE_REPOSITORY_SELECTED_PATH}" rev-parse --verify "refs/heads/${branch}" 2>/dev/null || true)" ]]; then
+            fail "managed worktree administration failed; partial state was preserved at ${worktree}"
+        fi
+        [[ "${repository_root_created}" == false ]] || rmdir "${repository_root}" 2>/dev/null || true
+        [[ "${root_created}" == false ]] || rmdir "${root}" 2>/dev/null || true
+        fail "managed worktree administration failed and its empty state was rolled back"
+    fi
+    git_dir="$(git -C "${worktree}" rev-parse --path-format=absolute --git-dir 2>/dev/null || true)"
+    [[ "${git_dir}" == "${admin_dir}" && -d "${admin_dir}" && ! -L "${admin_dir}" &&
+       -f "${worktree}/.git" && ! -L "${worktree}/.git" ]] \
+        || fail "created managed worktree has unexpected Git administration"
+
+    pointer="$(mktemp "${root}/.git-pointer-${workspace_id}.XXXXXX")"
+    printf 'gitdir: /run/pi-run-git/common/worktrees/%s\n' "${workspace_id}" > "${pointer}"
+    chmod 0600 "${pointer}"
+    set +e
+    docker run --rm --pull never --network none --cap-drop ALL \
+        --security-opt no-new-privileges=true --read-only \
+        --tmpfs "/tmp:rw,nosuid,nodev,noexec" --user "$(id -u):$(id -g)" \
+        --env HOME=/tmp --env GIT_CONFIG_NOSYSTEM=1 --env "PI_RUN_WORKTREE_BASE=${base}" \
+        --workdir /workspace --entrypoint bash \
+        --mount "type=bind,src=${worktree},dst=/workspace" \
+        --mount "type=bind,src=${WORKTREE_REPOSITORY_COMMON_DIR},dst=/run/pi-run-git/common" \
+        --mount "type=bind,src=${pointer},dst=/workspace/.git,readonly" \
+        "${image}" -ceu '
+            git -c core.hooksPath=/dev/null reset --hard "${PI_RUN_WORKTREE_BASE}" >/dev/null
+            test "$(git rev-parse HEAD)" = "${PI_RUN_WORKTREE_BASE}"
+        '
+    status=$?
+    set -e
+    rm -f "${pointer}"
+    pointer=""
+    if (( status != 0 )); then
+        output="$(find "${worktree}" -mindepth 1 -maxdepth 1 ! -name .git -print -quit 2>/dev/null || true)"
+        if [[ -z "${output}" &&
+              "$(git -C "${worktree}" rev-parse --verify HEAD 2>/dev/null || true)" == "${base}" &&
+              "$(git -C "${worktree}" rev-parse --path-format=absolute --git-dir 2>/dev/null || true)" == "${admin_dir}" ]]; then
+            git -C "${WORKTREE_REPOSITORY_SELECTED_PATH}" worktree remove --force "${worktree}" >/dev/null 2>&1 || true
+            if [[ ! -e "${worktree}" && ! -e "${admin_dir}" ]]; then
+                git -C "${WORKTREE_REPOSITORY_SELECTED_PATH}" branch -D "${branch}" >/dev/null 2>&1 || true
+            fi
+        fi
+        if [[ -e "${worktree}" || -e "${admin_dir}" ||
+              -n "$(git -C "${WORKTREE_REPOSITORY_SELECTED_PATH}" rev-parse --verify "refs/heads/${branch}" 2>/dev/null || true)" ]]; then
+            fail "managed worktree materialization failed; partial state was preserved at ${worktree}"
+        fi
+        [[ "${repository_root_created}" == false ]] || rmdir "${repository_root}" 2>/dev/null || true
+        [[ "${root_created}" == false ]] || rmdir "${root}" 2>/dev/null || true
+        fail "managed worktree materialization failed and its empty state was rolled back"
+    fi
+
+    printf '%s\t%s\t%s\t%s\t%s\n' \
+        "${workspace_id}" "${repository_id}" "${branch}" "${worktree}" "${base}"
+    release_workspace_lock
+)
 
 set_worktree_preference() {
     local enabled="$1" machine count current id created changed=false
