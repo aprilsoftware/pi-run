@@ -7,7 +7,7 @@ umask 077
 usage() {
     cat >&2 <<EOF
 Usage:
-  pi-run [--home <path>] [--profile <name>] [--worktree] <workspace> [pi arguments...]
+  pi-run [--home <path>] [--profile <name>] [--worktree|--no-worktree] <workspace> [pi arguments...]
   pi-run [--home <path>] init
   pi-run [--home <path>] home
   pi-run version
@@ -145,6 +145,7 @@ PROFILE="default"
 PROFILE_EXPLICIT=false
 HOME_OVERRIDE=""
 WORKTREE_REQUESTED=false
+NO_WORKTREE_REQUESTED=false
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -161,6 +162,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --worktree)
             WORKTREE_REQUESTED=true
+            shift
+            ;;
+        --no-worktree)
+            NO_WORKTREE_REQUESTED=true
             shift
             ;;
         -h|--help)
@@ -367,12 +372,14 @@ sanitize_display() {
     printf '%s' "${value}"
 }
 
+[[ "${WORKTREE_REQUESTED}" == false || "${NO_WORKTREE_REQUESTED}" == false ]] \
+    || fail "--worktree and --no-worktree cannot be used together"
 RESUME_LAUNCH=false
 COMMAND="${1:-}"
-if [[ "${WORKTREE_REQUESTED}" == true ]]; then
+if [[ "${WORKTREE_REQUESTED}" == true || "${NO_WORKTREE_REQUESTED}" == true ]]; then
     case "${COMMAND}" in
         version|machine-id|doctor|upgrade|home|init|profile|network|skill|workspace|worktree|session|resume|ssh-key|snapshot)
-            fail "--worktree is only valid for a workspace launch"
+            fail "--worktree and --no-worktree are only valid for a workspace launch"
             ;;
     esac
 fi
@@ -666,20 +673,14 @@ else
     EXTRA_PI_ARGS=("$@")
 fi
 
-MANAGED_CONTINUATION=false
-if [[ "${WORKTREE_REQUESTED}" == true ]]; then
-    MANAGED_CONTINUATION_COUNT=0
-    for argument in "${EXTRA_PI_ARGS[@]}"; do
-        case "${argument}" in
-            -c|--continue|-r|--resume)
-                MANAGED_CONTINUATION=true
-                MANAGED_CONTINUATION_COUNT=$((MANAGED_CONTINUATION_COUNT + 1))
-                ;;
-        esac
-    done
-    (( MANAGED_CONTINUATION_COUNT <= 1 )) \
-        || fail "--worktree accepts exactly one continuation or resume selector"
-fi
+CONTINUATION_SELECTOR_COUNT=0
+for argument in "${EXTRA_PI_ARGS[@]}"; do
+    case "${argument}" in
+        -c|--continue|-r|--resume)
+            CONTINUATION_SELECTOR_COUNT=$((CONTINUATION_SELECTOR_COUNT + 1))
+            ;;
+    esac
+done
 [[ -d "${WORKSPACE_INPUT}" ]] \
     || fail "workspace does not exist: ${WORKSPACE_INPUT}"
 WORKSPACE="$(realpath "${WORKSPACE_INPUT}")"
@@ -689,12 +690,30 @@ require_jq
 if [[ "${RESUME_LAUNCH}" == false ]]; then
     resolve_configured_profile true
 fi
+USE_MANAGED_WORKTREE=false
+MANAGED_CONTINUATION=false
+if [[ "${RESUME_LAUNCH}" == false ]]; then
+    if [[ "${WORKTREE_REQUESTED}" == true ]]; then
+        USE_MANAGED_WORKTREE=true
+    elif [[ "${NO_WORKTREE_REQUESTED}" == false ]] && worktree_preference_enabled_for_path "${WORKSPACE}"; then
+        USE_MANAGED_WORKTREE=true
+    fi
+    if [[ "${USE_MANAGED_WORKTREE}" == true && "${CONTINUATION_SELECTOR_COUNT}" != 0 ]]; then
+        if (( CONTINUATION_SELECTOR_COUNT != 1 )); then
+            if [[ "${WORKTREE_REQUESTED}" == true ]]; then
+                fail "--worktree accepts exactly one continuation or resume selector"
+            fi
+            fail "managed worktrees accept exactly one continuation or resume selector"
+        fi
+        MANAGED_CONTINUATION=true
+    fi
+fi
 MANAGED_WORKTREE=false
 MANAGED_WORKTREE_BRANCH=""
 MANAGED_WORKTREE_BASE=""
 MANAGED_WORKTREE_COMMON_DIR=""
 MANAGED_WORKTREE_CONTINUATION=false
-if [[ "${WORKTREE_REQUESTED}" == true ]]; then
+if [[ "${USE_MANAGED_WORKTREE}" == true ]]; then
     SOURCE_WORKSPACE="${WORKSPACE}"
     if [[ "${MANAGED_CONTINUATION}" == true ]]; then
         SELECTED_WORKTREE="$(select_managed_repository_session_workspace "${SOURCE_WORKSPACE}" "${PROFILE}")"
