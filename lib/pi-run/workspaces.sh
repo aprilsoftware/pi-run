@@ -207,6 +207,114 @@ show_worktree_preference() {
     print_worktree_preference "${machine}"
 }
 
+list_managed_worktrees() {
+    local machine registry schema repository repository_id name enabled primary common repository_root
+    local workspace workspace_id branch created path expected_path status registry_count admin_dir
+    local actual_common actual_git_dir actual_branch repository_safe path_safe
+    local -a repositories managed_workspaces
+    machine="$(machine_file)"
+    registry="${PI_RUN_HOME_RESOLVED}/workspaces/registry.json"
+    [[ -f "${machine}" ]] || fail "machine workspace metadata is missing: ${machine}"
+    validate_worktree_machine_file "${machine}"
+    validate_workspace_metadata "${machine}"
+    schema="$(jq -r '.schemaVersion' "${machine}")"
+    if [[ "${schema}" == 1 ]]; then
+        printf 'No managed repositories registered.\n'
+        return 0
+    fi
+
+    acquire_workspace_lock
+    validate_worktree_machine_file "${machine}"
+    validate_workspace_metadata "${machine}"
+    mapfile -t repositories < <(jq -c '.repositories | sort_by(.name, .id)[]' "${machine}")
+    if (( ${#repositories[@]} == 0 )); then
+        release_workspace_lock
+        printf 'No managed repositories registered.\n'
+        return 0
+    fi
+
+    for repository in "${repositories[@]}"; do
+        repository_id="$(jq -r '.id' <<< "${repository}")"
+        name="$(jq -r '.name' <<< "${repository}")"
+        enabled="$(jq -r 'if .enabled then "enabled" else "disabled" end' <<< "${repository}")"
+        primary="$(jq -r '.primaryPath' <<< "${repository}")"
+        common="$(jq -r '.commonGitDir' <<< "${repository}")"
+        repository_root="${PI_RUN_HOME_RESOLVED}/worktrees/${repository_id}"
+        repository_safe=false
+        if [[ -d "${primary}" && ! -L "${primary}" && -d "${common}" && ! -L "${common}" &&
+              "$(realpath "${primary}")" == "${primary}" && "$(realpath "${common}")" == "${common}" &&
+              "${common}" == "${primary}/.git" && "$(stat -c %u "${primary}")" == "$(id -u)" &&
+              "$(stat -c %u "${common}")" == "$(id -u)" ]]; then
+            repository_safe=true
+        fi
+        printf 'Repository: %s (%s)\n' "$(sanitize_display "${name}")" "${repository_id}"
+        printf 'Preference: %s\n' "${enabled}"
+        printf 'Primary checkout: %s\n' "$(sanitize_display "${primary}")"
+        mapfile -t managed_workspaces < <(jq -c '.managedWorkspaces | sort_by(.createdAt, .workspaceId)[]' <<< "${repository}")
+        if (( ${#managed_workspaces[@]} == 0 )); then
+            printf 'Managed workspaces: none\n\n'
+            continue
+        fi
+        printf '  %-36s  %-43s  %-20s  %-13s  %s\n' \
+            'WORKSPACE ID' BRANCH CREATED STATUS PATH
+        for workspace in "${managed_workspaces[@]}"; do
+            workspace_id="$(jq -r '.workspaceId' <<< "${workspace}")"
+            branch="$(jq -r '.branch' <<< "${workspace}")"
+            created="$(jq -r '.createdAt' <<< "${workspace}")"
+            path="$(jq -r --arg id "${workspace_id}" '.workspacePaths[] | select(.workspaceId == $id) | .path' "${machine}")"
+            expected_path="${repository_root}/${workspace_id}"
+            registry_count="$(jq -r --arg id "${workspace_id}" \
+                '[.workspaces[] | select(.id == $id)] | length' "${registry}")"
+            status=available
+            if [[ "${path}" != "${expected_path}" ]]; then
+                status="path-conflict"
+            elif [[ "${registry_count}" == 0 ]]; then
+                status=pending
+            elif [[ "${registry_count}" != 1 ||
+                    "$(jq -r --arg id "${workspace_id}" '.workspaces[] | select(.id == $id) | .kind' "${registry}")" != git ]]; then
+                fail "portable workspace metadata conflicts with managed workspace listing: ${workspace_id}"
+            elif [[ ! -e "${path}" && ! -L "${path}" ]]; then
+                status=missing
+            else
+                path_safe=false
+                if [[ "${repository_safe}" == true && -d "${path}" && ! -L "${path}" &&
+                      "$(realpath "${path}")" == "${path}" && "$(stat -c %u "${path}")" == "$(id -u)" &&
+                      -d "${repository_root}" && ! -L "${repository_root}" &&
+                      "$(realpath "${repository_root}")" == "${repository_root}" &&
+                      "$(stat -c %u "${repository_root}")" == "$(id -u)" &&
+                      "$(stat -c %a "${repository_root}")" == 700 ]]; then
+                    path_safe=true
+                fi
+                if [[ "${path_safe}" == false ]]; then
+                    status=unsafe
+                else
+                    admin_dir="${common}/worktrees/${workspace_id}"
+                    if [[ ! -d "${admin_dir}" || -L "${admin_dir}" ||
+                          "$(stat -c %u "${admin_dir}" 2>/dev/null)" != "$(id -u)" ||
+                          ! -f "${path}/.git" || -L "${path}/.git" ||
+                          "$(stat -c %u "${path}/.git" 2>/dev/null)" != "$(id -u)" ||
+                          "$(stat -c %h "${path}/.git" 2>/dev/null)" != 1 ]]; then
+                        status=unsafe
+                    else
+                        actual_common="$(git -C "${path}" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+                        actual_git_dir="$(git -C "${path}" rev-parse --path-format=absolute --git-dir 2>/dev/null || true)"
+                        actual_branch="$(git -C "${path}" symbolic-ref --quiet HEAD 2>/dev/null || true)"
+                        if [[ "${actual_common}" != "${common}" || "${actual_git_dir}" != "${admin_dir}" ||
+                              "${actual_branch}" != "refs/heads/${branch}" ]]; then
+                            status="git-conflict"
+                        fi
+                    fi
+                fi
+            fi
+            printf '  %-36s  %-43s  %-20s  %-13s  %s\n' \
+                "${workspace_id}" "$(sanitize_display "${branch}")" "${created}" "${status}" \
+                "$(sanitize_display "${path}")"
+        done
+        printf '\n'
+    done
+    release_workspace_lock
+}
+
 worktree_preference_enabled_for_path() {
     local selected="$1" machine schema common_raw common count enabled
     command -v git >/dev/null 2>&1 || return 1
