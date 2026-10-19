@@ -59,7 +59,7 @@ essays.
 | [Security boundaries](security.md) | A disposable container receives the selected workspace and profile—not the complete host home, every profile, or the Docker socket. Choose host, offline, or experimental restricted TCP session networking explicitly. |
 | [Profiles](profiles.md) | Select a purpose-specific identity, credentials, instructions, skills, preferences, and conversations. Only that profile is mounted, and all of it is available to the run. |
 | [Skills](skills.md) and [shared files](security.md#treat-mounted-data-as-exposed) | Reuse reviewed expertise and supporting material across tasks without copying it into every request or every profile. |
-| [Workspaces and sessions](workspaces-and-sessions.md) | Continue named conversations by stable workspace identity, find them across profiles, and reconnect them after a directory move or workstation recovery. |
+| [Workspaces and sessions](workspaces-and-sessions.md) | Continue named conversations by stable workspace identity, find them across profiles, reconnect them after recovery, and use persistent managed Git worktrees for parallel repository sessions. |
 | [Planning](planning.md) | Investigate alternatives, refine a saved plan, and approve an exact revision before handing work back to the normal execution workflow. |
 | [Guardian](guardian.md) | Review acting-agent `bash` and `run` calls, automatically releasing supported actions and focusing human attention where judgment is needed. |
 | [SSH access](ssh.md) | Give a profile a dedicated remote identity without mounting the host's entire SSH directory. |
@@ -96,7 +96,8 @@ guides to understand each boundary.
 - [Guardian command review](guardian.md): configure review, arbitrate disputes,
   and inspect private diagnostics while understanding its limits.
 - [Workspaces and sessions](workspaces-and-sessions.md): identity, continuation,
-  saved-session discovery, and reconnection.
+  saved-session discovery, reconnection, and managed Git worktrees for parallel
+  repository sessions.
 - [Encrypted snapshots and recovery](snapshots.md): protect complete portable
   Pi-Run state without confusing it with workspace or infrastructure backup.
 

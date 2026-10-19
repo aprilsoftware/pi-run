@@ -2,14 +2,15 @@
 
 ## Status and purpose
 
-This document records the agreed v0.8 direction and the decisions that still
-need evidence or discussion. It describes intended behavior, not implemented
-functionality.
+The v0.8 managed-worktree scope described here is implemented and validated.
+This document preserves the design constraints, selected semantics, and deferred
+work behind that implementation. The separately reviewed cleanup/removal
+operation remains intentionally unimplemented.
 
-The goal is to let several Pi-Run sessions work concurrently on one Git
-repository without sharing one writable checkout. Each active task receives a
-separate host-visible Git worktree while normal Pi-Run launch, profile, session,
-network, Guardian, and snapshot behavior remains recognizable.
+Pi-Run can run several sessions against one Git repository without sharing one
+writable checkout. Each active task receives a separate host-visible Git
+worktree while normal Pi-Run launch, profile, session, network, Guardian, and
+snapshot behavior remains recognizable.
 
 Git worktrees provide change isolation, not a security boundary. They share Git
 objects, refs, configuration, hooks, remotes, and external systems.
@@ -430,38 +431,43 @@ source content, commits absent from a durable remote, untracked worktree files,
 or external side effects. Missing worktrees after restore should be reported as
 unavailable, not recreated from guesses.
 
-## Proposed implementation sequence
+## Implementation status
 
-Each step requires a separate concrete proposal and approval.
+The separately approved increments completed:
 
-1. **Disposable feasibility probe:** prove linked-worktree Git operation through
-   the proposed mounts, including expected failure with only `/workspace`, safe
-   path validation, common-metadata sharing, and concurrent independent status.
-2. **Repository and managed-workspace metadata:** define schemas, atomic updates,
-   validation, locking, listing, and snapshot exclusions without changing normal
-   launch behavior.
-3. **On-demand creation:** implement `--worktree` for new workspaces, startup
-   reporting, and one-active-launch locking. Keep normal launches unchanged.
-4. **Continuation and selection:** route `-c`, `-r`, and global resume to the
-   associated managed worktree without automatic migration.
-5. **Repository preference:** add `worktree enable`, `disable`, and `status`, plus
-   `--no-worktree` precedence.
-6. **Inspection and explicit cleanup:** add repository-grouped listing and a
-   separately reviewed conservative removal workflow.
-7. **Documentation and real-Docker validation:** document boundaries and test
-   parallel sessions, restricted networking, snapshots, restore visibility, and
-   failure cleanup.
+1. the disposable linked-worktree mount and isolated-materialization probe;
+2. schema-v2 repository and managed-workspace metadata with atomic migration;
+3. repository preferences and per-launch overrides;
+4. collision-safe creation from attached or detached committed `HEAD`;
+5. recoverable machine-first metadata publication;
+6. managed mounting, reporting, and one-active-launch locking;
+7. profile-specific `-c` and `-r` routing plus association-driven global resume;
+8. repository-grouped, non-mutating status inspection;
+9. user, reference, and security documentation; and
+10. isolated tests plus real-Docker materialization, launch, coexistence,
+    continuation, override, listing, and temporary-state cleanup validation.
 
-## Decisions required before production implementation
+The implementation keeps direct launches compatible for unregistered or
+disabled repositories and does not migrate existing direct sessions. Every
+managed workspace retains an immutable repository, branch, path, and workspace
+association.
 
-- supported Git states and features for the initial release beyond attached or
-  detached committed `HEAD`;
-- cleanup command shape and treatment of worktrees with sessions but no changes;
-- behavior when users move a primary checkout or remove or relocate managed
-  worktrees with ordinary Git;
-- post-launch hook and repository-config exposure after bootstrap materialization;
-  and
-- safe mount behavior when host paths overlap the workspace or Pi-Run home.
+## Deferred decisions and exclusions
+
+These are future features, not incomplete implicit behavior:
+
+- an explicit conservative cleanup/removal command and its treatment of active,
+  dirty, locked, missing, conflicting, or session-bearing worktrees;
+- optional branch deletion, which must remain separate from worktree removal;
+- explicit recovery after users move a primary checkout or remove or relocate a
+  managed worktree with ordinary Git;
+- automatic migration of direct sessions or uncommitted source state;
+- automatic merge, rebase, push, reset, pruning, or repository maintenance; and
+- declared support policy for submodules, nested repositories, and Git
+  LFS-specific workflows.
+
+Unsupported, missing, moved, unsafe, or ambiguous state continues to fail closed
+rather than being guessed, repaired, or deleted automatically.
 
 Related current behavior: [Workspaces and Sessions](../docs/workspaces-and-sessions.md)
 and the [workspace/session reference](../docs/reference/workspaces-and-sessions.md).

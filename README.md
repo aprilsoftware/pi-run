@@ -73,6 +73,9 @@ resources, and other infrastructure need their own recovery mechanisms.
   policy, and conversations while leaving other profiles out of view.
 - **Continuity:** stable workspace identities and saved sessions let you leave,
   resume, move a checkout, or reconnect work after recovery.
+- **Parallel repository work:** persistent managed Git worktrees give concurrent
+  sessions separate branches, indexes, and working files while keeping their
+  host paths, shared Git authority, and lifecycle visible.
 - **Layered control:** profile selection limits the identity and private context
   presented to the run; configurable instructions set the working contract;
   Guardian can review covered commands; external systems retain final authority.

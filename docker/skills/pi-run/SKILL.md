@@ -70,6 +70,7 @@ profiles/<profile>/
 skills/<skill>/
 shared/
 workspaces/
+worktrees/
 machines/
 snapshots/
 ```
@@ -126,6 +127,59 @@ Mode and rule commands lock, validate, stage, and atomically replace
 `--discard-rules` only when deliberate removal is intended. CIDR mutation uses
 the locally installed version-matched runtime image in an offline, capability-
 free, read-only helper with no mounts.
+
+## Managed Git worktrees
+
+Managed worktrees provide persistent host-visible parallel checkouts for a
+normal non-bare Git repository. Ask the user to run these commands from the
+repository in a host terminal:
+
+```bash
+pi-run worktree status
+pi-run worktree enable
+pi-run worktree disable
+pi-run worktree list
+pi-run --worktree .
+pi-run --no-worktree .
+```
+
+`--worktree` explicitly creates a fresh managed workspace; `--no-worktree`
+explicitly uses the selected checkout. Otherwise, the machine-local repository
+preference applies, then direct-checkout behavior. Overrides do not change the
+preference. Disabling changes only future launches and does not remove branches,
+worktrees, workspace identities, source changes, or sessions.
+
+A managed workspace begins at the selected checkout's exact committed `HEAD` on
+`pi-run/<workspace-uuid>`. Dirty source-checkout changes are reported but not
+copied. Pi-Run does not automatically stash, commit, clean, reset, merge, rebase,
+push, remove worktrees, or delete branches. Managed checkouts live under:
+
+```text
+<Pi-Run home>/worktrees/<repository-id>/<workspace-id>/
+```
+
+With managed mode selected, repository-local `-c` and `-r` route to the valid
+workspace whose selected-profile transcript has the newest modification time;
+ties fail as ambiguous. Global `pi-run resume` follows the selected workspace's
+recorded association regardless of the current repository preference. One
+Pi-Run process may use a particular managed workspace at a time, while distinct
+managed workspaces may run concurrently.
+
+`worktree list` is read-only and reports repository groups plus `available`,
+`missing`, `pending`, `path-conflict`, `git-conflict`, or `unsafe` child status.
+Pi-Run has no managed-worktree removal command. Do not interpret an inactive or
+missing session as permission to delete source or Git state.
+
+A worktree separates branches, indexes, and working files; it is not a sandbox.
+The selected checkout is mounted at `/workspace`, but the writable common Git
+directory is also mounted for normal Git operation. Objects, refs,
+configuration, hooks, remotes, credentials, caches, network authority, and
+external systems can remain shared. Managed source trees and machine
+associations are excluded from encrypted snapshots and are never reconstructed
+from remote names or restored conversations. See
+[Workspaces and sessions](https://github.com/aprilsoftware/pi-run/blob/main/docs/workspaces-and-sessions.md)
+and [Security and isolation](https://github.com/aprilsoftware/pi-run/blob/main/docs/security.md)
+for the full status, recovery, and authority boundaries.
 
 ## Sessions
 
