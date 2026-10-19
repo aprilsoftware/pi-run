@@ -53,7 +53,7 @@ Examples:
   pi-run doctor
   pi-run upgrade
   pi-run upgrade --check
-  pi-run upgrade v0.7.2
+  pi-run upgrade v0.8.0
   pi-run snapshot
   pi-run home
 EOF
