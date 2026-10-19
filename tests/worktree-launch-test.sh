@@ -68,13 +68,21 @@ case "${1:-}" in
         count=$((count + 1))
         printf '%s\n' "${count}" > "${MAIN_COUNT_FILE}"
         capture="${MAIN_CAPTURE_PREFIX:?}.${count}"
+        lock=
+        if [[ "${workspace}" == */worktrees/*/* ]]; then
+            home="${workspace%%/worktrees/*}"
+            workspace_id="${workspace##*/}"
+            lock="${home}/worktrees/.launch-locks/${workspace_id}/owner.json"
+            [[ -f "${lock}" ]] || exit 3
+        fi
         {
-            printf 'workspace=%s\ncommon=%s\npointer=%s\n' "${workspace}" "${common}" "${pointer}"
+            printf 'workspace=%s\ncommon=%s\npointer=%s\nlock=%s\n' "${workspace}" "${common}" "${pointer}" "${lock}"
             [[ -z "${pointer}" ]] || printf 'pointer-content=%s\n' "$(< "${pointer}")"
             printf 'args='
             printf '%q ' "$@"
             printf '\n'
         } > "${capture}"
+        [[ "${FAKE_DOCKER_MODE:-ok}" != main-fail ]] || exit 44
         ;;
     rm) ;;
     *) exit 2 ;;
@@ -158,6 +166,9 @@ if [[ "${LIVE_DOCKER}" != 1 ]]; then
     POINTER="$(grep '^pointer=' "${CAPTURE}" | cut -d= -f2-)"
     [[ -n "${POINTER}" && ! -e "${POINTER}" && ! -e "$(dirname "${POINTER}")" ]] \
         || fail "managed Git pointer staging was not cleaned up"
+    LOCK_OWNER="$(grep '^lock=' "${CAPTURE}" | cut -d= -f2-)"
+    [[ -n "${LOCK_OWNER}" && ! -e "${LOCK_OWNER}" && ! -e "$(dirname "${LOCK_OWNER}")" ]] \
+        || fail "managed launch lock was absent during Pi or remained after cleanup"
     grep -F -- '--version' "${CAPTURE}" >/dev/null \
         || fail "Pi arguments were not preserved"
 
@@ -192,6 +203,15 @@ if [[ "${LIVE_DOCKER}" != 1 ]]; then
     [[ "$(< "${MAIN_COUNT_FILE}")" == "${main_before}" &&
        "$(jq -r '.repositories[0].managedWorkspaces | length' "${MACHINE}")" == "${managed_count}" ]] \
         || fail "failed managed creation launched Pi or published metadata"
+
+    if FAKE_DOCKER_MODE=main-fail run_pi --worktree "${REPOSITORY}" --version \
+        >/dev/null 2>"${TMP}/failed-main.err"; then
+        fail "failed Pi container returned success"
+    fi
+    FAILED_CAPTURE="${TMP}/main.$((main_before + 1))"
+    FAILED_LOCK="$(grep '^lock=' "${FAILED_CAPTURE}" | cut -d= -f2-)"
+    [[ -n "${FAILED_LOCK}" && ! -e "${FAILED_LOCK}" && ! -e "$(dirname "${FAILED_LOCK}")" ]] \
+        || fail "failed Pi launch retained its managed workspace lock"
 else
     [[ -s "${TMP}/launch.out" ]] \
         || fail "real-Docker managed launch did not execute Pi --version"

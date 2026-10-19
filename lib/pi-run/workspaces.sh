@@ -207,6 +207,124 @@ show_worktree_preference() {
     print_worktree_preference "${machine}"
 }
 
+MANAGED_LAUNCH_LOCK_DIR=""
+MANAGED_LAUNCH_LOCK_TOKEN=""
+
+process_start_token() {
+    local pid="$1" stat rest
+    [[ "${pid}" =~ ^[1-9][0-9]*$ ]] || return 2
+    [[ -e "/proc/${pid}/stat" ]] || return 1
+    [[ -r "/proc/${pid}/stat" ]] || return 2
+    stat="$(< "/proc/${pid}/stat")"
+    [[ "${stat}" == *") "* ]] || return 2
+    rest="${stat##*) }"
+    # The tail begins with field 3, so process start time (field 22) is item 20.
+    # shellcheck disable=SC2086 # Intentional splitting of procfs fields.
+    set -- ${rest}
+    (( $# >= 20 )) && [[ "${20}" =~ ^[0-9]+$ ]] || return 2
+    printf '%s\n' "${20}"
+}
+
+validate_managed_launch_lock_owner() {
+    local directory="$1" owner="${1}/owner.json"
+    [[ -d "${directory}" && ! -L "${directory}" && "$(realpath "${directory}")" == "${directory}" &&
+       "$(stat -c %u "${directory}")" == "$(id -u)" && "$(stat -c %a "${directory}")" == 700 ]] \
+        || return 1
+    [[ "$(find "${directory}" -mindepth 1 -maxdepth 1 -printf '%f\n')" == owner.json ]] || return 1
+    [[ -f "${owner}" && ! -L "${owner}" && "$(realpath "${owner}")" == "${owner}" &&
+       "$(stat -c %h "${owner}")" == 1 && "$(stat -c %u "${owner}")" == "$(id -u)" &&
+       "$(stat -c %a "${owner}")" == 600 ]] || return 1
+    jq -e '
+        (keys | sort == ["createdAt","machineId","ownershipToken","pid","processStartToken","schemaVersion","workspaceId"]) and
+        .schemaVersion == 1 and
+        (.machineId | type == "string" and test("^[0-9a-f]{16}$")) and
+        (.pid | type == "number" and floor == . and . >= 1) and
+        (.processStartToken | type == "string" and test("^[0-9]+$")) and
+        (.ownershipToken | type == "string" and test("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")) and
+        (.workspaceId | type == "string" and test("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")) and
+        (.createdAt | type == "string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"))
+    ' "${owner}" >/dev/null 2>&1
+}
+
+acquire_managed_launch_lock() {
+    local workspace_id="$1" root lock owner machine current_start token created attempt
+    local owner_machine owner_pid owner_start stale actual_start status
+    [[ "${workspace_id}" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] \
+        || fail "invalid managed workspace UUID for launch lock: ${workspace_id}"
+    [[ -z "${MANAGED_LAUNCH_LOCK_DIR}" && -z "${MANAGED_LAUNCH_LOCK_TOKEN}" ]] \
+        || fail "this Pi-Run process already owns a managed workspace launch lock"
+    root="${PI_RUN_HOME_RESOLVED}/worktrees/.launch-locks"
+    if [[ ! -e "${root}" && ! -L "${root}" ]]; then
+        mkdir "${root}"
+        chmod 0700 "${root}"
+    fi
+    [[ -d "${root}" && ! -L "${root}" && "$(realpath "${root}")" == "${root}" &&
+       "$(stat -c %u "${root}")" == "$(id -u)" && "$(stat -c %a "${root}")" == 700 ]] \
+        || fail "managed launch lock root is unsafe: ${root}"
+    lock="${root}/${workspace_id}"
+    machine="$(machine_id)"
+    current_start="$(process_start_token "$$")" \
+        || fail "could not determine the current process start token"
+
+    for attempt in 1 2; do
+        if mkdir "${lock}" 2>/dev/null; then
+            chmod 0700 "${lock}"
+            token="$(new_workspace_id)"
+            created="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            owner="${lock}/owner.json"
+            jq -n --arg machine "${machine}" --argjson pid "$$" --arg start "${current_start}" \
+                --arg token "${token}" --arg workspace "${workspace_id}" --arg created "${created}" \
+                '{schemaVersion:1,machineId:$machine,pid:$pid,processStartToken:$start,
+                  ownershipToken:$token,workspaceId:$workspace,createdAt:$created}' > "${owner}.tmp"
+            chmod 0600 "${owner}.tmp"
+            mv "${owner}.tmp" "${owner}"
+            MANAGED_LAUNCH_LOCK_DIR="${lock}"
+            MANAGED_LAUNCH_LOCK_TOKEN="${token}"
+            return 0
+        fi
+        validate_managed_launch_lock_owner "${lock}" \
+            || fail "managed workspace launch lock is unsafe or ambiguous: ${lock}"
+        owner="${lock}/owner.json"
+        owner_machine="$(jq -r '.machineId' "${owner}")"
+        owner_pid="$(jq -r '.pid' "${owner}")"
+        owner_start="$(jq -r '.processStartToken' "${owner}")"
+        [[ "${owner_machine}" == "${machine}" && "$(jq -r '.workspaceId' "${owner}")" == "${workspace_id}" ]] \
+            || fail "managed workspace launch lock belongs to different machine metadata: ${lock}"
+        set +e
+        actual_start="$(process_start_token "${owner_pid}")"
+        status=$?
+        set -e
+        if (( status == 0 )) && [[ "${actual_start}" == "${owner_start}" ]]; then
+            fail "managed workspace is already active: ${workspace_id} (pid ${owner_pid})"
+        elif (( status > 1 )); then
+            fail "managed workspace launch lock owner cannot be verified safely: ${lock}"
+        fi
+        stale="${root}/.stale-${workspace_id}-$(new_workspace_id)"
+        if mv -T "${lock}" "${stale}" 2>/dev/null; then
+            validate_managed_launch_lock_owner "${stale}" \
+                || fail "renamed stale managed launch lock became unsafe: ${stale}"
+            rm "${stale}/owner.json"
+            rmdir "${stale}"
+        elif (( attempt == 2 )); then
+            fail "managed workspace launch lock changed during stale recovery: ${lock}"
+        fi
+    done
+    fail "could not acquire managed workspace launch lock: ${workspace_id}"
+}
+
+release_managed_launch_lock() {
+    local owner token
+    [[ -n "${MANAGED_LAUNCH_LOCK_DIR}" && -n "${MANAGED_LAUNCH_LOCK_TOKEN}" ]] || return 0
+    validate_managed_launch_lock_owner "${MANAGED_LAUNCH_LOCK_DIR}" || return 1
+    owner="${MANAGED_LAUNCH_LOCK_DIR}/owner.json"
+    token="$(jq -r '.ownershipToken' "${owner}")"
+    [[ "${token}" == "${MANAGED_LAUNCH_LOCK_TOKEN}" ]] || return 1
+    rm "${owner}" || return 1
+    rmdir "${MANAGED_LAUNCH_LOCK_DIR}" || return 1
+    MANAGED_LAUNCH_LOCK_DIR=""
+    MANAGED_LAUNCH_LOCK_TOKEN=""
+}
+
 ensure_worktree_repository_record() {
     local selected="${1:-.}" machine count repository_id created
     resolve_worktree_repository "${selected}"

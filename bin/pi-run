@@ -846,9 +846,16 @@ cleanup_launch_resources() {
         fi
     fi
     cleanup_snapshot_launch_request || cleanup_failed=true
+    if ! release_managed_launch_lock; then
+        echo "pi-run: warning: could not release managed workspace launch lock" >&2
+        cleanup_failed=true
+    fi
     [[ "${cleanup_failed}" == false ]]
 }
 trap cleanup_launch_resources EXIT
+if [[ "${MANAGED_WORKTREE}" == true ]]; then
+    acquire_managed_launch_lock "${WORKSPACE_ID}"
+fi
 
 case "${NETWORK_MODE}" in
     host) DOCKER_NETWORK_MODE=host ;;
