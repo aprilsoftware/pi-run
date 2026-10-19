@@ -98,15 +98,24 @@ Starting a new managed session should:
 1. validate that the selected path belongs to a supported non-bare Git
    repository;
 2. resolve and validate the repository's Git directory and common Git directory;
-3. choose a committed base revision;
-4. create a dedicated branch and host-visible worktree;
-5. assign and register a new workspace UUID;
-6. record the repository-to-workspace association atomically; and
+3. resolve the selected checkout's `HEAD` to one exact commit and inspect its
+   working state;
+4. allocate one workspace UUID and preflight its branch, checkout path, Git
+   administration path, and metadata associations;
+5. create the dedicated branch and host-visible worktree at the recorded commit;
+6. publish the workspace registration, path mapping, and repository association
+   atomically; and
 7. launch Pi with the managed worktree mounted at `/workspace`.
 
-The launch must report that a managed worktree is active, including a sanitized
-branch name and host path. Transparent invocation must not make source location
-or branch state invisible.
+The branch is `pi-run/<complete-workspace-uuid>`, and the final checkout path is
+`<Pi-Run home>/worktrees/<repository-id>/<workspace-id>/`. The UUID is generated
+once for the operation. Any collision involving the UUID, branch, checkout path,
+Git administration path, workspace registry, or machine metadata fails without
+silently choosing another identity.
+
+The launch must report that a managed worktree is active, including the full
+workspace identity, sanitized branch and host path, and recorded base commit.
+Transparent invocation must not make source location or branch state invisible.
 
 For associated managed workspaces:
 
@@ -163,24 +172,44 @@ Automatic removal of apparently empty worktrees is excluded initially. A run
 can exit before writing a transcript while still leaving meaningful source or
 Git state.
 
-## Dirty primary checkout and base revision
+## Source checkout and base revision
 
-A linked worktree starts from a commit and cannot inherit uncommitted primary
-checkout changes safely. Pi-Run must never stash, copy, commit, reset, or discard
-those changes automatically.
+A linked worktree starts from a commit and cannot inherit uncommitted checkout
+changes safely. Pi-Run resolves the selected checkout's `HEAD^{commit}` before
+creating anything and uses that full commit ID as the base. Attached and
+detached `HEAD` are accepted when they resolve to a commit; an unborn repository
+is rejected.
 
-The initial policy remains open between two conservative choices:
+A dirty selected checkout is allowed. Before creation, Pi-Run reports that its
+modified, staged, untracked, or other uncommitted state is excluded and that the
+managed worktree begins at the displayed commit. Pi-Run must never stash, copy,
+commit, reset, clean, or discard source-checkout changes automatically.
 
-1. refuse creation while the selected primary checkout is dirty; or
-2. allow creation but report clearly that the new worktree starts from the
-   committed `HEAD` and excludes uncommitted changes.
-
-Existing managed worktrees retain their current branch state when the primary
+Existing managed worktrees retain their current branch state when the source
 branch advances. Pi-Run must not automatically rebase or merge them.
 
-Unborn branches, detached `HEAD`, submodules, nested repositories, bare
-repositories, and Git-LFS-specific behavior require explicit support decisions
-rather than accidental acceptance.
+Submodules, nested repositories, and Git-LFS-specific behavior require explicit
+support decisions rather than accidental acceptance.
+
+## Creation failure and interruption
+
+All paths, refs, identities, metadata relationships, and ownership requirements
+are preflighted before `git worktree add` runs. Portable and machine-local
+metadata is published only after Git successfully creates the new branch and
+worktree.
+
+On an ordinary creation failure, Pi-Run may roll back only the branch, worktree,
+and empty private parent directories created by that invocation. Rollback first
+verifies that the worktree remains at the recorded base commit, has no tracked
+or untracked changes, still uses the expected administration directory, and has
+not been published in metadata. Pre-existing or ambiguous state is never
+removed as cleanup.
+
+An interruption can leave Git state without published Pi-Run metadata. A later
+operation must detect the branch, path, or administration collision and report
+it for explicit recovery. It must not reuse the UUID, register the partial state,
+or delete it speculatively. Recovery and removal commands remain separate
+future work.
 
 ## Storage location
 
@@ -342,9 +371,8 @@ Each step requires a separate concrete proposal and approval.
 
 ## Decisions required before production implementation
 
-- branch naming and collision handling;
-- dirty-checkout policy and base-revision reporting;
-- supported Git states and features for the initial release;
+- supported Git states and features for the initial release beyond attached or
+  detached committed `HEAD`;
 - exact active-launch lock ownership and stale-lock recovery;
 - command semantics when several managed workspaces could satisfy `-c`;
 - whether profile selection participates in latest-session routing;
