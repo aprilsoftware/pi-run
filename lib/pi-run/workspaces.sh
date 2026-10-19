@@ -43,14 +43,101 @@ validate_workspace_metadata() {
         || fail "invalid workspace registry: ${registry}"
 
     jq -e '
-        .schemaVersion == 1 and
-        (.machineId | type == "string") and
-        (.workspacePaths | type == "array") and
-        all(.workspacePaths[];
-            (.workspaceId | type == "string") and
-            (.path | type == "string"))
+        def uuid: type == "string" and test("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$");
+        def host_path: type == "string" and test("^/[\\x20-\\x7e]*$");
+        def workspace_path:
+            (keys | sort == ["path", "workspaceId"]) and
+            (.workspaceId | uuid) and (.path | host_path);
+        def managed_workspace:
+            (keys | sort == ["branch", "createdAt", "workspaceId"]) and
+            (.workspaceId | uuid) and
+            (.branch | type == "string" and length > 0 and length <= 255 and test("^[^\\x00-\\x1f\\x7f]+$")) and
+            (.createdAt | type == "string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"));
+        def repository:
+            (keys | sort == ["commonGitDir", "createdAt", "enabled", "id", "managedWorkspaces", "name", "primaryPath"]) and
+            (.id | uuid) and
+            (.name | type == "string" and length > 0 and length <= 255 and test("^[^\\x00-\\x1f\\x7f]+$")) and
+            (.commonGitDir | host_path) and (.primaryPath | host_path) and
+            (.enabled | type == "boolean") and
+            (.createdAt | type == "string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$")) and
+            (.managedWorkspaces | type == "array") and all(.managedWorkspaces[]; managed_workspace);
+        if .schemaVersion == 1 then
+            (.machineId | type == "string") and
+            (.workspacePaths | type == "array") and
+            all(.workspacePaths[];
+                (.workspaceId | type == "string") and (.path | type == "string"))
+        else
+            .schemaVersion == 2 and
+            (keys | sort == ["machineId", "repositories", "schemaVersion", "workspacePaths"]) and
+            (.machineId | type == "string" and test("^[0-9a-f]{16}$")) and
+            (.workspacePaths | type == "array") and all(.workspacePaths[]; workspace_path) and
+            ([.workspacePaths[].workspaceId] | length == (unique | length)) and
+            ([.workspacePaths[].path] | length == (unique | length)) and
+            (.repositories | type == "array") and all(.repositories[]; repository) and
+            ([.repositories[].id] | length == (unique | length)) and
+            ([.repositories[].commonGitDir] | length == (unique | length)) and
+            ([.repositories[].managedWorkspaces[].workspaceId] | length == (unique | length)) and
+            ([.workspacePaths[].workspaceId] as $mapped |
+                all(.repositories[].managedWorkspaces[]; .workspaceId as $id | ($mapped | index($id)) != null))
+        end
     ' "${machine}" >/dev/null \
         || fail "invalid machine workspace mapping: ${machine}"
+}
+
+validate_worktree_machine_file() {
+    local file="$1" expected_id
+    expected_id="$(basename "${file}" .json)"
+    [[ -f "${file}" && ! -L "${file}" && "$(realpath "${file}")" == "${file}" ]] \
+        || fail "worktree machine metadata must be a regular non-symlink file: ${file}"
+    [[ "$(stat -c %h "${file}")" == 1 ]] \
+        || fail "worktree machine metadata must not be hard-linked: ${file}"
+    [[ "$(stat -c %a "${file}")" == 600 ]] \
+        || fail "worktree machine metadata permissions must be 600: ${file}"
+    [[ "$(stat -c %u "${file}")" == "$(id -u)" ]] \
+        || fail "worktree machine metadata must be owned by the current user: ${file}"
+    [[ "${expected_id}" =~ ^[0-9a-f]{16}$ &&
+       "$(jq -r '.machineId // ""' "${file}")" == "${expected_id}" ]] \
+        || fail "worktree machine metadata has the wrong machine identity: ${file}"
+}
+
+validate_worktree_machine_v1_migration() {
+    local file="$1"
+    jq -e '
+        (keys | sort == ["machineId", "schemaVersion", "workspacePaths"]) and
+        .schemaVersion == 1 and (.machineId | type == "string" and test("^[0-9a-f]{16}$")) and
+        (.workspacePaths | type == "array") and
+        all(.workspacePaths[];
+            (keys | sort == ["path", "workspaceId"]) and
+            (.workspaceId | type == "string" and test("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")) and
+            (.path | type == "string" and test("^/[\\x20-\\x7e]*$"))) and
+        ([.workspacePaths[].workspaceId] | length == (unique | length)) and
+        ([.workspacePaths[].path] | length == (unique | length))
+    ' "${file}" >/dev/null \
+        || fail "machine metadata cannot be migrated safely: ${file}"
+}
+
+ensure_worktree_machine_metadata() {
+    local machine schema
+    machine="$(machine_file)"
+    acquire_workspace_lock
+    if [[ -e "${machine}" || -L "${machine}" ]]; then
+        validate_worktree_machine_file "${machine}"
+    else
+        initialize_machine_file "${machine}"
+        validate_worktree_machine_file "${machine}"
+    fi
+    validate_workspace_metadata "${machine}"
+    schema="$(jq -r '.schemaVersion' "${machine}")"
+    if [[ "${schema}" == 1 ]]; then
+        validate_worktree_machine_v1_migration "${machine}"
+        update_json "${machine}" '.schemaVersion = 2 | .repositories = []'
+        validate_worktree_machine_file "${machine}"
+        validate_workspace_metadata "${machine}"
+    elif [[ "${schema}" != 2 ]]; then
+        fail "unsupported worktree machine metadata schema: ${machine}"
+    fi
+    release_workspace_lock
+    printf '%s\n' "${machine}"
 }
 
 WORKSPACE_LOCK=""
