@@ -352,6 +352,9 @@ select_resume_target() {
     if [[ "${SESSION_GROUP_STATUSES[selected]}" != "available" ]]; then
         [[ "${SESSION_GROUP_STATUSES[selected]}" == "unavailable" ]] \
             || fail "workspace session metadata is ${SESSION_GROUP_STATUSES[selected]} and cannot be reconnected automatically"
+        if managed_workspace_association_exists "${SESSION_GROUP_WORKSPACES[selected]}"; then
+            fail "managed worktree is unavailable on this machine and cannot be reconnected as an ordinary checkout: ${SESSION_GROUP_WORKSPACES[selected]}"
+        fi
         reconnect_selected_session_group "${selected}"
     fi
     PROFILE="${SESSION_GROUP_PROFILES[selected]}"

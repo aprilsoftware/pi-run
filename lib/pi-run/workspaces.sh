@@ -325,6 +325,100 @@ release_managed_launch_lock() {
     MANAGED_LAUNCH_LOCK_TOKEN=""
 }
 
+managed_workspace_association_exists() {
+    local workspace_id="$1" machine count
+    machine="$(machine_file)"
+    [[ -f "${machine}" ]] || return 1
+    acquire_workspace_lock
+    validate_worktree_machine_file "${machine}"
+    validate_workspace_metadata "${machine}"
+    if [[ "$(jq -r '.schemaVersion' "${machine}")" != 2 ]]; then
+        release_workspace_lock
+        return 1
+    fi
+    count="$(jq -r --arg id "${workspace_id}" \
+        '[.repositories[].managedWorkspaces[] | select(.workspaceId == $id)] | length' "${machine}")"
+    release_workspace_lock
+    [[ "${count}" == 0 ]] && return 1
+    [[ "${count}" == 1 ]] || fail "managed workspace association is ambiguous: ${workspace_id}"
+}
+
+RESOLVED_MANAGED_BRANCH=""
+RESOLVED_MANAGED_COMMON_DIR=""
+RESOLVED_MANAGED_HEAD=""
+
+resolve_managed_workspace_launch() {
+    local workspace_id="$1" worktree="$2" machine registry association_count repository_id branch mapped_path
+    local common primary expected_path admin_dir registry_count actual_common actual_git_dir actual_branch
+    RESOLVED_MANAGED_BRANCH=""
+    RESOLVED_MANAGED_COMMON_DIR=""
+    RESOLVED_MANAGED_HEAD=""
+    machine="$(machine_file)"
+    registry="${PI_RUN_HOME_RESOLVED}/workspaces/registry.json"
+    [[ -f "${machine}" ]] || return 1
+
+    acquire_workspace_lock
+    validate_worktree_machine_file "${machine}"
+    validate_workspace_metadata "${machine}"
+    if [[ "$(jq -r '.schemaVersion' "${machine}")" != 2 ]]; then
+        release_workspace_lock
+        return 1
+    fi
+    association_count="$(jq -r --arg id "${workspace_id}" \
+        '[.repositories[].managedWorkspaces[] | select(.workspaceId == $id)] | length' "${machine}")"
+    if [[ "${association_count}" == 0 ]]; then
+        release_workspace_lock
+        return 1
+    fi
+    [[ "${association_count}" == 1 ]] || fail "managed workspace association is ambiguous: ${workspace_id}"
+    repository_id="$(jq -r --arg id "${workspace_id}" '
+        .repositories[] | select(any(.managedWorkspaces[]; .workspaceId == $id)) | .id
+    ' "${machine}")"
+    branch="$(jq -r --arg id "${workspace_id}" '
+        .repositories[].managedWorkspaces[] | select(.workspaceId == $id) | .branch
+    ' "${machine}")"
+    mapped_path="$(jq -r --arg id "${workspace_id}" '.workspacePaths[] | select(.workspaceId == $id) | .path' "${machine}")"
+    common="$(jq -r --arg id "${repository_id}" '.repositories[] | select(.id == $id) | .commonGitDir' "${machine}")"
+    primary="$(jq -r --arg id "${repository_id}" '.repositories[] | select(.id == $id) | .primaryPath' "${machine}")"
+    registry_count="$(jq -r --arg id "${workspace_id}" \
+        '[.workspaces[] | select(.id == $id)] | length' "${registry}")"
+    release_workspace_lock
+
+    [[ "${branch}" == "pi-run/${workspace_id}" ]] \
+        || fail "managed resume branch metadata conflicts with its workspace identity: ${workspace_id}"
+    expected_path="${PI_RUN_HOME_RESOLVED}/worktrees/${repository_id}/${workspace_id}"
+    [[ "${mapped_path}" == "${expected_path}" && "${worktree}" == "${expected_path}" ]] \
+        || fail "managed resume path conflicts with its workspace identity: ${workspace_id}"
+    [[ "${registry_count}" == 1 &&
+       "$(jq -r --arg id "${workspace_id}" '.workspaces[] | select(.id == $id) | .kind' "${registry}")" == git ]] \
+        || fail "portable workspace metadata conflicts with managed resume: ${workspace_id}"
+    [[ -d "${worktree}" && ! -L "${worktree}" && "$(realpath "${worktree}")" == "${worktree}" &&
+       "$(stat -c %u "${worktree}")" == "$(id -u)" ]] \
+        || fail "managed resume worktree is missing or unsafe: ${worktree}"
+    [[ -d "${common}" && ! -L "${common}" && -d "${primary}" && ! -L "${primary}" &&
+       "$(realpath "${common}")" == "${common}" && "$(realpath "${primary}")" == "${primary}" &&
+       "${common}" == "${primary}/.git" && "$(stat -c %u "${common}")" == "$(id -u)" &&
+       "$(stat -c %u "${primary}")" == "$(id -u)" ]] \
+        || fail "managed resume repository paths are missing or unsafe"
+    admin_dir="${common}/worktrees/${workspace_id}"
+    [[ -d "${admin_dir}" && ! -L "${admin_dir}" && -f "${worktree}/.git" && ! -L "${worktree}/.git" ]] \
+        || fail "managed resume Git administration is missing or unsafe: ${worktree}"
+    actual_common="$(git -C "${worktree}" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+    actual_git_dir="$(git -C "${worktree}" rev-parse --path-format=absolute --git-dir 2>/dev/null || true)"
+    actual_branch="$(git -C "${worktree}" symbolic-ref --quiet HEAD 2>/dev/null || true)"
+    [[ "${actual_common}" == "${common}" && "${actual_git_dir}" == "${admin_dir}" &&
+       "${actual_branch}" == "refs/heads/${branch}" ]] \
+        || fail "managed resume Git state conflicts with metadata: ${workspace_id}"
+    # Consumed by launcher dispatch after managed association resolution.
+    # shellcheck disable=SC2034
+    RESOLVED_MANAGED_HEAD="$(git -C "${worktree}" rev-parse --verify HEAD 2>/dev/null)" \
+        || fail "managed resume worktree has no committed HEAD: ${workspace_id}"
+    # shellcheck disable=SC2034
+    RESOLVED_MANAGED_BRANCH="${branch}"
+    # shellcheck disable=SC2034
+    RESOLVED_MANAGED_COMMON_DIR="${common}"
+}
+
 ensure_worktree_repository_record() {
     local selected="${1:-.}" machine count repository_id created
     resolve_worktree_repository "${selected}"

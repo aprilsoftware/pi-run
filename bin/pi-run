@@ -720,6 +720,13 @@ if [[ "${WORKTREE_REQUESTED}" == true ]]; then
             || fail "published managed worktree no longer matches its common Git directory"
     fi
     MANAGED_WORKTREE=true
+elif [[ "${RESUME_LAUNCH}" == true ]] && resolve_managed_workspace_launch "${RESUME_WORKSPACE_ID}" "${WORKSPACE}"; then
+    WORKSPACE_ID="${RESUME_WORKSPACE_ID}"
+    MANAGED_WORKTREE_BRANCH="${RESOLVED_MANAGED_BRANCH}"
+    MANAGED_WORKTREE_COMMON_DIR="${RESOLVED_MANAGED_COMMON_DIR}"
+    MANAGED_WORKTREE_BASE="${RESOLVED_MANAGED_HEAD}"
+    MANAGED_WORKTREE_CONTINUATION=true
+    MANAGED_WORKTREE=true
 else
     WORKSPACE_ID="$(ensure_workspace_registered "${WORKSPACE}")"
     if [[ "${RESUME_LAUNCH}" == false ]]; then
