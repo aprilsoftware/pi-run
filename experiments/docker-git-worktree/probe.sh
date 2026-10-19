@@ -30,6 +30,8 @@ WORKTREE_A="${STATE}/worktree-a"
 WORKTREE_B="${STATE}/worktree-b"
 DOT_GIT_A="${STATE}/dot-git-a"
 DOT_GIT_B="${STATE}/dot-git-b"
+CONTROL_WORKTREE="${STATE}/control-worktree"
+HOST_HOOK_MARKER="${STATE}/host-hook-marker"
 SUFFIX="$(date +%s)-$$"
 CONTAINER_A="pirun-worktree-a-${SUFFIX}"
 CONTAINER_B="pirun-worktree-b-${SUFFIX}"
@@ -52,14 +54,39 @@ git init -q -b main "${REPOSITORY}"
 git -C "${REPOSITORY}" config user.name "Pi-Run worktree probe"
 git -C "${REPOSITORY}" config user.email "probe@pi-run.invalid"
 printf 'base\n' > "${REPOSITORY}/base.txt"
-git -C "${REPOSITORY}" add base.txt
+printf 'filtered source\n' > "${REPOSITORY}/filtered.txt"
+printf 'filtered.txt filter=probe\n' > "${REPOSITORY}/.gitattributes"
+git -C "${REPOSITORY}" config filter.probe.clean cat
+git -C "${REPOSITORY}" config filter.probe.smudge \
+    "sh -c 'printf \"filter ran\\n\" > filter-marker; cat'"
+git -C "${REPOSITORY}" config filter.probe.required true
+git -C "${REPOSITORY}" add base.txt filtered.txt .gitattributes
 git -C "${REPOSITORY}" commit -qm base
+cat > "${REPOSITORY}/.git/hooks/post-checkout" <<EOF
+#!/bin/sh
+printf 'host hook ran\n' > '${HOST_HOOK_MARKER}'
+printf 'hook ran\n' > hook-marker
+EOF
+chmod 0755 "${REPOSITORY}/.git/hooks/post-checkout"
 
-git -C "${REPOSITORY}" worktree add -q -b probe-a "${WORKTREE_A}" main
-git -C "${REPOSITORY}" worktree add -q -b probe-b "${WORKTREE_B}" main
-printf 'primary only\n' > "${REPOSITORY}/primary-untracked"
-printf 'worktree A only\n' > "${WORKTREE_A}/a-untracked"
-printf 'worktree B only\n' > "${WORKTREE_B}/b-untracked"
+# Establish that an ordinary host checkout would execute repository-controlled code.
+git -C "${REPOSITORY}" worktree add -q -b probe-control "${CONTROL_WORKTREE}" main
+[[ -f "${HOST_HOOK_MARKER}" && -f "${CONTROL_WORKTREE}/hook-marker" &&
+   -f "${CONTROL_WORKTREE}/filter-marker" ]] \
+    || fail "ordinary worktree creation did not execute the control hook and filter"
+git -C "${REPOSITORY}" worktree remove --force "${CONTROL_WORKTREE}"
+git -C "${REPOSITORY}" branch -D probe-control >/dev/null
+rm -f "${HOST_HOOK_MARKER}"
+echo "PASS control: ordinary host checkout invoked its hook and filter"
+
+BASE_COMMIT="$(git -C "${REPOSITORY}" rev-parse 'main^{commit}')"
+git -C "${REPOSITORY}" worktree add --no-checkout -q -b probe-a "${WORKTREE_A}" "${BASE_COMMIT}"
+git -C "${REPOSITORY}" worktree add --no-checkout -q -b probe-b "${WORKTREE_B}" "${BASE_COMMIT}"
+[[ ! -e "${HOST_HOOK_MARKER}" && ! -e "${WORKTREE_A}/hook-marker" &&
+   ! -e "${WORKTREE_A}/filter-marker" && ! -e "${WORKTREE_B}/hook-marker" &&
+   ! -e "${WORKTREE_B}/filter-marker" ]] \
+    || fail "--no-checkout executed repository-controlled checkout code on the host"
+echo "PASS blocked: --no-checkout host hook and filter execution"
 
 COMMON_DIR="$(git -C "${WORKTREE_A}" rev-parse --path-format=absolute --git-common-dir)"
 GIT_DIR_A="$(git -C "${WORKTREE_A}" rev-parse --path-format=absolute --git-dir)"
@@ -103,6 +130,37 @@ set -e
 [[ "${baseline_output}" == *"not a git repository"* || "${baseline_output}" == *"No such file"* ]] \
     || fail "baseline failure did not identify unavailable Git metadata"
 echo "PASS blocked: linked worktree without common Git metadata"
+
+materialize_worktree() {
+    local worktree="$1" dot_git="$2" branch="$3"
+    docker run "${base_args[@]}" \
+        --mount "type=bind,src=${worktree},dst=/workspace" \
+        --mount "type=bind,src=${COMMON_DIR},dst=/run/pi-run-git/common" \
+        --mount "type=bind,src=${dot_git},dst=/workspace/.git,readonly" \
+        --env PI_RUN_PROBE_MATERIALIZE=1 \
+        --env "PI_RUN_PROBE_BRANCH=${branch}" \
+        --env "PI_RUN_PROBE_COMMIT=${BASE_COMMIT}" \
+        "${IMAGE}" -ceu '
+            test "$(git branch --show-current)" = "${PI_RUN_PROBE_BRANCH}"
+            git -c core.hooksPath=/dev/null reset --hard "${PI_RUN_PROBE_COMMIT}" >/dev/null
+            test "$(git rev-parse HEAD)" = "${PI_RUN_PROBE_COMMIT}"
+            test "$(cat filtered.txt)" = "filtered source"
+            test -f filter-marker
+            test ! -e hook-marker
+        ' >/dev/null
+}
+
+materialize_worktree "${WORKTREE_A}" "${DOT_GIT_A}" probe-a
+materialize_worktree "${WORKTREE_B}" "${DOT_GIT_B}" probe-b
+[[ ! -e "${HOST_HOOK_MARKER}" && -f "${WORKTREE_A}/filter-marker" &&
+   -f "${WORKTREE_B}/filter-marker" && ! -e "${WORKTREE_A}/hook-marker" &&
+   ! -e "${WORKTREE_B}/hook-marker" ]] \
+    || fail "isolated materialization did not confine checkout code"
+echo "PASS: offline container materialization with hooks disabled and filters confined"
+
+printf 'primary only\n' > "${REPOSITORY}/primary-untracked"
+printf 'worktree A only\n' > "${WORKTREE_A}/a-untracked"
+printf 'worktree B only\n' > "${WORKTREE_B}/b-untracked"
 
 run_commit_probe() {
     local worktree="$1" dot_git="$2" branch="$3" own_marker="$4" other_marker="$5" file="$6"

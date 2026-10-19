@@ -28,6 +28,7 @@ case "${1:-}" in
         worktree=
         branch=
         file=
+        materialize=false
         while (( $# > 0 )); do
             case "$1" in
                 -d) detached=true; shift ;;
@@ -46,6 +47,7 @@ case "${1:-}" in
                     case "$2" in
                         PI_RUN_PROBE_BRANCH=*) branch="${2#*=}" ;;
                         PI_RUN_PROBE_FILE=*) file="${2#*=}" ;;
+                        PI_RUN_PROBE_MATERIALIZE=1) materialize=true ;;
                     esac
                     shift 2
                     ;;
@@ -62,6 +64,14 @@ case "${1:-}" in
         fi
         if [[ "$detached" == true ]]; then
             echo fake-container-id
+            exit 0
+        fi
+        if [[ "$materialize" == true ]]; then
+            [[ -n "$branch" ]] || exit 2
+            printf 'base\n' > "${worktree}/base.txt"
+            printf 'filtered source\n' > "${worktree}/filtered.txt"
+            printf 'filtered.txt filter=probe\n' > "${worktree}/.gitattributes"
+            printf 'filter ran\n' > "${worktree}/filter-marker"
             exit 0
         fi
         [[ -n "$branch" && -n "$file" ]] || exit 2
@@ -81,8 +91,14 @@ chmod 0755 "${TMP}/fake-bin/docker"
 export DOCKER_LOG="${TMP}/docker.log"
 export STATE_PATH_FILE="${TMP}/state-path"
 output="$(PATH="${TMP}/fake-bin:${PATH}" "$PROBE" --execute)"
+[[ "$output" == *'PASS control: ordinary host checkout invoked its hook and filter'* ]] \
+    || fail "probe did not establish the unsafe host-checkout control"
+[[ "$output" == *'PASS blocked: --no-checkout host hook and filter execution'* ]] \
+    || fail "probe did not prevent host checkout code execution"
 [[ "$output" == *'PASS blocked: linked worktree without common Git metadata'* ]] \
     || fail "probe did not prove the baseline failure"
+[[ "$output" == *'PASS: offline container materialization with hooks disabled and filters confined'* ]] \
+    || fail "probe did not isolate checkout materialization"
 [[ "$output" == *'PASS: independent worktree files, indexes, branches, and shared refs'* ]] \
     || fail "probe did not prove worktree independence"
 [[ "$output" == *'PASS: concurrent worktree status containers'* ]] \
@@ -99,6 +115,10 @@ grep -F 'dst=/run/pi-run-git/common' "$DOCKER_LOG" >/dev/null \
     || fail "common Git metadata was not mounted"
 grep -F 'dst=/workspace/.git,readonly' "$DOCKER_LOG" >/dev/null \
     || fail "generated .git pointer was not mounted read-only"
+[[ "$(grep -c 'PI_RUN_PROBE_MATERIALIZE=1' "$DOCKER_LOG")" -eq 2 ]] \
+    || fail "probe did not run two isolated materialization containers"
+grep -F 'core.hooksPath=/dev/null reset --hard' "$DOCKER_LOG" >/dev/null \
+    || fail "materialization did not disable checkout hooks"
 [[ "$(grep -c '^run -d ' "$DOCKER_LOG")" -eq 2 ]] \
     || fail "probe did not start two concurrent status containers"
 grep -F 'rm -f pirun-worktree-a-' "$DOCKER_LOG" >/dev/null \
@@ -108,6 +128,8 @@ if grep -E '(^| )(--network host|pull |build |/var/run/docker.sock|/run/docker.s
 fi
 for contract in \
     'gitdir: /run/pi-run-git/common/worktrees/%s' \
+    'worktree add --no-checkout' \
+    'ordinary worktree creation did not execute the control hook and filter' \
     'linked worktree unexpectedly worked without common Git metadata' \
     'test ! -e /workspace/primary-untracked' \
     'managed-worktree commit changed the primary branch'; do

@@ -305,27 +305,48 @@ the primary repository's common Git directory. Mounting only the selected
 worktree at `/workspace` does not make the host path in that pointer available
 inside the container.
 
-The preferred feasibility direction is to:
+The selected creation and mount sequence is to:
 
-1. resolve the selected worktree Git directory and common directory on the host;
-2. validate that both are ordinary, consistently related Git paths;
-3. mount the common Git directory at a private container path;
-4. over-mount a launcher-generated `.git` pointer at `/workspace/.git`; and
-5. preserve Git's expected selected-worktree administration layout beneath the
-   mounted common directory.
+1. create the branch and linked-worktree administration on the host with
+   `git worktree add --no-checkout`, without materializing repository content;
+2. verify that no working files or repository-controlled checkout code ran;
+3. resolve and validate the selected worktree Git directory and common Git
+   directory on the host;
+4. mount the empty worktree and common Git directory into a short-lived offline
+   runtime container;
+5. over-mount a launcher-generated `.git` pointer at `/workspace/.git`;
+6. materialize the recorded commit with checkout hooks explicitly disabled; and
+7. preserve Git's expected selected-worktree administration layout beneath the
+   mounted common directory for the subsequent Pi session.
 
 This avoids exposing the primary checkout's working files or reproducing an
 arbitrary host absolute path in the container. It still makes common Git
 metadata writable, which is inherent to normal worktree Git operations and must
 be documented as shared authority.
 
+The materialization container uses the installed version-matched runtime image
+without pulling, Docker network-none, the host UID and GID, no capabilities,
+no-new-privileges, a read-only root filesystem, and only the selected worktree,
+common Git directory, generated pointer, and private temporary storage. Profiles,
+credentials, shared files, primary and sibling checkouts, and Docker sockets are
+not mounted.
+
+Repository-configured content filters can execute during materialization, but
+only within that restricted container. A filter that requires unavailable host
+resources, credentials, tools, or network access causes creation to fail closed.
+Checkout hooks are disabled for bootstrap materialization. Hooks and filters are
+never moved to host execution as a compatibility fallback.
+
 The generated pointer and any staging directory must be private from unrelated
 host users, frozen before Pi starts, and removed during cleanup. Invalid links,
 unexpected ownership, path escapes, mount collisions, missing administration
 files, or inconsistent common-directory relationships must fail before launch.
 
-This mount design is a hypothesis until proven with disposable repositories,
-real Docker, commits, branches, status operations, and concurrent worktrees.
+The disposable real-Docker probe demonstrates isolated materialization,
+independent files, indexes and branches, shared refs, hidden sibling and primary
+files, and concurrent status containers. It also demonstrates that an ordinary
+host worktree checkout invokes repository hooks and filters while the selected
+`--no-checkout` sequence does not.
 
 ## Security and recovery boundaries
 
@@ -379,7 +400,8 @@ Each step requires a separate concrete proposal and approval.
 - cleanup command shape and treatment of worktrees with sessions but no changes;
 - behavior when users move a primary checkout or remove or relocate managed
   worktrees with ordinary Git;
-- hook and repository-config exposure in the container; and
+- post-launch hook and repository-config exposure after bootstrap materialization;
+  and
 - safe mount behavior when host paths overlap the workspace or Pi-Run home.
 
 Related current behavior: [Workspaces and Sessions](../docs/workspaces-and-sessions.md)
