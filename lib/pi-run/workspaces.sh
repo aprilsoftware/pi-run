@@ -344,6 +344,118 @@ create_managed_worktree_checkout() (
     release_workspace_lock
 )
 
+publish_managed_worktree_metadata() (
+    local workspace_id="$1" repository_id="$2" branch="$3" worktree="$4"
+    local machine registry expected_path common primary admin_dir actual_common actual_git_dir actual_branch
+    local machine_path_count machine_association_count registry_count created name registry_staging=""
+    [[ "${workspace_id}" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] \
+        || fail "invalid managed workspace UUID: ${workspace_id}"
+    [[ "${repository_id}" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] \
+        || fail "invalid managed repository UUID: ${repository_id}"
+    [[ "${branch}" == "pi-run/${workspace_id}" ]] \
+        || fail "managed worktree branch does not match its workspace identity: ${branch}"
+    expected_path="${PI_RUN_HOME_RESOLVED}/worktrees/${repository_id}/${workspace_id}"
+    [[ "${worktree}" == "${expected_path}" ]] \
+        || fail "managed worktree path does not match its workspace identity: ${worktree}"
+
+    machine="$(ensure_worktree_machine_metadata)"
+    registry="${PI_RUN_HOME_RESOLVED}/workspaces/registry.json"
+    acquire_workspace_lock
+    trap 'rm -f "${registry_staging:-}"; rmdir "${WORKSPACE_LOCK:-}" 2>/dev/null || true' EXIT
+    validate_worktree_machine_file "${machine}"
+    validate_workspace_metadata "${machine}"
+    [[ "$(jq -r --arg id "${repository_id}" '[.repositories[] | select(.id == $id)] | length' "${machine}")" == 1 ]] \
+        || fail "managed worktree repository identity is not registered uniquely: ${repository_id}"
+    common="$(jq -r --arg id "${repository_id}" '.repositories[] | select(.id == $id) | .commonGitDir' "${machine}")"
+    primary="$(jq -r --arg id "${repository_id}" '.repositories[] | select(.id == $id) | .primaryPath' "${machine}")"
+    name="$(jq -r --arg id "${repository_id}" '.repositories[] | select(.id == $id) | .name' "${machine}")"
+    admin_dir="${common}/worktrees/${workspace_id}"
+
+    [[ -d "${worktree}" && ! -L "${worktree}" && "$(realpath "${worktree}")" == "${worktree}" &&
+       "$(stat -c %u "${worktree}")" == "$(id -u)" ]] \
+        || fail "managed worktree checkout is missing or unsafe: ${worktree}"
+    [[ -d "${common}" && ! -L "${common}" && -d "${primary}" && ! -L "${primary}" &&
+       "$(realpath "${common}")" == "${common}" && "$(realpath "${primary}")" == "${primary}" &&
+       "${common}" == "${primary}/.git" && "$(stat -c %u "${common}")" == "$(id -u)" &&
+       "$(stat -c %u "${primary}")" == "$(id -u)" ]] \
+        || fail "managed worktree repository paths are missing or unsafe"
+    [[ -d "${admin_dir}" && ! -L "${admin_dir}" && -f "${worktree}/.git" && ! -L "${worktree}/.git" ]] \
+        || fail "managed worktree Git administration is missing or unsafe: ${worktree}"
+    actual_common="$(git -C "${worktree}" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+    actual_git_dir="$(git -C "${worktree}" rev-parse --path-format=absolute --git-dir 2>/dev/null || true)"
+    actual_branch="$(git -C "${worktree}" symbolic-ref --quiet HEAD 2>/dev/null || true)"
+    [[ "${actual_common}" == "${common}" && "${actual_git_dir}" == "${admin_dir}" &&
+       "${actual_branch}" == "refs/heads/${branch}" ]] \
+        || fail "managed worktree Git relationship does not match its metadata"
+
+    machine_path_count="$(jq -r --arg id "${workspace_id}" --arg path "${worktree}" '
+        [.workspacePaths[] | select(.workspaceId == $id or .path == $path)] | length
+    ' "${machine}")"
+    machine_association_count="$(jq -r --arg id "${workspace_id}" '
+        [.repositories[].managedWorkspaces[] | select(.workspaceId == $id)] | length
+    ' "${machine}")"
+    registry_count="$(jq -r --arg id "${workspace_id}" \
+        '[.workspaces[] | select(.id == $id)] | length' "${registry}")"
+
+    if [[ "${machine_path_count}" == 0 && "${machine_association_count}" == 0 ]]; then
+        [[ "${registry_count}" == 0 ]] \
+            || fail "portable workspace metadata exists without a managed machine association: ${workspace_id}"
+        created="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        # shellcheck disable=SC2016 # Dollar-prefixed names are jq variables.
+        update_json "${machine}" --arg id "${workspace_id}" --arg path "${worktree}" \
+            --arg repository "${repository_id}" --arg branch "${branch}" --arg created "${created}" '
+            .workspacePaths += [{workspaceId:$id,path:$path}] |
+            (.repositories[] | select(.id == $repository) | .managedWorkspaces) +=
+                [{workspaceId:$id,branch:$branch,createdAt:$created}]
+        '
+        validate_worktree_machine_file "${machine}"
+        validate_workspace_metadata "${machine}"
+    elif [[ "${machine_path_count}" == 1 && "${machine_association_count}" == 1 ]]; then
+        jq -e --arg id "${workspace_id}" --arg path "${worktree}" --arg repository "${repository_id}" \
+            --arg branch "${branch}" '
+            ([.workspacePaths[] | select(.workspaceId == $id and .path == $path)] | length) == 1 and
+            ([.repositories[] | select(.id == $repository) | .managedWorkspaces[] |
+                select(.workspaceId == $id and .branch == $branch)] | length) == 1
+        ' "${machine}" >/dev/null || fail "managed machine metadata conflicts with the prepared worktree"
+        created="$(jq -r --arg id "${workspace_id}" '
+            .repositories[].managedWorkspaces[] | select(.workspaceId == $id) | .createdAt
+        ' "${machine}")"
+    else
+        fail "managed machine metadata is incomplete or ambiguous: ${workspace_id}"
+    fi
+
+    registry_count="$(jq -r --arg id "${workspace_id}" \
+        '[.workspaces[] | select(.id == $id)] | length' "${registry}")"
+    if [[ "${registry_count}" == 0 ]]; then
+        registry_staging="${registry}.tmp.$$"
+        # shellcheck disable=SC2016 # Dollar-prefixed names are jq variables.
+        if ! jq --arg id "${workspace_id}" --arg name "${name}" --arg created "${created}" \
+            '.workspaces += [{id:$id,name:$name,kind:"git",createdAt:$created}]' \
+            "${registry}" > "${registry_staging}"; then
+            fail "portable workspace publication failed; the machine association remains pending: ${workspace_id}"
+        fi
+        if ! chmod 0600 "${registry_staging}"; then
+            fail "portable workspace publication failed; the machine association remains pending: ${workspace_id}"
+        fi
+        if ! mv "${registry_staging}" "${registry}"; then
+            fail "portable workspace publication failed; the machine association remains pending: ${workspace_id}"
+        fi
+        registry_staging=""
+        validate_workspace_metadata "${machine}"
+    elif [[ "${registry_count}" == 1 ]]; then
+        jq -e --arg id "${workspace_id}" --arg name "${name}" --arg created "${created}" '
+            [.workspaces[] | select(.id == $id)] | .[0] |
+            (keys | sort == ["createdAt","id","kind","name"]) and
+            .name == $name and .kind == "git" and .createdAt == $created
+        ' "${registry}" >/dev/null || fail "portable workspace metadata conflicts with the managed machine association"
+    else
+        fail "portable workspace metadata is ambiguous: ${workspace_id}"
+    fi
+
+    release_workspace_lock
+    printf '%s\n' "${workspace_id}"
+)
+
 set_worktree_preference() {
     local enabled="$1" machine count current id created changed=false
     resolve_worktree_repository

@@ -298,6 +298,30 @@ Machine files and the managed worktree root remain excluded from portable
 snapshots. The portable workspace registry schema does not need to change for
 this metadata foundation.
 
+## Metadata publication transaction
+
+The portable registry and machine file cannot be replaced atomically together.
+Managed-worktree publication therefore uses a recoverable ordered transaction
+while holding the workspace registry lock. After revalidating the worktree's
+repository, path, Git administration, and branch, Pi-Run atomically adds its
+`workspacePaths` and `managedWorkspaces` records together in the machine file.
+That complete machine association is the durable local publication marker.
+Pi-Run then atomically publishes the portable `kind: "git"` workspace entry with
+the same workspace ID, repository-derived display name, and creation timestamp.
+Pi must not launch until both files validate.
+
+An interruption after machine publication can leave a machine-only pending
+association. Retrying publication may complete its missing portable entry only
+when the exact worktree, repository, branch, path, and timestamp relationship
+still validates. A matching completed publication is idempotent and does not
+rewrite either file. Registry-only, incomplete, duplicate, moved, missing, or
+conflicting state fails closed and is not repaired by inference.
+
+Pending machine metadata is preserved rather than rolled back speculatively.
+It remains machine-local and is ignored by ordinary portable workspace listing
+until the registry entry exists. No publication or recovery step changes Git
+branches, indexes, commits, working files, or linked-worktree administration.
+
 ## Container Git metadata
 
 A linked worktree contains a `.git` file pointing to administration data beneath
