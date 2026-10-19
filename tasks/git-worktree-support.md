@@ -124,11 +124,26 @@ pi-run --worktree . -c
 pi-run --worktree . -r
 ```
 
-should continue or select managed-worktree sessions for that repository. If no
-managed session exists, `-c` should fail clearly rather than create a new
-worktree while claiming to continue work. Resume selection must reopen the
-recorded child workspace before delegating individual conversation selection to
-Pi.
+select only among managed workspaces associated with that exact machine-local
+repository. A candidate must have complete portable and machine metadata, an
+available canonical worktree with the expected Git relationship, and at least
+one valid session transcript under the selected profile. Profile selection
+therefore participates directly in routing.
+
+Pi-Run selects the workspace whose valid session transcripts have the newest
+filesystem modification time. `-c` then asks Pi to continue within that
+workspace, while `-r` delegates individual transcript selection to Pi within the
+same workspace. Modification time is routing convenience, not authorization or
+trusted provenance. If there is no candidate, Pi-Run fails without creating a
+worktree. If multiple workspaces tie for newest activity, it fails as ambiguous
+rather than choosing by UUID or branch name.
+
+An older specific workspace remains selectable with
+`pi-run resume <profile> <workspace-id>`. Interactive global resume continues to
+present session groups for human selection. Both explicit and interactive
+global resume must recognize a selected managed association, reopen its recorded
+child path, acquire its launch lock, and use the managed common-Git and generated
+`.git` mounts rather than treating the path as an ordinary checkout.
 
 An existing direct-checkout session must not migrate automatically when invoked
 with `--worktree`. Migration would require explicit policy for dirty files,
@@ -137,9 +152,32 @@ is outside the initial implementation.
 
 ## Concurrency
 
-Only one active Pi-Run process may use a particular managed worktree. A
-machine-local per-workspace launch lock should fail clearly when the same
-workspace is already active. Different managed worktrees may run concurrently.
+Only one active Pi-Run process may use a particular managed worktree. Every
+fresh or resumed managed launch acquires a machine-local lock at:
+
+```text
+<Pi-Run home>/worktrees/.launch-locks/<workspace-id>/owner.json
+```
+
+The owner record contains the machine ID, PID, Linux `/proc` process start token,
+a random lock-ownership token, workspace ID, and UTC creation time. The lock
+root and workspace lock directories are ordinary private directories owned by
+the current user; the owner file is an ordinary private file. Linked,
+hard-linked, wrong-owner, unexpectedly permissive, wrong-machine, malformed, or
+incomplete state fails closed.
+
+A matching live PID and process start token produces a clear already-active
+failure. A well-formed same-machine owner is stale only when its PID is absent or
+its current `/proc` start token differs. Pi-Run may atomically rename that lock
+directory, remove the renamed stale state, and retry acquisition. Missing or
+ambiguous owner state is never treated as stale. Pi-Run does not signal or
+terminate the recorded process.
+
+Release removes a lock only when its random ownership token still matches the
+owner file. The lock remains held through Pi execution, snapshot-requested
+restarts, restricted-egress sidecar lifetime, and final launch cleanup. Abrupt
+process death can leave a stale directory, which the validated acquisition path
+recovers on a later launch. Different managed worktrees may run concurrently.
 
 Git supplies locks for common repository metadata, but that does not make every
 cross-worktree operation safe. Pi-Run must not run automatic repository-wide
@@ -418,9 +456,6 @@ Each step requires a separate concrete proposal and approval.
 
 - supported Git states and features for the initial release beyond attached or
   detached committed `HEAD`;
-- exact active-launch lock ownership and stale-lock recovery;
-- command semantics when several managed workspaces could satisfy `-c`;
-- whether profile selection participates in latest-session routing;
 - cleanup command shape and treatment of worktrees with sessions but no changes;
 - behavior when users move a primary checkout or remove or relocate managed
   worktrees with ordinary Git;
