@@ -146,9 +146,10 @@ WORKTREE_REPOSITORY_PRIMARY_PATH=""
 WORKTREE_REPOSITORY_SELECTED_PATH=""
 
 resolve_worktree_repository() {
-    local selected top common_raw common primary name path
+    local input="${1:-.}" selected top common_raw common primary name path
     command -v git >/dev/null 2>&1 || fail "git is required for worktree management"
-    selected="$(realpath .)"
+    [[ -d "${input}" ]] || fail "repository path does not exist: ${input}"
+    selected="$(realpath "${input}")"
     [[ "$(git -C "${selected}" rev-parse --is-inside-work-tree 2>/dev/null)" == true &&
        "$(git -C "${selected}" rev-parse --is-bare-repository 2>/dev/null)" == false ]] \
         || fail "current directory is not inside a supported non-bare Git repository"
@@ -206,14 +207,49 @@ show_worktree_preference() {
     print_worktree_preference "${machine}"
 }
 
+ensure_worktree_repository_record() {
+    local selected="${1:-.}" machine count repository_id created
+    resolve_worktree_repository "${selected}"
+    machine="$(ensure_worktree_machine_metadata)"
+    acquire_workspace_lock
+    validate_worktree_machine_file "${machine}"
+    validate_workspace_metadata "${machine}"
+    count="$(jq -r --arg common "${WORKTREE_REPOSITORY_COMMON_DIR}" \
+        '[.repositories[] | select(.commonGitDir == $common)] | length' "${machine}")"
+    [[ "${count}" == 0 || "${count}" == 1 ]] || fail "repository metadata is ambiguous"
+    if [[ "${count}" == 0 ]]; then
+        repository_id="$(new_workspace_id)"
+        created="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        # shellcheck disable=SC2016 # Dollar-prefixed names are jq variables.
+        update_json "${machine}" --arg id "${repository_id}" --arg name "${WORKTREE_REPOSITORY_NAME}" \
+            --arg common "${WORKTREE_REPOSITORY_COMMON_DIR}" --arg primary "${WORKTREE_REPOSITORY_PRIMARY_PATH}" \
+            --arg created "${created}" '
+            .repositories += [{id:$id,name:$name,commonGitDir:$common,primaryPath:$primary,
+                enabled:false,createdAt:$created,managedWorkspaces:[]}]
+        '
+    else
+        repository_id="$(jq -r --arg common "${WORKTREE_REPOSITORY_COMMON_DIR}" \
+            '.repositories[] | select(.commonGitDir == $common) | .id' "${machine}")"
+        jq -e --arg id "${repository_id}" --arg name "${WORKTREE_REPOSITORY_NAME}" \
+            --arg common "${WORKTREE_REPOSITORY_COMMON_DIR}" --arg primary "${WORKTREE_REPOSITORY_PRIMARY_PATH}" '
+            [.repositories[] | select(.id == $id and .name == $name and
+                .commonGitDir == $common and .primaryPath == $primary)] | length == 1
+        ' "${machine}" >/dev/null || fail "registered repository metadata no longer matches the selected checkout"
+    fi
+    validate_worktree_machine_file "${machine}"
+    validate_workspace_metadata "${machine}"
+    release_workspace_lock
+    printf '%s\n' "${repository_id}"
+}
+
 create_managed_worktree_checkout() (
-    local workspace_id="$1" machine registry record_count repository_id branch base dirty
+    local workspace_id="$1" selected="${2:-.}" machine registry record_count repository_id branch base dirty
     local root repository_root worktree admin_dir image pointer="" git_dir output status
     local root_created=false repository_root_created=false
     [[ "${workspace_id}" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] \
         || fail "invalid managed workspace UUID: ${workspace_id}"
     command -v docker >/dev/null 2>&1 || fail "docker is required for managed worktree creation"
-    resolve_worktree_repository
+    resolve_worktree_repository "${selected}"
     machine="$(ensure_worktree_machine_metadata)"
     registry="${PI_RUN_HOME_RESOLVED}/workspaces/registry.json"
     image="${PI_RUN_IMAGE:-${DEFAULT_IMAGE}}"

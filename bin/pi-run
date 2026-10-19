@@ -7,7 +7,7 @@ umask 077
 usage() {
     cat >&2 <<EOF
 Usage:
-  pi-run [--home <path>] [--profile <name>] <workspace> [pi arguments...]
+  pi-run [--home <path>] [--profile <name>] [--worktree] <workspace> [pi arguments...]
   pi-run [--home <path>] init
   pi-run [--home <path>] home
   pi-run version
@@ -144,6 +144,7 @@ source "${PI_RUN_LIB_ROOT}/doctor.sh"
 PROFILE="default"
 PROFILE_EXPLICIT=false
 HOME_OVERRIDE=""
+WORKTREE_REQUESTED=false
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -157,6 +158,10 @@ while [[ $# -gt 0 ]]; do
             PROFILE="$2"
             PROFILE_EXPLICIT=true
             shift 2
+            ;;
+        --worktree)
+            WORKTREE_REQUESTED=true
+            shift
             ;;
         -h|--help)
             usage 0
@@ -364,6 +369,13 @@ sanitize_display() {
 
 RESUME_LAUNCH=false
 COMMAND="${1:-}"
+if [[ "${WORKTREE_REQUESTED}" == true ]]; then
+    case "${COMMAND}" in
+        version|machine-id|doctor|upgrade|home|init|profile|network|skill|workspace|worktree|session|resume|ssh-key|snapshot)
+            fail "--worktree is only valid for a workspace launch"
+            ;;
+    esac
+fi
 if [[ "${COMMAND}" == snapshot && "${2:-}" == restore ]]; then
     HOME_LOCK_MODE=exclusive
 fi
@@ -654,6 +666,15 @@ else
     EXTRA_PI_ARGS=("$@")
 fi
 
+if [[ "${WORKTREE_REQUESTED}" == true ]]; then
+    for argument in "${EXTRA_PI_ARGS[@]}"; do
+        case "${argument}" in
+            -c|--continue|-r|--resume)
+                fail "--worktree currently creates only fresh sessions; continuation and resume are not yet supported"
+                ;;
+        esac
+    done
+fi
 [[ -d "${WORKSPACE_INPUT}" ]] \
     || fail "workspace does not exist: ${WORKSPACE_INPUT}"
 WORKSPACE="$(realpath "${WORKSPACE_INPUT}")"
@@ -663,9 +684,34 @@ require_jq
 if [[ "${RESUME_LAUNCH}" == false ]]; then
     resolve_configured_profile true
 fi
-WORKSPACE_ID="$(ensure_workspace_registered "${WORKSPACE}")"
-if [[ "${RESUME_LAUNCH}" == false ]]; then
-    maybe_reconnect_direct_resume "${WORKSPACE}" "${WORKSPACE_ID}"
+MANAGED_WORKTREE=false
+MANAGED_WORKTREE_BRANCH=""
+MANAGED_WORKTREE_BASE=""
+MANAGED_WORKTREE_COMMON_DIR=""
+if [[ "${WORKTREE_REQUESTED}" == true ]]; then
+    SOURCE_WORKSPACE="${WORKSPACE}"
+    REPOSITORY_ID="$(ensure_worktree_repository_record "${SOURCE_WORKSPACE}")"
+    WORKSPACE_ID="$(new_workspace_id)"
+    CREATED_WORKTREE="$(create_managed_worktree_checkout "${WORKSPACE_ID}" "${SOURCE_WORKSPACE}")"
+    IFS=$'\t' read -r CREATED_ID CREATED_REPOSITORY_ID MANAGED_WORKTREE_BRANCH WORKSPACE MANAGED_WORKTREE_BASE \
+        <<< "${CREATED_WORKTREE}"
+    [[ "${CREATED_ID}" == "${WORKSPACE_ID}" && "${CREATED_REPOSITORY_ID}" == "${REPOSITORY_ID}" &&
+       "${WORKSPACE}" == "${PI_RUN_HOME_RESOLVED}/worktrees/${REPOSITORY_ID}/${WORKSPACE_ID}" ]] \
+        || fail "managed worktree creation returned inconsistent identity metadata"
+    publish_managed_worktree_metadata \
+        "${WORKSPACE_ID}" "${REPOSITORY_ID}" "${MANAGED_WORKTREE_BRANCH}" "${WORKSPACE}" >/dev/null
+    MACHINE_METADATA="$(machine_file)"
+    MANAGED_WORKTREE_COMMON_DIR="$(jq -r --arg id "${REPOSITORY_ID}" \
+        '.repositories[] | select(.id == $id) | .commonGitDir' "${MACHINE_METADATA}")"
+    [[ "$(git -C "${WORKSPACE}" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" == \
+       "${MANAGED_WORKTREE_COMMON_DIR}" ]] \
+        || fail "published managed worktree no longer matches its common Git directory"
+    MANAGED_WORKTREE=true
+else
+    WORKSPACE_ID="$(ensure_workspace_registered "${WORKSPACE}")"
+    if [[ "${RESUME_LAUNCH}" == false ]]; then
+        maybe_reconnect_direct_resume "${WORKSPACE}" "${WORKSPACE_ID}"
+    fi
 fi
 if [[ "${RESUME_LAUNCH}" == true && "${WORKSPACE_ID}" != "${RESUME_WORKSPACE_ID}" ]]; then
     fail "workspace mapping changed during resume selection"
@@ -772,6 +818,7 @@ prepare_snapshot_launch_request
 SIDECAR_NAME=""
 SIDECAR_ID_FILE=""
 EGRESS_POLICY_DIR=""
+MANAGED_GIT_STAGING_DIR=""
 cleanup_launch_resources() {
     local cleanup_failed=false sidecar_id=""
     if [[ -n "${SIDECAR_ID_FILE}" && -s "${SIDECAR_ID_FILE}" ]]; then
@@ -787,6 +834,14 @@ cleanup_launch_resources() {
             EGRESS_POLICY_DIR=""
         else
             echo "pi-run: warning: could not remove restricted egress policy copy" >&2
+            cleanup_failed=true
+        fi
+    fi
+    if [[ -n "${MANAGED_GIT_STAGING_DIR}" ]]; then
+        if rm -rf -- "${MANAGED_GIT_STAGING_DIR}"; then
+            MANAGED_GIT_STAGING_DIR=""
+        else
+            echo "pi-run: warning: could not remove managed worktree Git staging" >&2
             cleanup_failed=true
         fi
     fi
@@ -808,6 +863,16 @@ case "${NETWORK_MODE}" in
         chmod 0600 "${EGRESS_POLICY_DIR}/rules.json"
         ;;
 esac
+
+if [[ "${MANAGED_WORKTREE}" == true ]]; then
+    [[ "${MANAGED_WORKTREE_COMMON_DIR}" != *,* ]] \
+        || fail "managed worktree common Git paths containing commas are not supported"
+    MANAGED_GIT_STAGING_DIR="$(mktemp -d /tmp/pi-run-managed-git.XXXXXX)"
+    chmod 0700 "${MANAGED_GIT_STAGING_DIR}"
+    printf 'gitdir: /run/pi-run-git/common/worktrees/%s\n' "${WORKSPACE_ID}" \
+        > "${MANAGED_GIT_STAGING_DIR}/dot-git"
+    chmod 0600 "${MANAGED_GIT_STAGING_DIR}/dot-git"
+fi
 
 DOCKER_ARGS=(
     --rm
@@ -837,6 +902,12 @@ DOCKER_ARGS=(
     --env PI_RUN_SNAPSHOT_REQUEST_DIR=/run/pi-run-snapshot
     --env "PI_RUN_SNAPSHOT_TOKEN=${SNAPSHOT_LAUNCH_REQUEST_TOKEN}"
 )
+if [[ "${MANAGED_WORKTREE}" == true ]]; then
+    DOCKER_ARGS+=(
+        --mount "type=bind,src=${MANAGED_WORKTREE_COMMON_DIR},dst=/run/pi-run-git/common"
+        --mount "type=bind,src=${MANAGED_GIT_STAGING_DIR}/dot-git,dst=/workspace/.git,readonly"
+    )
+fi
 SSH_CREDENTIAL_DIR="${PROFILE_DIR}/credentials/ssh"
 if [[ -e "${SSH_CREDENTIAL_DIR}" || -L "${SSH_CREDENTIAL_DIR}" ]]; then
     [[ -d "${SSH_CREDENTIAL_DIR}" && ! -L "${SSH_CREDENTIAL_DIR}" &&
@@ -906,6 +977,11 @@ done
 
 echo "pi-run: home=${PI_RUN_HOME_RESOLVED}" >&2
 echo "pi-run: profile=${PROFILE} workspace=${WORKSPACE}" >&2
+if [[ "${MANAGED_WORKTREE}" == true ]]; then
+    echo "pi-run: managed-worktree workspace-id=${WORKSPACE_ID}" >&2
+    echo "pi-run: managed-worktree branch=${MANAGED_WORKTREE_BRANCH} base=${MANAGED_WORKTREE_BASE}" >&2
+    echo "pi-run: managed-worktree host=$(sanitize_display "${WORKSPACE}")" >&2
+fi
 echo "pi-run: network=${NETWORK_BACKEND}" >&2
 if [[ "${NETWORK_BACKEND}" == docker-restricted ]]; then
     echo "pi-run: model-tcp=${MODEL_RULES_DISPLAY}" >&2
