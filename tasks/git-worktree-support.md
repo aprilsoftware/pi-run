@@ -81,10 +81,15 @@ workspace's session directory. The durable Pi-Run association is therefore one
 managed worktree to one workspace UUID to one or more related Pi session files,
 not necessarily one worktree for every JSONL file.
 
-The repository identity algorithm remains open. It must not assume that every
-repository has a remote or that a remote URL uniquely identifies one local
-repository. Machine-local path and validated Git-common-directory information
-are likely inputs; portable identity and restore behavior need separate design.
+Each repository receives a random UUID on the current machine. Its canonical,
+validated Git common directory is the local uniqueness key. A remote URL is not
+required and does not establish identity: separate clones remain separate
+repositories even when they share a remote.
+
+Repository identity and managed-workspace associations are machine-local. The
+existing portable workspace registry continues to identify workspace identities
+and session groups without claiming that a source repository or its worktrees
+can be reconstructed on another machine.
 
 ## Launch and resume behavior
 
@@ -179,19 +184,90 @@ rather than accidental acceptance.
 
 ## Storage location
 
-The managed worktree root remains unresolved. Candidate locations include a
-private Pi-Run-managed machine-local directory or a user-selected external
-root. Storing worktrees inside the primary checkout risks recursive discovery
-and repository pollution; placing them beside the repository creates naming and
-ownership questions.
+Managed worktree checkouts live under a private machine-local root:
 
-If a Pi-Run-managed root is selected, source files and worktree administration
-must be excluded from Pi-Run profile snapshots. Git or a separate workspace
-backup remains responsible for repository content. Snapshot restore may restore
-session associations, but it cannot claim to restore source worktrees.
+```text
+<Pi-Run home>/worktrees/<repository-id>/<workspace-id>/
+```
 
-The location must remain inspectable from the host and must support ordinary
-Git commands. Pi-Run must not make worktree content container-only or ephemeral.
+Repository and workspace IDs are complete lowercase UUIDs. The root and its
+managed descendants must be ordinary non-symlink directories owned by the host
+user. Creation uses private permissions and refuses existing, linked, special,
+or ambiguously mapped paths. The location remains inspectable from the host and
+supports ordinary Git commands; worktree content is not container-only or
+ephemeral.
+
+The primary checkout and shared common Git directory remain at their existing
+host locations. Only managed checkout files live under the Pi-Run worktree root;
+Git's linked-worktree administration remains beneath the validated common Git
+directory.
+
+The managed root is source state, not Pi-Run portable state. Complete snapshots
+must not mount or archive it and should identify `worktrees` explicitly among
+excluded paths once the root exists. Git or a separate workspace backup remains
+responsible for tracked and untracked checkout content.
+
+After snapshot restore, portable workspace registrations and profile sessions
+remain available, but machine mappings and repository associations do not.
+Managed groups therefore appear unavailable until an existing checkout is
+explicitly reconnected. Pi-Run must not recreate a branch, clone, or worktree
+from restored names, remotes, or paths.
+
+## Machine-local metadata
+
+The existing machine file advances from schema version 1 to schema version 2.
+Its selected shape is:
+
+```json
+{
+  "schemaVersion": 2,
+  "machineId": "<machine-id>",
+  "workspacePaths": [
+    {"workspaceId": "<workspace-uuid>", "path": "<canonical-host-path>"}
+  ],
+  "repositories": [
+    {
+      "id": "<repository-uuid>",
+      "name": "<display-name>",
+      "commonGitDir": "<canonical-host-path>",
+      "primaryPath": "<canonical-host-path>",
+      "enabled": true,
+      "createdAt": "<UTC-timestamp>",
+      "managedWorkspaces": [
+        {
+          "workspaceId": "<workspace-uuid>",
+          "branch": "<branch-name>",
+          "createdAt": "<UTC-timestamp>"
+        }
+      ]
+    }
+  ]
+}
+```
+
+`workspacePaths` remains authoritative for the concrete path of every primary,
+ordinary, or managed workspace. A managed-workspace record relates that
+workspace to a repository and branch without duplicating its path. No source
+content, remote URL, credential, commit contents, or Git configuration enters
+the machine file.
+
+Repository IDs and workspace IDs must be unique. Canonical common Git
+directories must be unique across repository records, and a workspace may
+belong to at most one managed-workspace record. Display names and branch names
+are validated and sanitized before display; paths are canonical absolute host
+paths and are never interpreted as authorization to mount an unrelated target.
+
+When worktree functionality first needs a schema-version-1 machine file,
+Pi-Run performs a locked atomic migration that preserves `machineId` and
+`workspacePaths`, adds an empty `repositories` array, writes schema version 2,
+and publishes the replacement only after complete validation. Invalid,
+linked, hard-linked, unexpectedly permissive, or unsupported machine files fail
+without partial migration. Ordinary v0.7 launches do not need to rewrite the
+file merely because v0.8 is installed.
+
+Machine files and the managed worktree root remain excluded from portable
+snapshots. The portable workspace registry schema does not need to change for
+this metadata foundation.
 
 ## Container Git metadata
 
@@ -266,8 +342,6 @@ Each step requires a separate concrete proposal and approval.
 
 ## Decisions required before production implementation
 
-- repository identity and behavior across moves, clones, and snapshot restore;
-- managed root location and ownership;
 - branch naming and collision handling;
 - dirty-checkout policy and base-revision reporting;
 - supported Git states and features for the initial release;
@@ -275,7 +349,8 @@ Each step requires a separate concrete proposal and approval.
 - command semantics when several managed workspaces could satisfy `-c`;
 - whether profile selection participates in latest-session routing;
 - cleanup command shape and treatment of worktrees with sessions but no changes;
-- behavior when users remove or relocate managed worktrees with ordinary Git;
+- behavior when users move a primary checkout or remove or relocate managed
+  worktrees with ordinary Git;
 - hook and repository-config exposure in the container; and
 - safe mount behavior when host paths overlap the workspace or Pi-Run home.
 
