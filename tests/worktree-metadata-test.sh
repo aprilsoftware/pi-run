@@ -75,6 +75,27 @@ run_ensure "${CASE_HOME}" >/dev/null
 [[ "$(stat -c %i "${CASE_MACHINE}")" == "${inode_before}" ]] \
     || fail "valid v2 metadata was rewritten"
 
+prepare_v1_home snapshot-auto
+jq '.snapshotAuto={onSessionExit:true}' "${CASE_MACHINE}" > "${CASE_MACHINE}.tmp"
+mv "${CASE_MACHINE}.tmp" "${CASE_MACHINE}"
+chmod 0600 "${CASE_MACHINE}"
+run_ensure "${CASE_HOME}" >/dev/null
+jq -e '
+    .schemaVersion == 2 and .snapshotAuto.onSessionExit == true and
+    .repositories == [] and
+    (keys | sort == ["machineId","repositories","schemaVersion","snapshotAuto","workspacePaths"])
+' "${CASE_MACHINE}" >/dev/null \
+    || fail "v1 migration did not preserve automatic snapshot configuration"
+[[ "$(PI_RUN_HOME="${CASE_HOME}" "${ROOT}/bin/pi-run" snapshot auto status)" == \
+   'Automatic snapshots on successful Pi exit: enabled' ]] \
+    || fail "automatic snapshot status failed after worktree metadata migration"
+
+prepare_v1_home invalid-snapshot-auto
+jq '.snapshotAuto={onSessionExit:"yes"}' "${CASE_MACHINE}" > "${CASE_MACHINE}.tmp"
+mv "${CASE_MACHINE}.tmp" "${CASE_MACHINE}"
+chmod 0600 "${CASE_MACHINE}"
+expect_unchanged_failure "${CASE_HOME}" "${CASE_MACHINE}"
+
 prepare_v1_home unsafe-mode
 chmod 0644 "${CASE_MACHINE}"
 expect_unchanged_failure "${CASE_HOME}" "${CASE_MACHINE}"

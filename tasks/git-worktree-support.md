@@ -290,6 +290,7 @@ Its selected shape is:
 {
   "schemaVersion": 2,
   "machineId": "<machine-id>",
+  "snapshotAuto": {"onSessionExit": true},
   "workspacePaths": [
     {"workspaceId": "<workspace-uuid>", "path": "<canonical-host-path>"}
   ],
@@ -313,11 +314,12 @@ Its selected shape is:
 }
 ```
 
-`workspacePaths` remains authoritative for the concrete path of every primary,
-ordinary, or managed workspace. A managed-workspace record relates that
-workspace to a repository and branch without duplicating its path. No source
-content, remote URL, credential, commit contents, or Git configuration enters
-the machine file.
+`snapshotAuto` is optional and retains the existing machine-local
+successful-exit snapshot preference. `workspacePaths` remains authoritative for
+the concrete path of every primary, ordinary, or managed workspace. A
+managed-workspace record relates that workspace to a repository and branch
+without duplicating its path. No source content, remote URL, credential, commit
+contents, or Git configuration enters the machine file.
 
 Repository IDs and workspace IDs must be unique. Canonical common Git
 directories must be unique across repository records, and a workspace may
@@ -326,9 +328,10 @@ are validated and sanitized before display; paths are canonical absolute host
 paths and are never interpreted as authorization to mount an unrelated target.
 
 When worktree functionality first needs a schema-version-1 machine file,
-Pi-Run performs a locked atomic migration that preserves `machineId` and
-`workspacePaths`, adds an empty `repositories` array, writes schema version 2,
-and publishes the replacement only after complete validation. Invalid,
+Pi-Run performs a locked atomic migration that preserves `machineId`,
+`workspacePaths`, and optional `snapshotAuto`, adds an empty `repositories`
+array, writes schema version 2, and publishes the replacement only after
+complete validation. Invalid,
 linked, hard-linked, unexpectedly permissive, or unsupported machine files fail
 without partial migration. Ordinary v0.7 launches do not need to rewrite the
 file merely because v0.8 is installed.

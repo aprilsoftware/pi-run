@@ -205,6 +205,10 @@ chmod 0755 "${TMP}/fake-bin/docker"
 export DOCKER_LOG="${TMP}/docker.log" MAIN_LOG="${TMP}/main.log"
 HOME_DIR="${TMP}/Pi-Run"
 PATH="${TMP}/fake-bin:${PATH}" PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" init >/dev/null
+git init -q -b main "${TMP}/workspace"
+git -C "${TMP}/workspace" config user.name fixture
+git -C "${TMP}/workspace" config user.email fixture@pi-run.invalid
+git -C "${TMP}/workspace" commit -q --allow-empty -m base
 export SNAPSHOT_LOCK_PATH="${HOME_DIR}/snapshots"
 auto_output="$(env PATH="${TMP}/fake-bin:${PATH}" PI_RUN_HOME="${HOME_DIR}" \
     "${ROOT}/bin/pi-run" snapshot auto status)"
@@ -311,8 +315,19 @@ auto_output="$(env PATH="${TMP}/fake-bin:${PATH}" PI_RUN_HOME="${HOME_DIR}" \
 [[ "${auto_output}" == 'Automatic snapshots on successful Pi exit: enabled' ]] \
     || fail "automatic snapshot enable output is incorrect"
 machine_file="$(find "${HOME_DIR}/machines" -maxdepth 1 -type f -name '*.json' -print -quit)"
-jq -e '.snapshotAuto.onSessionExit==true' "${machine_file}" >/dev/null \
-    || fail "automatic snapshot setting was not stored in machine metadata"
+jq -e '.schemaVersion == 1 and .snapshotAuto.onSessionExit==true' "${machine_file}" >/dev/null \
+    || fail "automatic snapshot setting was not stored in schema-v1 machine metadata"
+worktree_output="$(cd "${TMP}/workspace" && env PATH="${TMP}/fake-bin:${PATH}" \
+    PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" worktree status)"
+[[ "${worktree_output}" == *'Worktree mode: disabled (not registered)'* ]] \
+    || fail "worktree status did not complete the automatic-snapshot metadata migration"
+jq -e '.schemaVersion == 2 and .snapshotAuto.onSessionExit==true and .repositories==[]' \
+    "${machine_file}" >/dev/null \
+    || fail "worktree migration did not preserve automatic snapshot configuration"
+auto_output="$(env PATH="${TMP}/fake-bin:${PATH}" PI_RUN_HOME="${HOME_DIR}" \
+    "${ROOT}/bin/pi-run" snapshot auto status)"
+[[ "${auto_output}" == 'Automatic snapshots on successful Pi exit: enabled' ]] \
+    || fail "automatic snapshot status failed after worktree metadata migration"
 
 REQUEST_ACTION=""
 REQUEST_SESSION_MODE=valid

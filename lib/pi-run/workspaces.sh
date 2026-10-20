@@ -48,6 +48,9 @@ validate_workspace_metadata() {
         def workspace_path:
             (keys | sort == ["path", "workspaceId"]) and
             (.workspaceId | uuid) and (.path | host_path);
+        def snapshot_auto:
+            type == "object" and
+            ((.onSessionExit // false) | type == "boolean");
         def managed_workspace:
             (keys | sort == ["branch", "createdAt", "workspaceId"]) and
             (.workspaceId | uuid) and
@@ -68,7 +71,8 @@ validate_workspace_metadata() {
                 (.workspaceId | type == "string") and (.path | type == "string"))
         else
             .schemaVersion == 2 and
-            (keys | sort == ["machineId", "repositories", "schemaVersion", "workspacePaths"]) and
+            ((keys - ["snapshotAuto"]) | sort == ["machineId", "repositories", "schemaVersion", "workspacePaths"]) and
+            ((.snapshotAuto // {}) | snapshot_auto) and
             (.machineId | type == "string" and test("^[0-9a-f]{16}$")) and
             (.workspacePaths | type == "array") and all(.workspacePaths[]; workspace_path) and
             ([.workspacePaths[].workspaceId] | length == (unique | length)) and
@@ -103,7 +107,9 @@ validate_worktree_machine_file() {
 validate_worktree_machine_v1_migration() {
     local file="$1"
     jq -e '
-        (keys | sort == ["machineId", "schemaVersion", "workspacePaths"]) and
+        ((keys - ["snapshotAuto"]) | sort == ["machineId", "schemaVersion", "workspacePaths"]) and
+        ((.snapshotAuto // {}) | type == "object" and
+            ((.onSessionExit // false) | type == "boolean")) and
         .schemaVersion == 1 and (.machineId | type == "string" and test("^[0-9a-f]{16}$")) and
         (.workspacePaths | type == "array") and
         all(.workspacePaths[];
