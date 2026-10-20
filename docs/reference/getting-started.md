@@ -33,8 +33,8 @@ pi-run --home /private/pi-run --profile operations /srv/runbooks -r
 ```
 
 Network selection belongs to `profile.json`. `host` maps to Docker host
-networking, `offline` maps to Docker network-none, and experimental `restricted`
-resolves model-provider TCP/443 endpoints plus the profile's typed manual rules.
+networking, `offline` maps to Docker network-none, and `restricted` resolves
+model-provider TCP/443 endpoints plus the profile's typed manual rules.
 The removed prerelease `--network` and `--allow-host` launch options are not
 competing policy sources.
 

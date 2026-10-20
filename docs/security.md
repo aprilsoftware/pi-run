@@ -40,7 +40,7 @@ Networking is selected by the profile, not by normal launch arguments:
 | --- | --- |
 | `host` | Docker host networking, including Docker-host loopback and surrounding routes |
 | `offline` | Docker network-none; loopback remains but there is no external interface |
-| `restricted` | Experimental default-deny namespace with a version-matched egress sidecar |
+| `restricted` | Default-deny namespace with a version-matched egress sidecar |
 
 A missing `network` object preserves host networking for profiles created by
 stable v0.6 releases. New profiles explicitly contain `"mode": "host"`. A

@@ -42,11 +42,11 @@ docker build -t pi-run-egress:dev -f docker/egress/Dockerfile docker
 ```
 
 The sidecar image contains Squid, iptables, the proven firewall entrypoint, and
-the Pi-Run license. It contains no hostname policy; a future restricted launch
-must mount already-resolved host-owned policy at runtime. Building this image
-does not enable the experimental restricted backend in the launcher. The
-production Dockerfile was build-validated on Debian Trixie with Docker Engine
-26.1.5 during the v0.7 experiment. On the same baseline, Doctor successfully
+the Pi-Run license. It contains no hostname policy; a restricted launch mounts
+already-resolved host-owned policy at runtime. Building this image does not
+select restricted mode; the active profile does. The production Dockerfile was
+build-validated on Debian Trixie with Docker Engine 26.1.5 during v0.7
+validation. On the same baseline, Doctor successfully
 inspected locally built runtime and egress image overrides.
 
 Check which launcher and images are selected without starting Pi:

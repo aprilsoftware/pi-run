@@ -49,7 +49,7 @@ session starts Off.
 Guardian is not a sandbox or an infallible security decision-maker. The temporary
 container narrows filesystem exposure, but selected mounts contain real host
 data and the default network backend uses host networking. Explicit offline and
-experimental restricted TCP modes can narrow session networking with exact
+restricted TCP modes can narrow session networking with exact
 hosts, domains, CIDRs, or public-internet rules; they do not hide mounted
 credentials or make writes disposable. Profiles, credentials, Unix
 permissions, RBAC, database roles, and network controls bound authority;
@@ -85,7 +85,7 @@ resources, and other infrastructure need their own recovery mechanisms.
   protect portable Pi-Run state and support guarded restore. They complement Git,
   workspace backups, and infrastructure recovery rather than replacing them.
 - **Selectable session networking:** retain default host networking, choose an
-  explicit offline container, or use experimental restricted TCP rules for
+  explicit offline container, or use restricted TCP rules for
   exact hosts, domains, CIDRs, and public-internet access.
 - **Understandable boundaries:** the workspace and most selected-profile state
   are writable; network-authority configuration and managed SSH credentials are

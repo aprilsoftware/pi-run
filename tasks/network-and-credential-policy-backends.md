@@ -2,10 +2,11 @@
 
 ## Status and purpose
 
-This document records the v0.7 investigation, the experimental `docker-offline`
-and `docker-restricted` launcher modes published in the v0.7.0 prerelease, and
-the profile-driven follow-up selected from prerelease feedback. Experimental
-availability does not authorize production use.
+This document records the v0.7 investigation, the `docker-offline` and
+`docker-restricted` launcher modes first published in the v0.7.0 prerelease, and
+the profile-driven follow-up promoted to stable support in v0.7.2. Supported
+availability does not make Pi-Run a sandbox or authorize use of reachable
+systems.
 
 The goal is to add enforceable network policy while retaining Pi-Run's existing
 profile, workspace, session, Guardian, and snapshot semantics. The preferred
@@ -262,7 +263,7 @@ The selected profile is already the durable identity boundary for model
 configuration and credentials. The profile-driven design deliberately treats
 `profile.json`, `models.json`, `auth.json`, and `settings.json` as trusted input
 for the next launch instead of introducing separate policy and machine-grant
-files. This is the chosen usability tradeoff for the experimental follow-up.
+files. This is the chosen usability tradeoff for the profile-driven design.
 
 `profile.json` should be over-mounted read-only in the Pi container because Pi
 does not need to update Pi-Run's resource definition. Pi still needs writable
@@ -370,7 +371,7 @@ and image startup; the smoke invocation used `pi --version` and therefore did
 not itself attempt an outbound packet. Packet denial follows Docker's
 `--network none` contract and the launch argument has deterministic coverage.
 
-The experimental restricted launcher was then smoke-tested with a disposable
+The restricted launcher was then smoke-tested with a disposable
 Pi-Run home, the source-built runtime image, and the production egress image. It
 reported `example.com:443`, passed sidecar readiness, and ran Pi 1.1.0 in the
 shared restricted namespace. The sidecar, private runtime policy copy, and
@@ -404,21 +405,21 @@ These limitations must be visible in documentation and release notes.
 
 ## Decision
 
-For v0.7, stop product integration work on OpenShell and Docker Sandboxes. Use
-the Docker-native sidecar pattern demonstrated by `agent-sandbox` and
-`sandboxed-pi` as Pi-Run's experimental restricted backend.
+For v0.7, product integration work stopped on OpenShell and Docker Sandboxes in
+favor of the Docker-native sidecar pattern demonstrated by `agent-sandbox` and
+`sandboxed-pi`.
 
 The required direct-IP, private-network, IPv6, DNS-bypass, capability, policy,
-and fail-closed probes passed on Pi-Run's supported Docker baseline. Keep the
-backend prerelease-only while its limitations and remaining
-TUI/provider/credential behavior are evaluated.
+and fail-closed probes passed on Pi-Run's supported Docker baseline. The initial
+backend remained prerelease-only while its limitations and remaining
+TUI/provider/credential behavior were evaluated.
 
-Prerelease feedback rejects per-launch network mode and provider-host arguments
-as the durable interface. Before profile integration, a disposable generalized
-TCP-rule harness must prove exact hosts, domain suffixes, CIDRs, selected and
-unrestricted TCP ports, SSH-style CONNECT, UDP denial, policy isolation, and
-fail-closed behavior on Docker Engine 26. Production integration should proceed
-only if that evidence preserves the sidecar's existing security properties.
+Prerelease feedback rejected per-launch network mode and provider-host arguments
+as the durable interface. The generalized TCP-rule harness then proved exact
+hosts, domain suffixes, CIDRs, selected and unrestricted TCP ports, SSH-style
+CONNECT, UDP denial, policy isolation, and fail-closed behavior on Docker Engine
+26. Profile integration preserved those properties, and the generalized
+profile-driven backend became stable in v0.7.2.
 
 ## Sources
 
