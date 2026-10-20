@@ -327,11 +327,18 @@ array, writes schema version 2, and publishes the replacement only after
 complete validation. Invalid, linked, hard-linked, unexpectedly permissive, or
 unsupported machine files fail without partial migration.
 
-The task-oriented replacement requires a later atomically migrated schema for
-validated task names and `active`, `finishing`, and `finished` lifecycle states.
-It must discard obsolete repository `enabled` values without changing launch
-behavior. Existing unnamed prerelease worktrees remain addressable by full UUID;
-migration must not rename, delete, finish, or otherwise infer intent for them.
+The task-oriented replacement does not migrate this prerelease schema. v0.8.0
+and v0.8.1 are unsupported prototype upgrade sources, and their prerelease
+artifacts are to be withdrawn. Before installing the replacement, the operator
+performs a one-time inspected cleanup: remove clean linked worktrees through Git,
+optionally delete their branches, remove their registry and profile-session
+records, then remove the prototype machine file and managed-worktree root. Exact
+commands must be derived from the machine's validated metadata so direct
+workspaces, sessions, and unrelated repositories are not selected accidentally.
+
+The replacement initializes its task metadata from clean state. Encountering
+prototype metadata fails closed with a cleanup-required error; Pi-Run does not
+ship permanent compatibility or schema-migration code for withdrawn prereleases.
 
 Machine files and the managed worktree root remain excluded from portable
 snapshots. The portable workspace registry schema does not need to change for
@@ -447,8 +454,8 @@ The prerelease implementation completed and validated:
 
 Its repository preference, launch overrides, cross-worktree activity routing,
 and automatic worktree-per-conversation behavior are rejected product semantics.
-They must be replaced, not retained as a second path. Implementation should first
-migrate task lifecycle metadata, then restore unconditional direct launches,
+They must be replaced, not retained as a second path. Implementation should
+restore unconditional direct launches, define clean task lifecycle metadata,
 then add `start` and `open`, and only later implement recoverable `finish`.
 
 ## Deferred decisions and exclusions
