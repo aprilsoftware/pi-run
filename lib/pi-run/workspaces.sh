@@ -214,7 +214,7 @@ show_worktree_preference() {
 }
 
 list_managed_worktrees() {
-    local machine registry schema repository repository_id name enabled primary common repository_root
+    local machine registry schema repository repository_id name primary common repository_root
     local workspace workspace_id branch created path expected_path status registry_count admin_dir
     local actual_common actual_git_dir actual_branch repository_safe path_safe
     local -a repositories managed_workspaces
@@ -242,7 +242,6 @@ list_managed_worktrees() {
     for repository in "${repositories[@]}"; do
         repository_id="$(jq -r '.id' <<< "${repository}")"
         name="$(jq -r '.name' <<< "${repository}")"
-        enabled="$(jq -r 'if .enabled then "enabled" else "disabled" end' <<< "${repository}")"
         primary="$(jq -r '.primaryPath' <<< "${repository}")"
         common="$(jq -r '.commonGitDir' <<< "${repository}")"
         repository_root="${PI_RUN_HOME_RESOLVED}/worktrees/${repository_id}"
@@ -254,7 +253,6 @@ list_managed_worktrees() {
             repository_safe=true
         fi
         printf 'Repository: %s (%s)\n' "$(sanitize_display "${name}")" "${repository_id}"
-        printf 'Preference: %s\n' "${enabled}"
         printf 'Primary checkout: %s\n' "$(sanitize_display "${primary}")"
         mapfile -t managed_workspaces < <(jq -c '.managedWorkspaces | sort_by(.createdAt, .workspaceId)[]' <<< "${repository}")
         if (( ${#managed_workspaces[@]} == 0 )); then

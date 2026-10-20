@@ -128,11 +128,10 @@ done
 alpha_line="$(grep -n '^Repository: alpha repository ' <<< "${output}" | cut -d: -f1)"
 zeta_line="$(grep -n '^Repository: zeta repository ' <<< "${output}" | cut -d: -f1)"
 (( alpha_line < zeta_line )) || fail "repositories were not sorted by name"
-grep -A2 '^Repository: alpha repository ' <<< "${output}" | grep -Fx 'Preference: enabled' >/dev/null \
-    || fail "enabled repository preference was not listed"
-grep -A3 '^Repository: zeta repository ' <<< "${output}" | grep -Fx 'Preference: disabled' >/dev/null \
-    || fail "disabled repository preference was not listed"
-grep -A3 '^Repository: zeta repository ' <<< "${output}" | grep -Fx 'Managed workspaces: none' >/dev/null \
+if grep -F 'Preference:' <<< "${output}" >/dev/null; then
+    fail "obsolete repository preference was listed"
+fi
+grep -A2 '^Repository: zeta repository ' <<< "${output}" | grep -Fx 'Managed workspaces: none' >/dev/null \
     || fail "empty repository group was not listed"
 [[ "$(sha256sum "${MACHINE}" "${REGISTRY}")" == "${metadata_before}" &&
    "$({ git -C "${ALPHA}" worktree list --porcelain; git -C "${ALPHA}" show-ref; } | sha256sum)" == "${git_before}" &&

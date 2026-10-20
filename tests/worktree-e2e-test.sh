@@ -130,8 +130,9 @@ metadata_before_list="$(sha256sum "${MACHINE}" "${REGISTRY}")"
 )
 grep -F "Repository: source repository (${REPOSITORY_ID})" "${TMP}/list.out" >/dev/null \
     || fail "worktree list omitted the repository group"
-grep -F 'Preference: enabled' "${TMP}/list.out" >/dev/null \
-    || fail "worktree list omitted the enabled preference"
+if grep -F 'Preference:' "${TMP}/list.out" >/dev/null; then
+    fail "worktree list reported the obsolete repository preference"
+fi
 for workspace_id in "${ID_A}" "${ID_B}"; do
     line="$(grep -F "${workspace_id}" "${TMP}/list.out")"
     [[ "${line}" == *available* ]] \
