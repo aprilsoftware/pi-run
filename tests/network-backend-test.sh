@@ -86,7 +86,7 @@ case "${1:-}" in
             if [ "${RESOLVER_OUTPUT+x}" = x ]; then
                 printf '%s\n' "${RESOLVER_OUTPUT}"
             else
-                printf '%s\n' '{"schemaVersion":1,"modelRules":[{"host":"model.example.test","tcpPorts":[443]}],"sshRules":[{"host":"ssh.example.test","tcpPorts":[22]}],"manualRules":[{"cidr":"10.20.30.0/24","tcpPorts":[5432]},{"domain":"example.net"},{"host":"git.example.test","tcpPorts":[22,443]},{"internet":true}]}'
+                printf '%s\n' '{"schemaVersion":1,"modelRules":[{"host":"model.example.test","tcpPorts":[443]},{"host":"inference.private.example.test","tcpPorts":[443]}],"sshRules":[{"host":"ssh.example.test","tcpPorts":[22]}],"manualRules":[{"cidr":"10.20.30.0/24","tcpPorts":[5432]},{"domain":"example.net"},{"host":"git.example.test","tcpPorts":[22,443]},{"internet":true}]}'
             fi
         elif [ "$sidecar" = true ]; then
             [ -n "$policy_source" ] && [ -n "$cidfile" ] || exit 3
@@ -157,8 +157,11 @@ PI_RUN_EGRESS_IMAGE=example.invalid/pi-run-egress:test \
     run_launch "${PI_RUN}" "${WORKSPACE}"
 grep -F 'pi-run: network=docker-restricted' "${TMP}/stderr" >/dev/null \
     || fail "restricted backend was not reported"
-grep -F 'pi-run: model-tcp=model.example.test:443' "${TMP}/stderr" >/dev/null \
-    || fail "model TCP exposure was not reported"
+grep -F 'pi-run: model-tcp=2 provider targets on port 443' "${TMP}/stderr" >/dev/null \
+    || fail "model TCP exposure count was not reported"
+[[ "$(< "${TMP}/stderr")" != *model.example.test* &&
+   "$(< "${TMP}/stderr")" != *inference.private.example.test* ]] \
+    || fail "inferred provider hostname was disclosed in startup output"
 grep -F 'pi-run: ssh-tcp=1 managed target on port 22' "${TMP}/stderr" >/dev/null \
     || fail "managed SSH TCP exposure count was not reported"
 [[ "$(< "${TMP}/stderr")" != *ssh.example.test* ]] \
@@ -169,6 +172,7 @@ jq -e '. == {schemaVersion: 1, rules: [
     {cidr: "10.20.30.0/24", tcpPorts: [5432]},
     {domain: "example.net"},
     {host: "git.example.test", tcpPorts: [22, 443]},
+    {host: "inference.private.example.test", tcpPorts: [443]},
     {host: "model.example.test", tcpPorts: [443]},
     {host: "ssh.example.test", tcpPorts: [22]},
     {internet: true}
@@ -214,6 +218,17 @@ grep -Fx rm "${DOCKER_LOG}" >/dev/null || fail "sidecar cleanup was not attempte
 if grep -Fx host "${DOCKER_LOG}" >/dev/null; then
     fail "restricted launch used host networking"
 fi
+
+RESOLVER_OUTPUT='{"schemaVersion":1,"modelRules":[{"host":"one.private.example.test","tcpPorts":[443]}],"sshRules":[],"manualRules":[]}' \
+    run_launch "${PI_RUN}" "${WORKSPACE}"
+grep -F 'pi-run: model-tcp=1 provider target on port 443' "${TMP}/stderr" >/dev/null \
+    || fail "singular model TCP exposure count was not reported"
+[[ "$(< "${TMP}/stderr")" != *one.private.example.test* ]] \
+    || fail "singular inferred provider hostname was disclosed in startup output"
+RESOLVER_OUTPUT='{"schemaVersion":1,"modelRules":[],"sshRules":[{"host":"ssh.example.test","tcpPorts":[22]}],"manualRules":[]}' \
+    run_launch "${PI_RUN}" "${WORKSPACE}"
+grep -F 'pi-run: model-tcp=none' "${TMP}/stderr" >/dev/null \
+    || fail "empty model TCP exposure was not reported"
 
 # A failed offline launch propagates without a host-network retry.
 set_network_mode offline

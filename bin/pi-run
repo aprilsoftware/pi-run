@@ -829,8 +829,9 @@ if [[ "${NETWORK_MODE}" == restricted ]]; then
         rules: ((.modelRules + .sshRules + .manualRules) | unique_by(tojson) | sort_by(tojson))
     }' <<< "${RESOLVED_POLICY}")"
     MODEL_RULES_DISPLAY="$(jq -r '
-        if (.modelRules | length) == 0 then "none" else
-            [.modelRules[] | (.host + ":" + (.tcpPorts | map(tostring) | join("|")))] | join(",")
+        if (.modelRules | length) == 0 then "none"
+        elif (.modelRules | length) == 1 then "1 provider target on port 443"
+        else "\(.modelRules | length) provider targets on port 443"
         end
     ' <<< "${RESOLVED_POLICY}")"
     SSH_RULES_DISPLAY="$(jq -r '

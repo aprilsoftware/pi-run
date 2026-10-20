@@ -116,8 +116,9 @@ enterprise firewall independently restricts it.
 
 Restricted startup automatically derives exact TCP/443 model destinations and
 exact-target TCP/22 rules from complete matching managed SSH key pairs. It
-reports exact `model-tcp` and `manual-tcp` rules plus only the `ssh-tcp` target
-count and port. Use `ssh-key list` to request the SSH inventory. The normalized
+reports only `model-tcp` and `ssh-tcp` target counts and fixed ports while
+reporting exact explicitly configured `manual-tcp` rules. Inferred hostnames are
+not printed. Use `ssh-key list` to request the SSH inventory. The normalized
 policy is private from Pi and frozen before startup; profile, provider, or key
 changes affect only a new launch. Network reachability and credential presence
 are capabilities, not user authorization for a task.
