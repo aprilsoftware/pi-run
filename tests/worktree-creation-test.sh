@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "${ROOT}/tests/worktree-fixtures.sh"
 TMP="$(mktemp -d)"
 trap 'rm -rf "${TMP}"' EXIT
 HOME_DIR="${TMP}/Pi Run"
@@ -87,12 +88,8 @@ cat > "${REPOSITORY}/.git/hooks/post-checkout" <<EOF
 printf 'host hook ran\n' > '${HOOK_MARKER}'
 EOF
 chmod 0755 "${REPOSITORY}/.git/hooks/post-checkout"
-(
-    cd "${REPOSITORY}"
-    PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" worktree enable >/dev/null
-)
+REPOSITORY_ID="$(register_worktree_repository_fixture "${ROOT}" "${HOME_DIR}" "${REPOSITORY}")"
 MACHINE="${HOME_DIR}/machines/$("${ROOT}/bin/pi-run" machine-id).json"
-REPOSITORY_ID="$(jq -r '.repositories[0].id' "${MACHINE}")"
 BASE="$(git -C "${REPOSITORY}" rev-parse HEAD)"
 
 run_create() {
@@ -217,10 +214,7 @@ fi
 
 UNBORN="${TMP}/unborn"
 git init -q -b main "${UNBORN}"
-(
-    cd "${UNBORN}"
-    PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" worktree enable >/dev/null
-)
+register_worktree_repository_fixture "${ROOT}" "${HOME_DIR}" "${UNBORN}" >/dev/null
 if run_create "${UNBORN}" 88888888-8888-4888-8888-888888888888 >/dev/null 2>"${TMP}/unborn.err"; then
     fail "unborn repository was accepted"
 fi

@@ -47,20 +47,13 @@ printf 'tracked dirty\n' > "${REPOSITORY}/tracked.txt"
 printf 'primary only\n' > "${REPOSITORY}/primary-untracked.txt"
 SOURCE_STATUS="$(git -C "${REPOSITORY}" status --porcelain=v1)"
 
-(
-    cd "${REPOSITORY}"
-    PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" worktree enable >"${TMP}/enable.out"
-)
-grep -F 'Worktree mode: enabled' "${TMP}/enable.out" >/dev/null \
-    || fail "worktree enable did not report the enabled preference"
-
 MACHINE="${HOME_DIR}/machines/$("${ROOT}/bin/pi-run" machine-id).json"
 REGISTRY="${HOME_DIR}/workspaces/registry.json"
+
+run_pi --worktree "${REPOSITORY}" --version >"${TMP}/first.out" 2>"${TMP}/first.err"
 REPOSITORY_ID="$(jq -r '.repositories[0].id' "${MACHINE}")"
 [[ "${REPOSITORY_ID}" =~ ^[0-9a-f-]{36}$ ]] \
     || fail "repository metadata does not contain a UUID"
-
-run_pi "${REPOSITORY}" --version >"${TMP}/first.out" 2>"${TMP}/first.err"
 ID_A="$(jq -r '.repositories[0].managedWorkspaces[0].workspaceId' "${MACHINE}")"
 PATH_A="${HOME_DIR}/worktrees/${REPOSITORY_ID}/${ID_A}"
 [[ -d "${PATH_A}" ]] || fail "first default launch did not create its worktree"
@@ -72,7 +65,7 @@ grep -F "managed-worktree workspace-id=${ID_A}" "${TMP}/first.err" >/dev/null \
 grep -F "managed-worktree host=${PATH_A}" "${TMP}/first.err" >/dev/null \
     || fail "first launch did not report its managed path"
 
-run_pi "${REPOSITORY}" --version >"${TMP}/second.out" 2>"${TMP}/second.err"
+run_pi --worktree "${REPOSITORY}" --version >"${TMP}/second.out" 2>"${TMP}/second.err"
 [[ "$(jq -r '.repositories[0].managedWorkspaces | length' "${MACHINE}")" == 2 ]] \
     || fail "second default launch did not create another managed workspace"
 ID_B="$(jq -r '.repositories[0].managedWorkspaces[1].workspaceId' "${MACHINE}")"
@@ -115,7 +108,7 @@ git -C "${PATH_B}" add workspace-b.txt
     || fail "managed worktree files or indexes crossed workspace boundaries"
 
 jq -e --arg a "${ID_A}" --arg b "${ID_B}" '
-    .repositories[0].enabled == true and
+    .repositories[0].enabled == false and
     ([.repositories[0].managedWorkspaces[].workspaceId] | sort) == ([$a, $b] | sort) and
     ([.workspacePaths[].workspaceId | select(. == $a or . == $b)] | length) == 2
 ' "${MACHINE}" >/dev/null || fail "machine metadata does not contain both managed workspaces"
@@ -152,7 +145,7 @@ create_session "${ID_A}" session-a 100
 create_session "${ID_B}" session-b 200
 
 managed_count="$(jq -r '.repositories[0].managedWorkspaces | length' "${MACHINE}")"
-run_pi "${REPOSITORY}" -c --version >"${TMP}/continue.out" 2>"${TMP}/continue.err"
+run_pi --worktree "${REPOSITORY}" -c --version >"${TMP}/continue.out" 2>"${TMP}/continue.err"
 [[ "$(< "${TMP}/continue.out")" == "${PI_VERSION}" ]] \
     || fail "managed continuation did not execute the same real runtime"
 grep -F "managed-worktree workspace-id=${ID_B}" "${TMP}/continue.err" >/dev/null \
@@ -167,23 +160,17 @@ run_pi --no-worktree "${REPOSITORY}" --version >"${TMP}/direct.out" 2>"${TMP}/di
     || fail "direct override did not execute the same real runtime"
 grep -F "profile=default workspace=${REPOSITORY}" "${TMP}/direct.err" >/dev/null \
     || fail "--no-worktree did not use the primary checkout"
-[[ "$(jq -r '.repositories[0].enabled' "${MACHINE}")" == true &&
+[[ "$(jq -r '.repositories[0].enabled' "${MACHINE}")" == false &&
    "$(jq -r '.repositories[0].managedWorkspaces | length' "${MACHINE}")" == "${managed_count}" ]] \
-    || fail "--no-worktree changed preference or created a managed workspace"
+    || fail "--no-worktree changed metadata or created a managed workspace"
 
-(
-    cd "${REPOSITORY}"
-    PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" worktree disable >"${TMP}/disable.out"
-)
-grep -F 'Worktree mode: disabled' "${TMP}/disable.out" >/dev/null \
-    || fail "worktree disable did not report the disabled preference"
-run_pi "${REPOSITORY}" --version >"${TMP}/disabled.out" 2>"${TMP}/disabled.err"
-[[ "$(< "${TMP}/disabled.out")" == "${PI_VERSION}" ]] \
-    || fail "disabled direct launch did not execute the same real runtime"
-grep -F "profile=default workspace=${REPOSITORY}" "${TMP}/disabled.err" >/dev/null \
-    || fail "disabled preference did not restore direct launches"
+run_pi "${REPOSITORY}" --version >"${TMP}/ordinary.out" 2>"${TMP}/ordinary.err"
+[[ "$(< "${TMP}/ordinary.out")" == "${PI_VERSION}" ]] \
+    || fail "ordinary direct launch did not execute the same real runtime"
+grep -F "profile=default workspace=${REPOSITORY}" "${TMP}/ordinary.err" >/dev/null \
+    || fail "ordinary launch did not use the primary checkout"
 [[ "$(jq -r '.repositories[0].managedWorkspaces | length' "${MACHINE}")" == "${managed_count}" ]] \
-    || fail "disabled direct launch created another managed workspace"
+    || fail "ordinary direct launch created another managed workspace"
 
 if [[ -d "${HOME_DIR}/worktrees/.launch-locks" ]] &&
    find "${HOME_DIR}/worktrees/.launch-locks" -mindepth 1 -print -quit | grep -q .; then
@@ -192,6 +179,6 @@ fi
 [[ "$(git -C "${REPOSITORY}" worktree list --porcelain | grep -c '^worktree ')" == 3 ]] \
     || fail "final Git state does not retain the primary and two managed worktrees"
 [[ "$(jq -r '.repositories[0].enabled' "${MACHINE}")" == false ]] \
-    || fail "final repository preference is not disabled"
+    || fail "internal repository record unexpectedly enabled implicit worktrees"
 
 echo "Managed worktree real-Docker end-to-end test passed"

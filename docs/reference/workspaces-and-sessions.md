@@ -40,8 +40,8 @@ Git metadata for ordinary workspaces.
 Managed Git worktrees add a machine-local repository UUID keyed by the validated
 canonical common Git directory. Each managed checkout still receives its own
 portable workspace UUID and profile-scoped session directory. Repository records
-store the primary path, preference, creation time, and child workspace/branch
-associations; authoritative concrete paths remain in `workspacePaths`.
+store the primary path, creation time, and child workspace/branch associations;
+authoritative concrete paths remain in `workspacePaths`.
 
 Managed checkout content lives at:
 
@@ -97,16 +97,13 @@ context. It does not copy conversations or credentials between profiles.
 
 ## Managed-worktree selection and creation
 
-`worktree enable`, `disable`, and `status` resolve the repository containing the
-current directory. The preference is machine-local and repository-wide; it is
-neither committed nor profile-specific. `worktree list` is repository-grouped,
-deterministically sorted, sanitized for terminal display, and inspection-only.
-It also shows registered repositories with no managed children.
+`worktree list` is repository-grouped, deterministically sorted, sanitized for
+terminal display, and inspection-only. It also shows registered repositories
+with no managed children.
 
-Fresh-launch precedence is explicit `--worktree`, explicit `--no-worktree`, the
-repository preference, then direct behavior. Conflicting explicit flags fail
-before mutation. A per-launch override does not update the preference, and
-`disable` never changes existing managed associations.
+Ordinary launches use the selected checkout directly. Explicit `--worktree`
+selects managed creation or repository-local continuation; explicit
+`--no-worktree` confirms direct behavior. Conflicting flags fail before mutation.
 
 Creation accepts a supported non-bare repository with attached or detached
 committed `HEAD` and rejects an unborn repository. Pi-Run resolves `HEAD^{commit}`
@@ -154,8 +151,8 @@ modification time is selected. No candidate and a tie for newest activity both
 fail without creating a workspace. Transcript modification time is a routing
 signal, not trusted provenance or authorization.
 
-Global resume is association-driven and ignores the current repository
-preference. Selecting a managed group reopens its immutable recorded path and
+Global resume is association-driven. Selecting a managed group reopens its
+immutable recorded path and
 uses managed Git mounts; selecting an ordinary group keeps direct behavior. A
 known managed group unavailable on this machine is never silently reconnected
 as an ordinary checkout.

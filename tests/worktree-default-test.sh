@@ -111,35 +111,23 @@ grep -F "workspace=${REPOSITORY}" "${CAPTURE_PREFIX}.1" >/dev/null \
     || fail "ordinary direct launch migrated schema-v1 machine metadata"
 DIRECT_ID="$(jq -r --arg path "${REPOSITORY}" '.workspacePaths[] | select(.path == $path) | .workspaceId' "${MACHINE}")"
 
-(
-    cd "${REPOSITORY}"
-    PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" worktree enable >/dev/null
-)
-REPOSITORY_ID="$(jq -r '.repositories[0].id' "${MACHINE}")"
-run_pi "${REPOSITORY}" --version >/dev/null 2>"${TMP}/enabled.err"
-grep -F "workspace=${REPOSITORY}" "${CAPTURE_PREFIX}.2" >/dev/null \
-    || fail "enabled repository preference changed an ordinary direct launch"
-[[ "$(jq -r '.repositories[0].managedWorkspaces | length' "${MACHINE}")" == 0 ]] \
-    || fail "enabled repository preference created an implicit managed workspace"
-[[ "$(jq -r '.repositories[0].enabled' "${MACHINE}")" == true ]] \
-    || fail "ordinary direct launch changed the transitional repository preference"
-
 DIRECT_SESSION_DIR="${HOME_DIR}/profiles/default/sessions/${DIRECT_ID}"
 mkdir -p "${DIRECT_SESSION_DIR}"
 printf '{"type":"session","id":"direct","timestamp":"2026-10-20T12:00:00Z","cwd":"/workspace","version":1}\n' \
     > "${DIRECT_SESSION_DIR}/direct.jsonl"
 run_pi "${REPOSITORY}" -c >/dev/null 2>"${TMP}/direct-continue.err"
-grep -F "workspace=${REPOSITORY}" "${CAPTURE_PREFIX}.3" >/dev/null \
-    || fail "enabled repository preference redirected direct continuation"
-grep -F -- '-c' "${CAPTURE_PREFIX}.3" >/dev/null || fail "direct continuation did not preserve -c"
+grep -F "workspace=${REPOSITORY}" "${CAPTURE_PREFIX}.2" >/dev/null \
+    || fail "ordinary continuation stopped using the direct checkout"
+grep -F -- '-c' "${CAPTURE_PREFIX}.2" >/dev/null || fail "direct continuation did not preserve -c"
 run_pi "${REPOSITORY}" -r >/dev/null 2>"${TMP}/direct-resume.err"
-grep -F "workspace=${REPOSITORY}" "${CAPTURE_PREFIX}.4" >/dev/null \
-    || fail "enabled repository preference redirected direct resume"
+grep -F "workspace=${REPOSITORY}" "${CAPTURE_PREFIX}.3" >/dev/null \
+    || fail "ordinary resume stopped using the direct checkout"
 
-run_pi --worktree "${REPOSITORY}" --version >/dev/null 2>"${TMP}/explicit-enabled.err"
+run_pi --worktree "${REPOSITORY}" --version >/dev/null 2>"${TMP}/explicit-first.err"
+REPOSITORY_ID="$(jq -r '.repositories[0].id' "${MACHINE}")"
 MANAGED_ID="$(jq -r '.repositories[0].managedWorkspaces[0].workspaceId' "${MACHINE}")"
 MANAGED_PATH="${HOME_DIR}/worktrees/${REPOSITORY_ID}/${MANAGED_ID}"
-grep -F "workspace=${MANAGED_PATH}" "${CAPTURE_PREFIX}.5" >/dev/null \
+grep -F "workspace=${MANAGED_PATH}" "${CAPTURE_PREFIX}.4" >/dev/null \
     || fail "explicit --worktree did not create a managed workspace"
 
 SESSION_DIR="${HOME_DIR}/profiles/default/sessions/${MANAGED_ID}"
@@ -147,33 +135,25 @@ mkdir -p "${SESSION_DIR}"
 printf '{"type":"session","id":"managed","timestamp":"2026-10-20T12:00:00Z","cwd":"/workspace","version":1}\n' \
     > "${SESSION_DIR}/managed.jsonl"
 run_pi --worktree "${REPOSITORY}" -c >/dev/null 2>"${TMP}/managed-continue.err"
-grep -F "workspace=${MANAGED_PATH}" "${CAPTURE_PREFIX}.6" >/dev/null \
+grep -F "workspace=${MANAGED_PATH}" "${CAPTURE_PREFIX}.5" >/dev/null \
     || fail "explicit --worktree continuation did not reopen the managed workspace"
-grep -F -- '-c' "${CAPTURE_PREFIX}.6" >/dev/null || fail "managed continuation did not preserve -c"
+grep -F -- '-c' "${CAPTURE_PREFIX}.5" >/dev/null || fail "managed continuation did not preserve -c"
 
 run_pi --no-worktree "${REPOSITORY}" --version >/dev/null 2>"${TMP}/no-worktree.err"
-grep -F "workspace=${REPOSITORY}" "${CAPTURE_PREFIX}.7" >/dev/null \
+grep -F "workspace=${REPOSITORY}" "${CAPTURE_PREFIX}.6" >/dev/null \
     || fail "--no-worktree did not preserve direct launch behavior"
-grep -Fx 'common=' "${CAPTURE_PREFIX}.7" >/dev/null \
+grep -Fx 'common=' "${CAPTURE_PREFIX}.6" >/dev/null \
     || fail "--no-worktree unexpectedly used managed Git mounts"
 
-(
-    cd "${REPOSITORY}"
-    PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" worktree disable >/dev/null
-)
-run_pi --worktree "${REPOSITORY}" --version >/dev/null 2>"${TMP}/explicit-disabled.err"
+run_pi --worktree "${REPOSITORY}" --version >/dev/null 2>"${TMP}/explicit-second.err"
 [[ "$(jq -r '.repositories[0].managedWorkspaces | length' "${MACHINE}")" == 2 ]] \
-    || fail "explicit --worktree depended on the transitional repository preference"
+    || fail "second explicit --worktree launch did not create a managed workspace"
 [[ "$(jq -r '.repositories[0].enabled' "${MACHINE}")" == false ]] \
-    || fail "explicit --worktree changed the transitional repository preference"
-run_pi "${REPOSITORY}" --version >/dev/null 2>"${TMP}/disabled.err"
-grep -F "workspace=${REPOSITORY}" "${CAPTURE_PREFIX}.9" >/dev/null \
+    || fail "explicit --worktree changed the internal repository record"
+run_pi "${REPOSITORY}" --version >/dev/null 2>"${TMP}/direct-after-managed.err"
+grep -F "workspace=${REPOSITORY}" "${CAPTURE_PREFIX}.8" >/dev/null \
     || fail "ordinary launch stopped using the direct checkout"
 
-(
-    cd "${REPOSITORY}"
-    PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" worktree enable >/dev/null
-)
 metadata_before="$(sha256sum "${MACHINE}" "${REGISTRY}")"
 git_before="$(git -C "${REPOSITORY}" worktree list --porcelain | sha256sum)"
 docker_before="$(wc -l < "${DOCKER_LOG}")"
@@ -187,8 +167,23 @@ grep -F 'cannot be used together' "${TMP}/conflict.err" >/dev/null \
    "$(wc -l < "${DOCKER_LOG}")" == "${docker_before}" ]] \
     || fail "conflicting overrides changed metadata, Git, or Docker state"
 
+for removed_command in status enable disable; do
+    metadata_before="$(sha256sum "${MACHINE}" "${REGISTRY}")"
+    git_before="$(git -C "${REPOSITORY}" worktree list --porcelain | sha256sum)"
+    if (cd "${REPOSITORY}" && PI_RUN_HOME="${HOME_DIR}" \
+        "${ROOT}/bin/pi-run" worktree "${removed_command}") \
+        >"${TMP}/removed-${removed_command}.out" 2>"${TMP}/removed-${removed_command}.err"; then
+        fail "removed worktree ${removed_command} command was accepted"
+    fi
+    grep -F 'Usage:' "${TMP}/removed-${removed_command}.err" >/dev/null \
+        || fail "removed worktree ${removed_command} command did not show usage"
+    [[ "$(sha256sum "${MACHINE}" "${REGISTRY}")" == "${metadata_before}" &&
+       "$(git -C "${REPOSITORY}" worktree list --porcelain | sha256sum)" == "${git_before}" ]] \
+        || fail "removed worktree ${removed_command} command changed metadata or Git state"
+done
+
 run_pi "${NON_GIT}" --version >/dev/null 2>"${TMP}/non-git.err"
-grep -F "workspace=${NON_GIT}" "${CAPTURE_PREFIX}.10" >/dev/null \
+grep -F "workspace=${NON_GIT}" "${CAPTURE_PREFIX}.9" >/dev/null \
     || fail "non-Git directory did not remain a direct workspace"
 
 echo "Worktree repository default tests passed"

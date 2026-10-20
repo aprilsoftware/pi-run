@@ -77,24 +77,10 @@ Create one managed workspace explicitly:
 pi-run --worktree .
 ```
 
-Or control the repository default for future launches:
-
-```bash
-pi-run worktree status
-pi-run worktree enable
-pi-run worktree disable
-```
-
-Launch selection follows this order:
-
-1. explicit `--worktree`;
-2. explicit `--no-worktree`;
-3. the repository preference; and
-4. direct-checkout behavior when no managed choice applies.
-
-`--worktree` and `--no-worktree` are mutually exclusive. Explicit overrides do
-not alter the saved preference. Separate clones remain separate repository
-identities even when their remotes match.
+Ordinary launches use the selected checkout directly. `--worktree` explicitly
+creates or selects managed worktree behavior, while `--no-worktree` makes direct
+intent explicit. The flags are mutually exclusive. Separate clones remain
+separate repository identities even when their remotes match.
 
 A fresh managed launch records the selected checkout's exact committed `HEAD`,
 creates `pi-run/<workspace-uuid>`, and places the checkout at:
@@ -118,9 +104,8 @@ pi-run --worktree . -c
 pi-run --worktree . -r
 ```
 
-When the repository default is enabled, the same routing applies without the
-explicit flag. Pi-Run selects the managed workspace whose valid transcript has
-the newest modification time. Equal newest times fail as ambiguous. `-c`
+Pi-Run selects the managed workspace whose valid transcript has the newest
+modification time. Equal newest times fail as ambiguous. `-c`
 delegates continue behavior to Pi; `-r` delegates individual transcript
 selection. To choose a specific older group, use `pi-run resume` or
 `pi-run resume <profile> <workspace-id>`.

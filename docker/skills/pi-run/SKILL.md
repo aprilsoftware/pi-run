@@ -136,19 +136,14 @@ normal non-bare Git repository. Ask the user to run these commands from the
 repository in a host terminal:
 
 ```bash
-pi-run worktree status
-pi-run worktree enable
-pi-run worktree disable
 pi-run worktree list
 pi-run --worktree .
 pi-run --no-worktree .
 ```
 
-`--worktree` explicitly creates a fresh managed workspace; `--no-worktree`
-explicitly uses the selected checkout. Otherwise, the machine-local repository
-preference applies, then direct-checkout behavior. Overrides do not change the
-preference. Disabling changes only future launches and does not remove branches,
-worktrees, workspace identities, source changes, or sessions.
+`--worktree` explicitly creates or continues a managed workspace; ordinary
+launches use the selected checkout directly. `--no-worktree` makes direct intent
+explicit.
 
 A managed workspace begins at the selected checkout's exact committed `HEAD` on
 `pi-run/<workspace-uuid>`. Dirty source-checkout changes are reported but not
@@ -162,7 +157,7 @@ push, remove worktrees, or delete branches. Managed checkouts live under:
 With managed mode selected, repository-local `-c` and `-r` route to the valid
 workspace whose selected-profile transcript has the newest modification time;
 ties fail as ambiguous. Global `pi-run resume` follows the selected workspace's
-recorded association regardless of the current repository preference. One
+recorded association. One
 Pi-Run process may use a particular managed workspace at a time, while distinct
 managed workspaces may run concurrently.
 

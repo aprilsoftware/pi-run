@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "${ROOT}/tests/worktree-fixtures.sh"
 TMP="$(mktemp -d)"
 trap 'rm -rf "${TMP}"' EXIT
 HOME_DIR="${TMP}/Pi Run"
@@ -75,15 +76,11 @@ git -C "${REPOSITORY}" config user.email fixture@pi-run.invalid
 printf 'base\n' > "${REPOSITORY}/base.txt"
 git -C "${REPOSITORY}" add base.txt
 git -C "${REPOSITORY}" commit -qm base
-(
-    cd "${REPOSITORY}"
-    PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" worktree enable >/dev/null
-)
+REPOSITORY_ID="$(register_worktree_repository_fixture "${ROOT}" "${HOME_DIR}" "${REPOSITORY}")"
 PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" profile create review --from default >/dev/null
 PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" profile create empty --from default >/dev/null
 MACHINE="${HOME_DIR}/machines/$("${ROOT}/bin/pi-run" machine-id).json"
 REGISTRY="${HOME_DIR}/workspaces/registry.json"
-REPOSITORY_ID="$(jq -r '.repositories[0].id' "${MACHINE}")"
 COMMON="${REPOSITORY}/.git"
 WORKTREE_ROOT="${HOME_DIR}/worktrees/${REPOSITORY_ID}"
 PATH_A="${WORKTREE_ROOT}/${ID_A}"

@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "${ROOT}/tests/worktree-fixtures.sh"
 TMP="$(mktemp -d)"
 trap 'rm -rf "${TMP}"' EXIT
 HOME_DIR="${TMP}/Pi Run"
@@ -29,23 +30,11 @@ initialize_repository() {
     git -C "${path}" commit -qm base
 }
 
-enable_repository() {
-    local path="$1"
-    (
-        cd "${path}"
-        PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" worktree enable >/dev/null
-    )
-}
-
 PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" init >/dev/null
 initialize_repository "${ZETA}"
 initialize_repository "${ALPHA}"
-enable_repository "${ZETA}"
-enable_repository "${ALPHA}"
-(
-    cd "${ZETA}"
-    PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" worktree disable >/dev/null
-)
+register_worktree_repository_fixture "${ROOT}" "${HOME_DIR}" "${ZETA}" >/dev/null
+register_worktree_repository_fixture "${ROOT}" "${HOME_DIR}" "${ALPHA}" >/dev/null
 MACHINE="${HOME_DIR}/machines/$("${ROOT}/bin/pi-run" machine-id).json"
 REGISTRY="${HOME_DIR}/workspaces/registry.json"
 ALPHA_COMMON="${ALPHA}/.git"

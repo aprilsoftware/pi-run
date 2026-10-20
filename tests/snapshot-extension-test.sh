@@ -317,13 +317,6 @@ auto_output="$(env PATH="${TMP}/fake-bin:${PATH}" PI_RUN_HOME="${HOME_DIR}" \
 machine_file="$(find "${HOME_DIR}/machines" -maxdepth 1 -type f -name '*.json' -print -quit)"
 jq -e '.schemaVersion == 1 and .snapshotAuto.onSessionExit==true' "${machine_file}" >/dev/null \
     || fail "automatic snapshot setting was not stored in schema-v1 machine metadata"
-worktree_output="$(cd "${TMP}/workspace" && env PATH="${TMP}/fake-bin:${PATH}" \
-    PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" worktree status)"
-[[ "${worktree_output}" == *'Worktree mode: disabled (not registered)'* ]] \
-    || fail "worktree status did not complete the automatic-snapshot metadata migration"
-jq -e '.schemaVersion == 2 and .snapshotAuto.onSessionExit==true and .repositories==[]' \
-    "${machine_file}" >/dev/null \
-    || fail "worktree migration did not preserve automatic snapshot configuration"
 auto_output="$(env PATH="${TMP}/fake-bin:${PATH}" PI_RUN_HOME="${HOME_DIR}" \
     "${ROOT}/bin/pi-run" snapshot auto status)"
 [[ "${auto_output}" == 'Automatic snapshots on successful Pi exit: enabled' ]] \

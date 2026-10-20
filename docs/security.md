@@ -166,8 +166,8 @@ independent security boundary after Pi starts.
 Managed source trees and machine associations are host-visible persistent state
 and are excluded from encrypted snapshots. Pi-Run does not automatically stash,
 commit, reset, clean, merge, rebase, push, remove a worktree, or delete a branch.
-Stopping a run, disabling the repository preference, or finding no transcript is
-not evidence that the checkout can be discarded.
+Stopping a run or finding no transcript is not evidence that the checkout can
+be discarded.
 
 Use `pi-run worktree list` to inspect recorded state and stop if it reports
 `pending`, `missing`, `path-conflict`, `git-conflict`, or `unsafe`. See the

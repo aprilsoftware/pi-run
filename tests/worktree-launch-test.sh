@@ -149,10 +149,6 @@ for report in \
     grep -F "${report}" "${TMP}/launch.err" >/dev/null \
         || fail "managed launch omitted startup report: ${report}"
 done
-status_output="$(cd "${REPOSITORY}" && PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" worktree status)"
-[[ "${status_output}" == *'Worktree mode: disabled'* ]] \
-    || fail "explicit launch enabled the repository preference"
-
 if [[ "${LIVE_DOCKER}" != 1 ]]; then
     [[ "$(< "${MAIN_COUNT_FILE}")" == 1 ]] || fail "managed launch did not start Pi exactly once"
     CAPTURE="${TMP}/main.1"

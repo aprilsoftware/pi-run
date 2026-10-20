@@ -102,16 +102,9 @@ Pi-Run creates a host-visible branch named `pi-run/<workspace-uuid>` under
 source-checkout changes are reported but are not copied. Pi-Run never stashes,
 commits, resets, or discards them.
 
-Make managed worktrees the default for future launches of this repository:
-
-```bash
-pi-run worktree enable
-pi-run worktree status
-```
-
-Use `pi-run --no-worktree .` when one launch should use the direct checkout, or
-`pi-run worktree disable` to change the future default. Disabling does not remove
-existing branches, worktrees, source changes, identities, or sessions.
+Ordinary `pi-run .` launches continue to use the selected checkout. Use
+`pi-run --no-worktree .` when you want to make that direct intent explicit.
+Creating a managed worktree always requires the explicit `--worktree` flag.
 
 Managed worktrees isolate working files and indexes for parallel sessions, not
 Git authority or external systems. Git objects, refs, configuration, hooks,
