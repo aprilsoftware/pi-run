@@ -117,54 +117,58 @@ DIRECT_ID="$(jq -r --arg path "${REPOSITORY}" '.workspacePaths[] | select(.path 
 )
 REPOSITORY_ID="$(jq -r '.repositories[0].id' "${MACHINE}")"
 run_pi "${REPOSITORY}" --version >/dev/null 2>"${TMP}/enabled.err"
-MANAGED_ID="$(jq -r '.repositories[0].managedWorkspaces[0].workspaceId' "${MACHINE}")"
-MANAGED_PATH="${HOME_DIR}/worktrees/${REPOSITORY_ID}/${MANAGED_ID}"
-grep -F "workspace=${MANAGED_PATH}" "${CAPTURE_PREFIX}.2" >/dev/null \
-    || fail "enabled repository preference did not create a managed workspace"
+grep -F "workspace=${REPOSITORY}" "${CAPTURE_PREFIX}.2" >/dev/null \
+    || fail "enabled repository preference changed an ordinary direct launch"
+[[ "$(jq -r '.repositories[0].managedWorkspaces | length' "${MACHINE}")" == 0 ]] \
+    || fail "enabled repository preference created an implicit managed workspace"
 [[ "$(jq -r '.repositories[0].enabled' "${MACHINE}")" == true ]] \
-    || fail "default managed launch changed the repository preference"
-
-SESSION_DIR="${HOME_DIR}/profiles/default/sessions/${MANAGED_ID}"
-mkdir -p "${SESSION_DIR}"
-printf '{"type":"session","id":"managed","timestamp":"2026-10-20T12:00:00Z","cwd":"/workspace","version":1}\n' \
-    > "${SESSION_DIR}/managed.jsonl"
-run_pi "${REPOSITORY}" -c >/dev/null 2>"${TMP}/continue.err"
-grep -F "workspace=${MANAGED_PATH}" "${CAPTURE_PREFIX}.3" >/dev/null \
-    || fail "enabled preference did not route -c to the managed workspace"
-grep -F -- '-c' "${CAPTURE_PREFIX}.3" >/dev/null || fail "managed default did not preserve -c"
-run_pi "${REPOSITORY}" -r >/dev/null 2>"${TMP}/resume.err"
-grep -F "workspace=${MANAGED_PATH}" "${CAPTURE_PREFIX}.4" >/dev/null \
-    || fail "enabled preference did not route -r to the managed workspace"
-
-run_pi --no-worktree "${REPOSITORY}" --version >/dev/null 2>"${TMP}/no-worktree.err"
-grep -F "workspace=${REPOSITORY}" "${CAPTURE_PREFIX}.5" >/dev/null \
-    || fail "--no-worktree did not override the enabled preference"
-grep -Fx 'common=' "${CAPTURE_PREFIX}.5" >/dev/null \
-    || fail "--no-worktree unexpectedly used managed Git mounts"
-[[ "$(jq -r '.repositories[0].enabled' "${MACHINE}")" == true ]] \
-    || fail "--no-worktree disabled the persistent preference"
+    || fail "ordinary direct launch changed the transitional repository preference"
 
 DIRECT_SESSION_DIR="${HOME_DIR}/profiles/default/sessions/${DIRECT_ID}"
 mkdir -p "${DIRECT_SESSION_DIR}"
 printf '{"type":"session","id":"direct","timestamp":"2026-10-20T12:00:00Z","cwd":"/workspace","version":1}\n' \
     > "${DIRECT_SESSION_DIR}/direct.jsonl"
-run_pi --no-worktree "${REPOSITORY}" -c >/dev/null 2>"${TMP}/direct-continue.err"
-grep -F "workspace=${REPOSITORY}" "${CAPTURE_PREFIX}.6" >/dev/null \
-    || fail "--no-worktree did not preserve direct continuation"
-grep -F -- '-c' "${CAPTURE_PREFIX}.6" >/dev/null || fail "direct continuation did not preserve -c"
+run_pi "${REPOSITORY}" -c >/dev/null 2>"${TMP}/direct-continue.err"
+grep -F "workspace=${REPOSITORY}" "${CAPTURE_PREFIX}.3" >/dev/null \
+    || fail "enabled repository preference redirected direct continuation"
+grep -F -- '-c' "${CAPTURE_PREFIX}.3" >/dev/null || fail "direct continuation did not preserve -c"
+run_pi "${REPOSITORY}" -r >/dev/null 2>"${TMP}/direct-resume.err"
+grep -F "workspace=${REPOSITORY}" "${CAPTURE_PREFIX}.4" >/dev/null \
+    || fail "enabled repository preference redirected direct resume"
+
+run_pi --worktree "${REPOSITORY}" --version >/dev/null 2>"${TMP}/explicit-enabled.err"
+MANAGED_ID="$(jq -r '.repositories[0].managedWorkspaces[0].workspaceId' "${MACHINE}")"
+MANAGED_PATH="${HOME_DIR}/worktrees/${REPOSITORY_ID}/${MANAGED_ID}"
+grep -F "workspace=${MANAGED_PATH}" "${CAPTURE_PREFIX}.5" >/dev/null \
+    || fail "explicit --worktree did not create a managed workspace"
+
+SESSION_DIR="${HOME_DIR}/profiles/default/sessions/${MANAGED_ID}"
+mkdir -p "${SESSION_DIR}"
+printf '{"type":"session","id":"managed","timestamp":"2026-10-20T12:00:00Z","cwd":"/workspace","version":1}\n' \
+    > "${SESSION_DIR}/managed.jsonl"
+run_pi --worktree "${REPOSITORY}" -c >/dev/null 2>"${TMP}/managed-continue.err"
+grep -F "workspace=${MANAGED_PATH}" "${CAPTURE_PREFIX}.6" >/dev/null \
+    || fail "explicit --worktree continuation did not reopen the managed workspace"
+grep -F -- '-c' "${CAPTURE_PREFIX}.6" >/dev/null || fail "managed continuation did not preserve -c"
+
+run_pi --no-worktree "${REPOSITORY}" --version >/dev/null 2>"${TMP}/no-worktree.err"
+grep -F "workspace=${REPOSITORY}" "${CAPTURE_PREFIX}.7" >/dev/null \
+    || fail "--no-worktree did not preserve direct launch behavior"
+grep -Fx 'common=' "${CAPTURE_PREFIX}.7" >/dev/null \
+    || fail "--no-worktree unexpectedly used managed Git mounts"
 
 (
     cd "${REPOSITORY}"
     PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" worktree disable >/dev/null
 )
-run_pi --worktree "${REPOSITORY}" --version >/dev/null 2>"${TMP}/explicit.err"
+run_pi --worktree "${REPOSITORY}" --version >/dev/null 2>"${TMP}/explicit-disabled.err"
 [[ "$(jq -r '.repositories[0].managedWorkspaces | length' "${MACHINE}")" == 2 ]] \
-    || fail "--worktree did not override the disabled preference"
+    || fail "explicit --worktree depended on the transitional repository preference"
 [[ "$(jq -r '.repositories[0].enabled' "${MACHINE}")" == false ]] \
-    || fail "explicit --worktree enabled the persistent preference"
+    || fail "explicit --worktree changed the transitional repository preference"
 run_pi "${REPOSITORY}" --version >/dev/null 2>"${TMP}/disabled.err"
-grep -F "workspace=${REPOSITORY}" "${CAPTURE_PREFIX}.8" >/dev/null \
-    || fail "disabled repository preference did not restore direct launches"
+grep -F "workspace=${REPOSITORY}" "${CAPTURE_PREFIX}.9" >/dev/null \
+    || fail "ordinary launch stopped using the direct checkout"
 
 (
     cd "${REPOSITORY}"
@@ -184,7 +188,7 @@ grep -F 'cannot be used together' "${TMP}/conflict.err" >/dev/null \
     || fail "conflicting overrides changed metadata, Git, or Docker state"
 
 run_pi "${NON_GIT}" --version >/dev/null 2>"${TMP}/non-git.err"
-grep -F "workspace=${NON_GIT}" "${CAPTURE_PREFIX}.9" >/dev/null \
+grep -F "workspace=${NON_GIT}" "${CAPTURE_PREFIX}.10" >/dev/null \
     || fail "non-Git directory did not remain a direct workspace"
 
 echo "Worktree repository default tests passed"

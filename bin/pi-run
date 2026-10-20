@@ -696,8 +696,6 @@ MANAGED_CONTINUATION=false
 if [[ "${RESUME_LAUNCH}" == false ]]; then
     if [[ "${WORKTREE_REQUESTED}" == true ]]; then
         USE_MANAGED_WORKTREE=true
-    elif [[ "${NO_WORKTREE_REQUESTED}" == false ]] && worktree_preference_enabled_for_path "${WORKSPACE}"; then
-        USE_MANAGED_WORKTREE=true
     fi
     if [[ "${USE_MANAGED_WORKTREE}" == true && "${CONTINUATION_SELECTOR_COUNT}" != 0 ]]; then
         if (( CONTINUATION_SELECTOR_COUNT != 1 )); then
