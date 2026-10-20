@@ -321,39 +321,6 @@ list_managed_worktrees() {
     release_workspace_lock
 }
 
-worktree_preference_enabled_for_path() {
-    local selected="$1" machine schema common_raw common count enabled
-    command -v git >/dev/null 2>&1 || return 1
-    [[ -d "${selected}" ]] || return 1
-    [[ "$(git -C "${selected}" rev-parse --is-inside-work-tree 2>/dev/null)" == true &&
-       "$(git -C "${selected}" rev-parse --is-bare-repository 2>/dev/null)" == false ]] || return 1
-    machine="$(machine_file)"
-    [[ -f "${machine}" ]] || return 1
-    validate_workspace_metadata "${machine}"
-    schema="$(jq -r '.schemaVersion' "${machine}")"
-    [[ "${schema}" == 2 ]] || return 1
-    validate_worktree_machine_file "${machine}"
-    common_raw="$(git -C "${selected}" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" \
-        || return 1
-    [[ -e "${common_raw}" ]] || return 1
-    common="$(realpath "${common_raw}")"
-
-    acquire_workspace_lock
-    validate_workspace_metadata "${machine}"
-    count="$(jq -r --arg common "${common}" \
-        '[.repositories[] | select(.commonGitDir == $common)] | length' "${machine}")"
-    [[ "${count}" == 0 || "${count}" == 1 ]] || fail "repository metadata is ambiguous"
-    if [[ "${count}" == 0 ]]; then
-        release_workspace_lock
-        return 1
-    fi
-    enabled="$(jq -r --arg common "${common}" \
-        '.repositories[] | select(.commonGitDir == $common) | .enabled' "${machine}")"
-    release_workspace_lock
-    [[ "${enabled}" == true ]] || return 1
-    resolve_worktree_repository "${selected}"
-}
-
 MANAGED_LAUNCH_LOCK_DIR=""
 MANAGED_LAUNCH_LOCK_TOKEN=""
 
