@@ -71,14 +71,16 @@ indexes, and working files from one normal non-bare Git repository. They are
 persistent, host-visible source checkouts—not temporary container state and not
 a security boundary.
 
-Create one explicitly named managed task from the repository:
+Create one explicitly named managed task for a selected repository:
 
 ```bash
-pi-run worktree start api-refactor
+pi-run worktree start api-refactor .
 ```
 
-Ordinary launches use the selected checkout directly. Task names begin with a
-lowercase letter or digit, contain only lowercase letters, digits, `.`, `_`, or
+The repository argument is required and accepts `.` or another relative or
+absolute repository path. Ordinary launches use the selected checkout directly.
+Task names begin with a lowercase letter or digit, contain only lowercase
+letters, digits, `.`, `_`, or
 `-`, are at most 63 characters, and are unique within the repository. Separate
 clones remain separate repository identities even when their remotes match.
 
@@ -95,16 +97,17 @@ uncommitted changes are excluded from the new checkout. Pi-Run does not stash,
 copy, commit, clean, reset, merge, rebase, push, remove worktrees, or delete
 branches automatically.
 
-Open an existing task from anywhere inside the same repository:
+Open an existing task by naming the same repository explicitly:
 
 ```bash
-pi-run worktree open api-refactor
-pi-run worktree open api-refactor -c
-pi-run worktree open api-refactor -r
+pi-run worktree open api-refactor .
+pi-run worktree open api-refactor . -c
+pi-run worktree open api-refactor . -r
 ```
 
-Without a selector, `open` starts a fresh Pi conversation in the existing task.
-`-c` continues that task's newest conversation for the selected profile, and
+The required repository path may be supplied from inside or outside the
+repository. Without a selector, `open` starts a fresh Pi conversation in the
+existing task. `-c` continues that task's newest conversation for the selected profile, and
 `-r` opens Pi's selector for that task. Open never creates another branch,
 worktree, UUID, or metadata record. Global `pi-run resume` also follows a
 selected task's immutable machine association and never reconnects it as an

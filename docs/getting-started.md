@@ -93,12 +93,13 @@ workspace. For profile selection and exact startup behavior, see the
 For parallel work on a normal Git repository, create a fresh managed worktree:
 
 ```bash
-pi-run worktree start api-refactor
+pi-run worktree start api-refactor .
 ```
 
-Run the command from the repository. Pi-Run creates a host-visible branch named
-`pi-run/api-refactor/<workspace-uuid>` under `<Pi-Run home>/worktrees/`, starts
-it at the selected checkout's committed
+The repository argument is required; use `.` for the current repository or pass
+another relative or absolute repository path. Pi-Run creates a host-visible
+branch named `pi-run/api-refactor/<workspace-uuid>` under
+`<Pi-Run home>/worktrees/`, starts it at the selected checkout's committed
 `HEAD`, and mounts only that checkout at `/workspace`. Uncommitted and untracked
 source-checkout changes are reported but are not copied. Pi-Run never stashes,
 commits, resets, or discards them.

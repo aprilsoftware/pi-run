@@ -132,9 +132,9 @@ versioned application archive, pulls the matching runtime and egress images,
 and installs the `pi-run` command. `pi-run init` creates the data home and
 initial profile;
 `pi-run .` opens the current directory as a writable workspace. For explicitly
-isolated parallel repository work, `pi-run worktree start <task-name>` creates a
-named persistent host-visible Git worktree. Ordinary launches remain in the
-selected checkout. See
+isolated parallel repository work, `pi-run worktree start <task-name> <repository>`
+creates a named persistent host-visible Git worktree. Use `.` for the current
+repository. Ordinary launches remain in the selected checkout. See
 [workspaces and sessions](docs/workspaces-and-sessions.md) for continuation,
 inspection, and security boundaries.
 

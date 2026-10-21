@@ -102,9 +102,10 @@ terminal display, and inspection-only. It also shows registered repositories
 with no managed children.
 
 Ordinary launches use the selected checkout directly. `worktree start
-<task-name>` explicitly creates one named managed task from the repository
-containing the current directory. Additional Pi arguments require a `--`
-separator. Duplicate or invalid names fail before Git worktree mutation.
+<task-name> <repository>` explicitly creates one named managed task from the
+required repository path. The path may be relative or absolute; `.` selects the
+current directory. Additional Pi arguments require a `--` separator. Missing
+paths and duplicate or invalid names fail before Git worktree mutation.
 
 Creation accepts a supported non-bare repository with attached or detached
 committed `HEAD` and rejects an unborn repository. Pi-Run resolves `HEAD^{commit}`
@@ -152,10 +153,11 @@ one-time cleanup is required.
 
 ## Managed continuation and locking
 
-`worktree open <task-name>` resolves the repository containing the current
-directory and then requires exactly one active task with that name. It validates
-the recorded path, portable identity, branch, Git administration, common
-directory, and current commit without creating or changing Git or metadata.
+`worktree open <task-name> <repository>` resolves the required relative or
+absolute repository path and then requires exactly one active task with that
+name. It validates the recorded path, portable identity, branch, Git
+administration, common directory, and current commit without creating or
+changing Git or metadata.
 Missing, ambiguous, unavailable, or conflicting state fails before Docker starts.
 
 With no selector, `open` starts a fresh conversation in the task's selected-profile

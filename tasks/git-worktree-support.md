@@ -31,22 +31,23 @@ pi-run . -r
 The selected complete workflow uses explicit named tasks:
 
 ```bash
-pi-run worktree start <task-name>
-pi-run worktree open <task-name>
-pi-run worktree open <task-name> -c
-pi-run worktree open <task-name> -r
+pi-run worktree start <task-name> <repository>
+pi-run worktree open <task-name> <repository>
+pi-run worktree open <task-name> <repository> -c
+pi-run worktree open <task-name> <repository> -r
 pi-run worktree list
 pi-run worktree list --all
 pi-run worktree finish <task-name>
 ```
 
 `start`, `open`, `finish`, bare `list`, and historical `list --all` are
-implemented. `start`, `open`, and `finish` resolve the
-repository containing the current host
-directory. Task names are unique within that machine-local repository and use a
-short validated command-line spelling rather than exposing UUIDs as the normal
-user interface. Profiles continue to select credentials, instructions, skills,
-settings, and conversations; they do not create or identify source worktrees.
+implemented. `start` and `open` require a relative or absolute repository path;
+`.` selects the current directory. `finish` resolves the repository containing
+the current host directory. Task names are unique within that machine-local
+repository and use a short validated command-line spelling rather than exposing
+UUIDs as the normal user interface. Profiles continue to select credentials,
+instructions, skills, settings, and conversations; they do not create or
+identify source worktrees.
 
 `start` is the only ordinary operation that creates a worktree. `open` always
 uses the named existing task and starts a fresh Pi conversation unless `-c` or
@@ -445,15 +446,15 @@ unavailable, not recreated from guesses.
 ## Task-oriented implementation status
 
 The replacement now provides unconditional direct ordinary launches, explicit
-`worktree start <task-name>`, schema-v3 named task lifecycle records,
+`worktree start <task-name> <repository>`, schema-v3 named task lifecycle records,
 collision-safe isolated materialization, recoverable machine-first publication,
-task reporting, repository-grouped listing, one-active-launch locking, and association-driven
-global resume. Prototype repository preferences, launch flags, unnamed
+task reporting, repository-grouped listing, one-active-launch locking, and
+association-driven global resume. Prototype repository preferences, launch flags, unnamed
 workspaces, and cross-worktree transcript routing have been removed.
 
-Named `worktree open <task-name>` supports fresh, `-c`, and `-r` task-local
-conversations without creating another checkout. Recoverable `finish` preserves
-branches, commits, identities, and conversations and is never inferred from
+Named `worktree open <task-name> <repository>` supports fresh, `-c`, and `-r`
+task-local conversations without creating another checkout. Recoverable
+`finish` preserves branches, commits, identities, and conversations and is never inferred from
 ordinary exit or Git state.
 
 ## Deferred decisions and exclusions

@@ -136,17 +136,18 @@ normal non-bare Git repository. Ask the user to run these commands from the
 repository in a host terminal:
 
 ```bash
-pi-run worktree start <task-name>
-pi-run worktree open <task-name>
-pi-run worktree open <task-name> -c
-pi-run worktree open <task-name> -r
+pi-run worktree start <task-name> <repository>
+pi-run worktree open <task-name> <repository>
+pi-run worktree open <task-name> <repository> -c
+pi-run worktree open <task-name> <repository> -r
 pi-run worktree finish <task-name>
 pi-run worktree list
 pi-run worktree list --all
 ```
 
-Run `worktree start` from the repository to create one explicitly named task;
-ordinary launches use the selected checkout directly. A managed task begins at
+`worktree start` requires a relative or absolute repository path; use `.` for
+the current repository. It creates one explicitly named task, while ordinary
+launches use the selected checkout directly. A managed task begins at
 the selected checkout's exact committed `HEAD` on
 `pi-run/<task-name>/<workspace-uuid>`. Dirty source-checkout changes are reported
 but not copied. Pi-Run does not automatically stash, commit, clean, reset, merge, rebase,
@@ -156,9 +157,10 @@ push, remove worktrees, or delete branches. Managed checkouts live under:
 <Pi-Run home>/worktrees/<repository-id>/<workspace-id>/
 ```
 
-`worktree open` reuses exactly the named task without creating another checkout.
-Without a selector it starts a fresh conversation; `-c` and `-r` stay within the
-selected profile's conversations for that task. Global `pi-run resume` also
+`worktree open` requires the same explicit repository-path form and reuses
+exactly the named task without creating another checkout. Without a selector it
+starts a fresh conversation; `-c` and `-r` stay within the selected profile's
+conversations for that task. Global `pi-run resume` also
 follows the selected workspace's recorded association. One Pi-Run process may
 use a particular managed task at a time, while distinct tasks may run concurrently.
 
