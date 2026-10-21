@@ -37,11 +37,11 @@ Registration is directory-based. Different clones or directories are distinct
 even when their names and Git remotes match. Pi-Run does not infer identity from
 Git metadata for ordinary workspaces.
 
-Managed Git worktrees add a machine-local repository UUID keyed by the validated
-canonical common Git directory. Each managed checkout still receives its own
-portable workspace UUID and profile-scoped session directory. Repository records
-store the primary path, creation time, and child workspace/branch associations;
-authoritative concrete paths remain in `workspacePaths`.
+Managed Git tasks add a machine-local repository UUID keyed by the validated
+canonical common Git directory. Each task receives its own portable workspace
+UUID and profile-scoped session directory. Repository records store the primary
+path, creation time, and named task/workspace/branch associations; authoritative
+concrete paths remain in `workspacePaths`.
 
 Managed checkout content lives at:
 
@@ -101,9 +101,10 @@ context. It does not copy conversations or credentials between profiles.
 terminal display, and inspection-only. It also shows registered repositories
 with no managed children.
 
-Ordinary launches use the selected checkout directly. Explicit `--worktree`
-selects managed creation or repository-local continuation; explicit
-`--no-worktree` confirms direct behavior. Conflicting flags fail before mutation.
+Ordinary launches use the selected checkout directly. `worktree start
+<task-name>` explicitly creates one named managed task from the repository
+containing the current directory. Additional Pi arguments require a `--`
+separator. Duplicate or invalid names fail before Git worktree mutation.
 
 Creation accepts a supported non-bare repository with attached or detached
 committed `HEAD` and rejects an unborn repository. Pi-Run resolves `HEAD^{commit}`
@@ -111,9 +112,9 @@ before creation and reports dirty source state as excluded. It allocates one UUI
 and strictly preflights the branch, worktree path, Git administration path, and
 metadata. Collisions fail instead of selecting another identity.
 
-The branch is `pi-run/<workspace-uuid>`. Pi-Run first runs `git worktree add
---no-checkout` on the host, then materializes the recorded commit in a temporary
-version-matched runtime container. Materialization uses `--pull never`, network
+The branch is `pi-run/<task-name>/<workspace-uuid>`. Pi-Run first runs `git
+worktree add --no-checkout` on the host, then materializes the recorded commit in
+a temporary version-matched runtime container. Materialization uses `--pull never`, network
 none, the host UID/GID, a read-only root, dropped capabilities,
 no-new-privileges, checkout hooks disabled, and no profile, credential, shared,
 or Docker-socket mount. Repository content filters may run only inside that
@@ -139,17 +140,16 @@ empty, unchanged state from that invocation; ambiguous state is preserved.
 
 Metadata-level contradictions that cannot be represented safely fail the whole
 command rather than being reduced to a row status. Schema-version-1 machine
-metadata is listed as having no managed repositories without migration. Other
-worktree operations migrate valid version-1 metadata atomically when needed.
+metadata is listed as having no managed repositories without migration. Task
+creation migrates valid public schema-version-1 metadata atomically to version 3.
+Withdrawn v0.8 schema-version-2 metadata is never migrated and reports that
+one-time cleanup is required.
 
 ## Managed continuation and locking
 
-For repository-local `-c` and `-r`, managed routing filters by exact repository,
-selected profile, complete metadata, expected branch and administration, and at
-least one valid transcript. The candidate with the newest transcript
-modification time is selected. No candidate and a tie for newest activity both
-fail without creating a workspace. Transcript modification time is a routing
-signal, not trusted provenance or authorization.
+Named repository-local continuation is reserved for the forthcoming `worktree
+open` command. The current task-start slice does not select a task from transcript
+activity or create a second worktree when resuming.
 
 Global resume is association-driven. Selecting a managed group reopens its
 immutable recorded path and
@@ -164,11 +164,11 @@ workspace ID, and creation time. A matching live owner blocks launch. Only a
 well-formed same-machine record with an absent PID or changed start token is
 recovered as stale; Pi-Run never signals the process. Ownership-token mismatch,
 foreign-machine, malformed, linked, or ambiguous lock state fails closed.
-Different managed workspace UUIDs can run concurrently.
+Different managed task workspace UUIDs can run concurrently.
 
-Pi-Run has no automatic managed-worktree removal operation. Disable changes
-future launch selection only. Ordinary launch and exit do not prune, merge,
-rebase, push, reset, remove a worktree, or delete a branch.
+Pi-Run has no managed-task finish or automatic worktree removal operation yet.
+Ordinary launch and exit do not prune, merge, rebase, push, reset, remove a
+worktree, or delete a branch.
 
 ## Resume across workspaces
 

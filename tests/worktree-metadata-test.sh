@@ -65,7 +65,7 @@ PI_RUN_HOME="${CASE_HOME}" "${ROOT}/bin/pi-run" workspace list >/dev/null
 [[ "$(stat -c %i "${CASE_MACHINE}")" != "${inode_before}" ]] \
     || fail "migration did not atomically replace the machine file"
 jq -e --argjson paths "${mapping_before}" '
-    .schemaVersion == 2 and .workspacePaths == $paths and .repositories == [] and
+    .schemaVersion == 3 and .workspacePaths == $paths and .repositories == [] and
     (keys | sort == ["machineId","repositories","schemaVersion","workspacePaths"])
 ' "${CASE_MACHINE}" >/dev/null || fail "v1 migration did not preserve the selected state"
 [[ "$(stat -c %a "${CASE_MACHINE}")" == 600 ]] || fail "migration published unsafe permissions"
@@ -73,7 +73,7 @@ PI_RUN_HOME="${CASE_HOME}" "${ROOT}/bin/pi-run" workspace list >/dev/null
 inode_before="$(stat -c %i "${CASE_MACHINE}")"
 run_ensure "${CASE_HOME}" >/dev/null
 [[ "$(stat -c %i "${CASE_MACHINE}")" == "${inode_before}" ]] \
-    || fail "valid v2 metadata was rewritten"
+    || fail "valid v3 metadata was rewritten"
 
 prepare_v1_home snapshot-auto
 jq '.snapshotAuto={onSessionExit:true}' "${CASE_MACHINE}" > "${CASE_MACHINE}.tmp"
@@ -81,7 +81,7 @@ mv "${CASE_MACHINE}.tmp" "${CASE_MACHINE}"
 chmod 0600 "${CASE_MACHINE}"
 run_ensure "${CASE_HOME}" >/dev/null
 jq -e '
-    .schemaVersion == 2 and .snapshotAuto.onSessionExit == true and
+    .schemaVersion == 3 and .snapshotAuto.onSessionExit == true and
     .repositories == [] and
     (keys | sort == ["machineId","repositories","schemaVersion","snapshotAuto","workspacePaths"])
 ' "${CASE_MACHINE}" >/dev/null \
@@ -122,14 +122,29 @@ mv "${CASE_MACHINE}" "${outside}"
 ln -s "${outside}" "${CASE_MACHINE}"
 expect_unchanged_failure "${CASE_HOME}" "${CASE_MACHINE}"
 
-write_v2_case() {
+prepare_v1_home withdrawn-v2
+jq '.schemaVersion=2 | .repositories=[]' "${CASE_MACHINE}" > "${CASE_MACHINE}.tmp"
+mv "${CASE_MACHINE}.tmp" "${CASE_MACHINE}"
+chmod 0600 "${CASE_MACHINE}"
+before="$(sha256sum "${CASE_MACHINE}")"
+if run_ensure "${CASE_HOME}" >/dev/null 2>"${TMP}/withdrawn-v2.err"; then
+    fail "withdrawn schema-v2 metadata was accepted"
+fi
+grep -F 'withdrawn v0.8 worktree metadata requires cleanup' "${TMP}/withdrawn-v2.err" >/dev/null \
+    || fail "withdrawn schema-v2 metadata did not report cleanup requirement"
+[[ "$(sha256sum "${CASE_MACHINE}")" == "${before}" ]] \
+    || fail "withdrawn schema-v2 refusal changed machine metadata"
+
+write_v3_case() {
     local name="$1" mutation="$2"
     prepare_v1_home "${name}"
     jq --arg repository "${REPOSITORY_ID}" --arg workspace "${WORKSPACE_ID}" '
-        .schemaVersion=2 | .repositories=[{
+        .schemaVersion=3 | .repositories=[{
             id:$repository,name:"fixture",commonGitDir:"/tmp/repository/.git",
-            primaryPath:"/tmp/repository",enabled:true,createdAt:"2026-10-20T12:00:00Z",
-            managedWorkspaces:[{workspaceId:$workspace,branch:"pi-run/fixture",createdAt:"2026-10-20T12:01:00Z"}]
+            primaryPath:"/tmp/repository",createdAt:"2026-10-20T12:00:00Z",
+            tasks:[{name:"fixture",workspaceId:$workspace,
+                branch:("pi-run/fixture/" + $workspace),state:"active",
+                createdAt:"2026-10-20T12:01:00Z",finishedAt:null}]
         }]
     ' "${CASE_MACHINE}" | jq --arg repositoryB "${REPOSITORY_ID_B}" "${mutation}" > "${CASE_MACHINE}.tmp"
     mv "${CASE_MACHINE}.tmp" "${CASE_MACHINE}"
@@ -137,13 +152,15 @@ write_v2_case() {
     expect_unchanged_failure "${CASE_HOME}" "${CASE_MACHINE}"
 }
 
-write_v2_case duplicate-repository-id \
-    '.repositories += [(.repositories[0] | .commonGitDir="/tmp/other/.git" | .primaryPath="/tmp/other" | .managedWorkspaces=[])]'
+write_v3_case duplicate-repository-id \
+    '.repositories += [(.repositories[0] | .commonGitDir="/tmp/other/.git" | .primaryPath="/tmp/other" | .tasks=[])]'
 # shellcheck disable=SC2016 # $repositoryB is a jq variable.
-write_v2_case duplicate-common-directory \
-    '.repositories += [(.repositories[0] | .id=$repositoryB | .primaryPath="/tmp/other" | .managedWorkspaces=[])]'
+write_v3_case duplicate-common-directory \
+    '.repositories += [(.repositories[0] | .id=$repositoryB | .primaryPath="/tmp/other" | .tasks=[])]'
 # shellcheck disable=SC2016 # $repositoryB is a jq variable.
-write_v2_case duplicate-managed-workspace \
+write_v3_case duplicate-task-workspace \
     '.repositories += [(.repositories[0] | .id=$repositoryB | .commonGitDir="/tmp/other/.git" | .primaryPath="/tmp/other")]'
+write_v3_case duplicate-task-name \
+    '.repositories[0].tasks += [(.repositories[0].tasks[0] | .workspaceId="44444444-4444-4444-8444-444444444444" | .branch="pi-run/fixture/44444444-4444-4444-8444-444444444444")]'
 
 echo "Worktree metadata tests passed"

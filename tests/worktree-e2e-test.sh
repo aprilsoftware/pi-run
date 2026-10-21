@@ -50,11 +50,12 @@ SOURCE_STATUS="$(git -C "${REPOSITORY}" status --porcelain=v1)"
 MACHINE="${HOME_DIR}/machines/$("${ROOT}/bin/pi-run" machine-id).json"
 REGISTRY="${HOME_DIR}/workspaces/registry.json"
 
-run_pi --worktree "${REPOSITORY}" --version >"${TMP}/first.out" 2>"${TMP}/first.err"
+(cd "${REPOSITORY}" && run_pi worktree start task-a -- --version) \
+    >"${TMP}/first.out" 2>"${TMP}/first.err"
 REPOSITORY_ID="$(jq -r '.repositories[0].id' "${MACHINE}")"
 [[ "${REPOSITORY_ID}" =~ ^[0-9a-f-]{36}$ ]] \
     || fail "repository metadata does not contain a UUID"
-ID_A="$(jq -r '.repositories[0].managedWorkspaces[0].workspaceId' "${MACHINE}")"
+ID_A="$(jq -r '.repositories[0].tasks[] | select(.name == "task-a") | .workspaceId' "${MACHINE}")"
 PATH_A="${HOME_DIR}/worktrees/${REPOSITORY_ID}/${ID_A}"
 [[ -d "${PATH_A}" ]] || fail "first default launch did not create its worktree"
 [[ -s "${TMP}/first.out" ]] \
@@ -65,10 +66,11 @@ grep -F "managed-worktree workspace-id=${ID_A}" "${TMP}/first.err" >/dev/null \
 grep -F "managed-worktree host=${PATH_A}" "${TMP}/first.err" >/dev/null \
     || fail "first launch did not report its managed path"
 
-run_pi --worktree "${REPOSITORY}" --version >"${TMP}/second.out" 2>"${TMP}/second.err"
-[[ "$(jq -r '.repositories[0].managedWorkspaces | length' "${MACHINE}")" == 2 ]] \
-    || fail "second default launch did not create another managed workspace"
-ID_B="$(jq -r '.repositories[0].managedWorkspaces[1].workspaceId' "${MACHINE}")"
+(cd "${REPOSITORY}" && run_pi worktree start task-b -- --version) \
+    >"${TMP}/second.out" 2>"${TMP}/second.err"
+[[ "$(jq -r '.repositories[0].tasks | length' "${MACHINE}")" == 2 ]] \
+    || fail "second named task was not created"
+ID_B="$(jq -r '.repositories[0].tasks[] | select(.name == "task-b") | .workspaceId' "${MACHINE}")"
 PATH_B="${HOME_DIR}/worktrees/${REPOSITORY_ID}/${ID_B}"
 [[ "${ID_A}" != "${ID_B}" && -d "${PATH_B}" ]] \
     || fail "managed launches did not receive distinct identities and paths"
@@ -77,10 +79,12 @@ PATH_B="${HOME_DIR}/worktrees/${REPOSITORY_ID}/${ID_B}"
 grep -F "managed-worktree workspace-id=${ID_B}" "${TMP}/second.err" >/dev/null \
     || fail "second launch did not report its managed workspace"
 
-for entry in "${ID_A}:${PATH_A}" "${ID_B}:${PATH_B}"; do
-    workspace_id="${entry%%:*}"
-    workspace_path="${entry#*:}"
-    [[ "$(git -C "${workspace_path}" branch --show-current)" == "pi-run/${workspace_id}" ]] \
+for entry in "task-a:${ID_A}:${PATH_A}" "task-b:${ID_B}:${PATH_B}"; do
+    task_name="${entry%%:*}"
+    remainder="${entry#*:}"
+    workspace_id="${remainder%%:*}"
+    workspace_path="${remainder#*:}"
+    [[ "$(git -C "${workspace_path}" branch --show-current)" == "pi-run/${task_name}/${workspace_id}" ]] \
         || fail "managed worktree has the wrong branch: ${workspace_id}"
     [[ "$(git -C "${workspace_path}" rev-parse HEAD)" == "${BASE}" ]] \
         || fail "managed worktree has the wrong base: ${workspace_id}"
@@ -108,10 +112,11 @@ git -C "${PATH_B}" add workspace-b.txt
     || fail "managed worktree files or indexes crossed workspace boundaries"
 
 jq -e --arg a "${ID_A}" --arg b "${ID_B}" '
-    .repositories[0].enabled == false and
-    ([.repositories[0].managedWorkspaces[].workspaceId] | sort) == ([$a, $b] | sort) and
+    .schemaVersion == 3 and
+    ([.repositories[0].tasks[].workspaceId] | sort) == ([$a, $b] | sort) and
+    ([.repositories[0].tasks[].name] | sort) == ["task-a","task-b"] and
     ([.workspacePaths[].workspaceId | select(. == $a or . == $b)] | length) == 2
-' "${MACHINE}" >/dev/null || fail "machine metadata does not contain both managed workspaces"
+' "${MACHINE}" >/dev/null || fail "machine metadata does not contain both named tasks"
 jq -e --arg a "${ID_A}" --arg b "${ID_B}" '
     ([.workspaces[] | select((.id == $a or .id == $b) and .kind == "git")] | length) == 2
 ' "${REGISTRY}" >/dev/null || fail "portable metadata does not contain both managed workspaces"
@@ -134,43 +139,14 @@ done
 [[ "$(sha256sum "${MACHINE}" "${REGISTRY}")" == "${metadata_before_list}" ]] \
     || fail "worktree list changed metadata"
 
-create_session() {
-    local workspace_id="$1" name="$2" epoch="$3" directory
-    directory="${HOME_DIR}/profiles/default/sessions/${workspace_id}"
-    printf '{"type":"session","id":"%s","timestamp":"2026-10-20T12:00:00Z","cwd":"/workspace","version":1}\n' \
-        "${name}" > "${directory}/${name}.jsonl"
-    touch -d "@${epoch}" "${directory}/${name}.jsonl"
-}
-create_session "${ID_A}" session-a 100
-create_session "${ID_B}" session-b 200
-
-managed_count="$(jq -r '.repositories[0].managedWorkspaces | length' "${MACHINE}")"
-run_pi --worktree "${REPOSITORY}" -c --version >"${TMP}/continue.out" 2>"${TMP}/continue.err"
-[[ "$(< "${TMP}/continue.out")" == "${PI_VERSION}" ]] \
-    || fail "managed continuation did not execute the same real runtime"
-grep -F "managed-worktree workspace-id=${ID_B}" "${TMP}/continue.err" >/dev/null \
-    || fail "managed continuation did not select the newest transcript"
-grep -F "managed-worktree host=${PATH_B}" "${TMP}/continue.err" >/dev/null \
-    || fail "managed continuation did not reopen the selected path"
-[[ "$(jq -r '.repositories[0].managedWorkspaces | length' "${MACHINE}")" == "${managed_count}" ]] \
-    || fail "managed continuation created another workspace"
-
-run_pi --no-worktree "${REPOSITORY}" --version >"${TMP}/direct.out" 2>"${TMP}/direct.err"
-[[ "$(< "${TMP}/direct.out")" == "${PI_VERSION}" ]] \
-    || fail "direct override did not execute the same real runtime"
-grep -F "profile=default workspace=${REPOSITORY}" "${TMP}/direct.err" >/dev/null \
-    || fail "--no-worktree did not use the primary checkout"
-[[ "$(jq -r '.repositories[0].enabled' "${MACHINE}")" == false &&
-   "$(jq -r '.repositories[0].managedWorkspaces | length' "${MACHINE}")" == "${managed_count}" ]] \
-    || fail "--no-worktree changed metadata or created a managed workspace"
-
+managed_count="$(jq -r '.repositories[0].tasks | length' "${MACHINE}")"
 run_pi "${REPOSITORY}" --version >"${TMP}/ordinary.out" 2>"${TMP}/ordinary.err"
 [[ "$(< "${TMP}/ordinary.out")" == "${PI_VERSION}" ]] \
     || fail "ordinary direct launch did not execute the same real runtime"
 grep -F "profile=default workspace=${REPOSITORY}" "${TMP}/ordinary.err" >/dev/null \
     || fail "ordinary launch did not use the primary checkout"
-[[ "$(jq -r '.repositories[0].managedWorkspaces | length' "${MACHINE}")" == "${managed_count}" ]] \
-    || fail "ordinary direct launch created another managed workspace"
+[[ "$(jq -r '.repositories[0].tasks | length' "${MACHINE}")" == "${managed_count}" ]] \
+    || fail "ordinary direct launch created another task"
 
 if [[ -d "${HOME_DIR}/worktrees/.launch-locks" ]] &&
    find "${HOME_DIR}/worktrees/.launch-locks" -mindepth 1 -print -quit | grep -q .; then
@@ -178,7 +154,7 @@ if [[ -d "${HOME_DIR}/worktrees/.launch-locks" ]] &&
 fi
 [[ "$(git -C "${REPOSITORY}" worktree list --porcelain | grep -c '^worktree ')" == 3 ]] \
     || fail "final Git state does not retain the primary and two managed worktrees"
-[[ "$(jq -r '.repositories[0].enabled' "${MACHINE}")" == false ]] \
-    || fail "internal repository record unexpectedly enabled implicit worktrees"
+jq -e '.repositories[0] | (has("enabled") or has("managedWorkspaces")) | not' \
+    "${MACHINE}" >/dev/null || fail "prototype repository fields remain in task metadata"
 
 echo "Managed worktree real-Docker end-to-end test passed"

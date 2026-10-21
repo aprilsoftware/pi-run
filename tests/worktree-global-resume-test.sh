@@ -80,19 +80,21 @@ REPOSITORY_ID="$(register_worktree_repository_fixture "${ROOT}" "${HOME_DIR}" "$
 MACHINE="${HOME_DIR}/machines/$("${ROOT}/bin/pi-run" machine-id).json"
 REGISTRY="${HOME_DIR}/workspaces/registry.json"
 WORKTREE="${HOME_DIR}/worktrees/${REPOSITORY_ID}/${WORKSPACE_ID}"
-BRANCH="pi-run/${WORKSPACE_ID}"
+TASK_NAME="global-resume"
+BRANCH="pi-run/${TASK_NAME}/${WORKSPACE_ID}"
 COMMON="${REPOSITORY}/.git"
 ADMIN="${COMMON}/worktrees/${WORKSPACE_ID}"
 mkdir -p "$(dirname "${WORKTREE}")"
 chmod 0700 "${HOME_DIR}/worktrees" "$(dirname "${WORKTREE}")"
 git -C "${REPOSITORY}" worktree add -q -b "${BRANCH}" "${WORKTREE}" main
 TEST_ROOT="${ROOT}" TEST_HOME="${HOME_DIR}" TEST_REPOSITORY="${REPOSITORY_ID}" \
-    TEST_ID="${WORKSPACE_ID}" TEST_PATH="${WORKTREE}" bash -ceu '
+    TEST_ID="${WORKSPACE_ID}" TEST_TASK_NAME="${TASK_NAME}" TEST_PATH="${WORKTREE}" bash -ceu '
         fail() { echo "pi-run: $*" >&2; exit 1; }
         PI_RUN_HOME_RESOLVED="${TEST_HOME}"
         source "${TEST_ROOT}/lib/pi-run/workspaces.sh"
         publish_managed_worktree_metadata \
-            "${TEST_ID}" "${TEST_REPOSITORY}" "pi-run/${TEST_ID}" "${TEST_PATH}" >/dev/null
+            "${TEST_ID}" "${TEST_TASK_NAME}" "${TEST_REPOSITORY}" \
+            "pi-run/${TEST_TASK_NAME}/${TEST_ID}" "${TEST_PATH}" >/dev/null
     '
 SESSION_DIR="${HOME_DIR}/profiles/default/sessions/${WORKSPACE_ID}"
 mkdir -p "${SESSION_DIR}"
@@ -119,6 +121,8 @@ grep -F "pointer-content=gitdir: /run/pi-run-git/common/worktrees/${WORKSPACE_ID
 grep -F -- "--session-dir /profile/sessions/${WORKSPACE_ID}" "${CAPTURE_PREFIX}.1" >/dev/null \
     || fail "explicit global resume selected the wrong session directory"
 grep -F -- '--resume' "${CAPTURE_PREFIX}.1" >/dev/null || fail "global resume did not preserve --resume for Pi"
+grep -F "managed-worktree task=${TASK_NAME}" "${TMP}/explicit.err" >/dev/null \
+    || fail "managed global resume omitted task reporting"
 grep -F "managed-worktree branch=${BRANCH} head=${HEAD_COMMIT}" "${TMP}/explicit.err" >/dev/null \
     || fail "managed global resume omitted branch and head reporting"
 LOCK="$(grep '^lock=' "${CAPTURE_PREFIX}.1" | cut -d= -f2-)"

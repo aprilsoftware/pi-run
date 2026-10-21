@@ -136,30 +136,25 @@ normal non-bare Git repository. Ask the user to run these commands from the
 repository in a host terminal:
 
 ```bash
+pi-run worktree start <task-name>
 pi-run worktree list
-pi-run --worktree .
-pi-run --no-worktree .
 ```
 
-`--worktree` explicitly creates or continues a managed workspace; ordinary
-launches use the selected checkout directly. `--no-worktree` makes direct intent
-explicit.
-
-A managed workspace begins at the selected checkout's exact committed `HEAD` on
-`pi-run/<workspace-uuid>`. Dirty source-checkout changes are reported but not
-copied. Pi-Run does not automatically stash, commit, clean, reset, merge, rebase,
+Run `worktree start` from the repository to create one explicitly named task;
+ordinary launches use the selected checkout directly. A managed task begins at
+the selected checkout's exact committed `HEAD` on
+`pi-run/<task-name>/<workspace-uuid>`. Dirty source-checkout changes are reported
+but not copied. Pi-Run does not automatically stash, commit, clean, reset, merge, rebase,
 push, remove worktrees, or delete branches. Managed checkouts live under:
 
 ```text
 <Pi-Run home>/worktrees/<repository-id>/<workspace-id>/
 ```
 
-With managed mode selected, repository-local `-c` and `-r` route to the valid
-workspace whose selected-profile transcript has the newest modification time;
-ties fail as ambiguous. Global `pi-run resume` follows the selected workspace's
-recorded association. One
-Pi-Run process may use a particular managed workspace at a time, while distinct
-managed workspaces may run concurrently.
+Until named `worktree open` is implemented, resume an existing managed task
+through global `pi-run resume`, which follows the selected workspace's recorded
+association. One Pi-Run process may use a particular managed task at a time,
+while distinct tasks may run concurrently.
 
 `worktree list` is read-only and reports repository groups plus `available`,
 `missing`, `pending`, `path-conflict`, `git-conflict`, or `unsafe` child status.

@@ -71,19 +71,19 @@ indexes, and working files from one normal non-bare Git repository. They are
 persistent, host-visible source checkouts—not temporary container state and not
 a security boundary.
 
-Create one managed workspace explicitly:
+Create one explicitly named managed task from the repository:
 
 ```bash
-pi-run --worktree .
+pi-run worktree start api-refactor
 ```
 
-Ordinary launches use the selected checkout directly. `--worktree` explicitly
-creates or selects managed worktree behavior, while `--no-worktree` makes direct
-intent explicit. The flags are mutually exclusive. Separate clones remain
-separate repository identities even when their remotes match.
+Ordinary launches use the selected checkout directly. Task names begin with a
+lowercase letter or digit, contain only lowercase letters, digits, `.`, `_`, or
+`-`, are at most 63 characters, and are unique within the repository. Separate
+clones remain separate repository identities even when their remotes match.
 
-A fresh managed launch records the selected checkout's exact committed `HEAD`,
-creates `pi-run/<workspace-uuid>`, and places the checkout at:
+A task start records the selected checkout's exact committed `HEAD`, creates
+`pi-run/<task-name>/<workspace-uuid>`, and places the checkout at:
 
 ```text
 <Pi-Run home>/worktrees/<repository-id>/<workspace-id>/
@@ -95,24 +95,15 @@ uncommitted changes are excluded from the new checkout. Pi-Run does not stash,
 copy, commit, clean, reset, merge, rebase, push, remove worktrees, or delete
 branches automatically.
 
-Startup reports the managed workspace UUID, branch, base or current commit, and
-host path. Continue the newest managed session for the selected repository and
-profile with:
+Startup reports the task name, managed workspace UUID, branch, base commit, and
+host path. Until named `worktree open` is implemented, resume an existing task
+through `pi-run resume` or `pi-run resume <profile> <workspace-id>`. Global
+resume follows the selected task's immutable machine association and never
+reconnects it as an ordinary checkout.
 
-```bash
-pi-run --worktree . -c
-pi-run --worktree . -r
-```
-
-Pi-Run selects the managed workspace whose valid transcript has the newest
-modification time. Equal newest times fail as ambiguous. `-c`
-delegates continue behavior to Pi; `-r` delegates individual transcript
-selection. To choose a specific older group, use `pi-run resume` or
-`pi-run resume <profile> <workspace-id>`.
-
-Only one Pi-Run process may use a managed workspace at a time. A private
-machine-local ownership lock detects active use and safely recovers only
-well-formed stale records. Different managed workspaces may run concurrently.
+Only one Pi-Run process may use a managed task at a time. A private machine-local
+ownership lock detects active use and safely recovers only well-formed stale
+records. Different tasks may run concurrently.
 
 Inspect every registered repository and managed checkout from any directory:
 

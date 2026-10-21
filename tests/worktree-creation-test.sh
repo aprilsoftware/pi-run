@@ -92,17 +92,27 @@ REPOSITORY_ID="$(register_worktree_repository_fixture "${ROOT}" "${HOME_DIR}" "$
 MACHINE="${HOME_DIR}/machines/$("${ROOT}/bin/pi-run" machine-id).json"
 BASE="$(git -C "${REPOSITORY}" rev-parse HEAD)"
 
+task_name_for_id() {
+    printf 'task-%s\n' "${1%%-*}"
+}
+
+branch_for_id() {
+    printf 'pi-run/%s/%s\n' "$(task_name_for_id "$1")" "$1"
+}
+
 run_create() {
-    local selected="$1" id="$2" mode="${3:-ok}"
+    local selected="$1" id="$2" mode="${3:-ok}" task_name
+    task_name="$(task_name_for_id "${id}")"
     PATH="${TMP}/fake-bin:${PATH}" DOCKER_LOG="${DOCKER_LOG}" FAKE_DOCKER_MODE="${mode}" \
         TEST_ROOT="${ROOT}" TEST_HOME="${HOME_DIR}" TEST_SELECTED="${selected}" TEST_ID="${id}" \
+        TEST_TASK_NAME="${task_name}" \
         bash -ceu '
             fail() { echo "pi-run: $*" >&2; exit 1; }
             DEFAULT_IMAGE=ghcr.io/aprilsoftware/pi-run:0.0.0-test
             PI_RUN_HOME_RESOLVED="${TEST_HOME}"
             source "${TEST_ROOT}/lib/pi-run/workspaces.sh"
             cd "${TEST_SELECTED}"
-            create_managed_worktree_checkout "${TEST_ID}"
+            create_managed_worktree_checkout "${TEST_ID}" "${TEST_TASK_NAME}"
         '
 }
 
@@ -110,14 +120,14 @@ cleanup_worktree() {
     local id="$1" path
     path="${HOME_DIR}/worktrees/${REPOSITORY_ID}/${id}"
     git -C "${REPOSITORY}" worktree remove --force "${path}" >/dev/null 2>&1 || true
-    git -C "${REPOSITORY}" branch -D "pi-run/${id}" >/dev/null 2>&1 || true
+    git -C "${REPOSITORY}" branch -D "$(branch_for_id "${id}")" >/dev/null 2>&1 || true
 }
 
 printf 'dirty\n' > "${REPOSITORY}/dirty-untracked"
 result="$(run_create "${REPOSITORY}" "${ID_A}" 2>"${TMP}/attached.err")"
 IFS=$'\t' read -r workspace_id repository_id branch path base <<< "${result}"
 [[ "${workspace_id}" == "${ID_A}" && "${repository_id}" == "${REPOSITORY_ID}" &&
-   "${branch}" == "pi-run/${ID_A}" && "${base}" == "${BASE}" ]] \
+   "${branch}" == "$(branch_for_id "${ID_A}")" && "${base}" == "${BASE}" ]] \
     || fail "creation returned unexpected identities"
 [[ "${path}" == "${HOME_DIR}/worktrees/${REPOSITORY_ID}/${ID_A}" &&
    "$(cat "${path}/base.txt")" == base ]] || fail "managed checkout was not materialized"
@@ -126,7 +136,7 @@ grep -F 'has uncommitted changes' "${TMP}/attached.err" >/dev/null \
     || fail "dirty selected checkout was not reported"
 jq -e --arg id "${ID_A}" '
     ([.workspacePaths[] | select(.workspaceId == $id)] | length) == 0 and
-    ([.repositories[].managedWorkspaces[] | select(.workspaceId == $id)] | length) == 0
+    ([.repositories[].tasks[] | select(.workspaceId == $id)] | length) == 0
 ' "${MACHINE}" >/dev/null || fail "creation primitive published machine metadata"
 jq -e --arg id "${ID_A}" '[.workspaces[] | select(.id == $id)] | length == 0' \
     "${HOME_DIR}/workspaces/registry.json" >/dev/null \
@@ -135,7 +145,7 @@ cleanup_worktree "${ID_A}"
 
 git -C "${REPOSITORY}" checkout --detach -q "${BASE}"
 result="$(run_create "${REPOSITORY}" "${ID_B}" 2>/dev/null)"
-[[ "${result}" == *$'\tpi-run/'"${ID_B}"$'\t'* && "${result}" == *$'\t'"${BASE}" ]] \
+[[ "${result}" == *$'\t'"$(branch_for_id "${ID_B}")"$'\t'* && "${result}" == *$'\t'"${BASE}" ]] \
     || fail "detached HEAD creation used the wrong branch or base"
 cleanup_worktree "${ID_B}"
 git -C "${REPOSITORY}" checkout -q main
@@ -155,11 +165,11 @@ jq --arg id "${ID_COLLISION}" '.workspaces |= map(select(.id != $id))' "${REGIST
 mv "${REGISTRY}.tmp" "${REGISTRY}"
 chmod 0600 "${REGISTRY}"
 
-git -C "${REPOSITORY}" branch "pi-run/${ID_COLLISION}" "${BASE}"
+git -C "${REPOSITORY}" branch "$(branch_for_id "${ID_COLLISION}")" "${BASE}"
 if run_create "${REPOSITORY}" "${ID_COLLISION}" >/dev/null 2>"${TMP}/branch.err"; then
     fail "branch collision was accepted"
 fi
-git -C "${REPOSITORY}" branch -D "pi-run/${ID_COLLISION}" >/dev/null
+git -C "${REPOSITORY}" branch -D "$(branch_for_id "${ID_COLLISION}")" >/dev/null
 
 mkdir -p "${HOME_DIR}/worktrees/${REPOSITORY_ID}/${ID_PATH}"
 chmod 0700 "${HOME_DIR}/worktrees" "${HOME_DIR}/worktrees/${REPOSITORY_ID}"
@@ -180,7 +190,7 @@ fi
 [[ ! -e "${HOME_DIR}/worktrees/${REPOSITORY_ID}/${ID_EMPTY}" &&
    ! -e "${REPOSITORY}/.git/worktrees/${ID_EMPTY}" ]] \
     || fail "empty failed worktree was not rolled back"
-if git -C "${REPOSITORY}" show-ref --verify --quiet "refs/heads/pi-run/${ID_EMPTY}"; then
+if git -C "${REPOSITORY}" show-ref --verify --quiet "refs/heads/$(branch_for_id "${ID_EMPTY}")"; then
     fail "empty failed branch was not rolled back"
 fi
 grep -F 'empty state was rolled back' "${TMP}/empty.err" >/dev/null \
@@ -192,7 +202,7 @@ fi
 PARTIAL_PATH="${HOME_DIR}/worktrees/${REPOSITORY_ID}/${ID_PARTIAL}"
 [[ -f "${PARTIAL_PATH}/partial.txt" && -d "${REPOSITORY}/.git/worktrees/${ID_PARTIAL}" ]] \
     || fail "ambiguous partial worktree was not preserved"
-git -C "${REPOSITORY}" show-ref --verify --quiet "refs/heads/pi-run/${ID_PARTIAL}" \
+git -C "${REPOSITORY}" show-ref --verify --quiet "refs/heads/$(branch_for_id "${ID_PARTIAL}")" \
     || fail "ambiguous partial branch was not preserved"
 grep -F 'partial state was preserved' "${TMP}/partial.err" >/dev/null \
     || fail "partial-state diagnostic was unclear"

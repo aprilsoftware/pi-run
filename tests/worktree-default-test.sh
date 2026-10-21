@@ -123,49 +123,62 @@ run_pi "${REPOSITORY}" -r >/dev/null 2>"${TMP}/direct-resume.err"
 grep -F "workspace=${REPOSITORY}" "${CAPTURE_PREFIX}.3" >/dev/null \
     || fail "ordinary resume stopped using the direct checkout"
 
-run_pi --worktree "${REPOSITORY}" --version >/dev/null 2>"${TMP}/explicit-first.err"
+(cd "${REPOSITORY}" && run_pi worktree start first-task -- --version) \
+    >/dev/null 2>"${TMP}/first-task.err"
 REPOSITORY_ID="$(jq -r '.repositories[0].id' "${MACHINE}")"
-MANAGED_ID="$(jq -r '.repositories[0].managedWorkspaces[0].workspaceId' "${MACHINE}")"
+MANAGED_ID="$(jq -r '.repositories[0].tasks[0].workspaceId' "${MACHINE}")"
 MANAGED_PATH="${HOME_DIR}/worktrees/${REPOSITORY_ID}/${MANAGED_ID}"
 grep -F "workspace=${MANAGED_PATH}" "${CAPTURE_PREFIX}.4" >/dev/null \
-    || fail "explicit --worktree did not create a managed workspace"
+    || fail "worktree start did not create a managed task workspace"
+grep -F 'managed-worktree task=first-task' "${TMP}/first-task.err" >/dev/null \
+    || fail "worktree start did not report the task name"
 
-SESSION_DIR="${HOME_DIR}/profiles/default/sessions/${MANAGED_ID}"
-mkdir -p "${SESSION_DIR}"
-printf '{"type":"session","id":"managed","timestamp":"2026-10-20T12:00:00Z","cwd":"/workspace","version":1}\n' \
-    > "${SESSION_DIR}/managed.jsonl"
-run_pi --worktree "${REPOSITORY}" -c >/dev/null 2>"${TMP}/managed-continue.err"
-grep -F "workspace=${MANAGED_PATH}" "${CAPTURE_PREFIX}.5" >/dev/null \
-    || fail "explicit --worktree continuation did not reopen the managed workspace"
-grep -F -- '-c' "${CAPTURE_PREFIX}.5" >/dev/null || fail "managed continuation did not preserve -c"
-
-run_pi --no-worktree "${REPOSITORY}" --version >/dev/null 2>"${TMP}/no-worktree.err"
-grep -F "workspace=${REPOSITORY}" "${CAPTURE_PREFIX}.6" >/dev/null \
-    || fail "--no-worktree did not preserve direct launch behavior"
-grep -Fx 'common=' "${CAPTURE_PREFIX}.6" >/dev/null \
-    || fail "--no-worktree unexpectedly used managed Git mounts"
-
-run_pi --worktree "${REPOSITORY}" --version >/dev/null 2>"${TMP}/explicit-second.err"
-[[ "$(jq -r '.repositories[0].managedWorkspaces | length' "${MACHINE}")" == 2 ]] \
-    || fail "second explicit --worktree launch did not create a managed workspace"
-[[ "$(jq -r '.repositories[0].enabled' "${MACHINE}")" == false ]] \
-    || fail "explicit --worktree changed the internal repository record"
-run_pi "${REPOSITORY}" --version >/dev/null 2>"${TMP}/direct-after-managed.err"
-grep -F "workspace=${REPOSITORY}" "${CAPTURE_PREFIX}.8" >/dev/null \
+run_pi "${REPOSITORY}" --version >/dev/null 2>"${TMP}/direct-after-task.err"
+grep -F "workspace=${REPOSITORY}" "${CAPTURE_PREFIX}.5" >/dev/null \
     || fail "ordinary launch stopped using the direct checkout"
+
+(cd "${REPOSITORY}" && run_pi worktree start second-task -- --version) \
+    >/dev/null 2>"${TMP}/second-task.err"
+[[ "$(jq -r '.repositories[0].tasks | length' "${MACHINE}")" == 2 ]] \
+    || fail "second named task was not published"
 
 metadata_before="$(sha256sum "${MACHINE}" "${REGISTRY}")"
 git_before="$(git -C "${REPOSITORY}" worktree list --porcelain | sha256sum)"
-docker_before="$(wc -l < "${DOCKER_LOG}")"
-if run_pi --worktree --no-worktree "${REPOSITORY}" >/dev/null 2>"${TMP}/conflict.err"; then
-    fail "conflicting worktree overrides were accepted"
+main_count_before="$(< "${COUNT_FILE}")"
+if (cd "${REPOSITORY}" && run_pi worktree start first-task -- --version) \
+    >/dev/null 2>"${TMP}/duplicate.err"; then
+    fail "duplicate task name was accepted"
 fi
-grep -F 'cannot be used together' "${TMP}/conflict.err" >/dev/null \
-    || fail "conflicting-override diagnostic was unclear"
+grep -F 'worktree task already exists' "${TMP}/duplicate.err" >/dev/null \
+    || fail "duplicate-task diagnostic was unclear"
 [[ "$(sha256sum "${MACHINE}" "${REGISTRY}")" == "${metadata_before}" &&
    "$(git -C "${REPOSITORY}" worktree list --porcelain | sha256sum)" == "${git_before}" &&
-   "$(wc -l < "${DOCKER_LOG}")" == "${docker_before}" ]] \
-    || fail "conflicting overrides changed metadata, Git, or Docker state"
+   "$(< "${COUNT_FILE}")" == "${main_count_before}" ]] \
+    || fail "duplicate task changed metadata, Git state, or launched Pi"
+
+for invalid_name in Uppercase bad/name "$(printf 'a%.0s' {1..64})"; do
+    if (cd "${REPOSITORY}" && run_pi worktree start "${invalid_name}") \
+        >/dev/null 2>"${TMP}/invalid-name.err"; then
+        fail "invalid task name was accepted: ${invalid_name}"
+    fi
+    grep -F 'worktree task name must' "${TMP}/invalid-name.err" >/dev/null \
+        || fail "invalid-task-name diagnostic was unclear"
+done
+
+if (cd "${REPOSITORY}" && run_pi worktree start third-task -- -c) \
+    >/dev/null 2>"${TMP}/selector.err"; then
+    fail "worktree start accepted a continuation selector"
+fi
+grep -F 'does not accept continuation or resume selectors' "${TMP}/selector.err" >/dev/null \
+    || fail "worktree-start selector diagnostic was unclear"
+
+for removed_flag in --worktree --no-worktree; do
+    if run_pi "${removed_flag}" "${REPOSITORY}" >/dev/null 2>"${TMP}/removed-flag.err"; then
+        fail "removed launcher flag was accepted: ${removed_flag}"
+    fi
+    grep -F 'unknown launcher option' "${TMP}/removed-flag.err" >/dev/null \
+        || fail "removed launcher flag did not report an unknown option"
+done
 
 for removed_command in status enable disable; do
     metadata_before="$(sha256sum "${MACHINE}" "${REGISTRY}")"
@@ -183,7 +196,7 @@ for removed_command in status enable disable; do
 done
 
 run_pi "${NON_GIT}" --version >/dev/null 2>"${TMP}/non-git.err"
-grep -F "workspace=${NON_GIT}" "${CAPTURE_PREFIX}.9" >/dev/null \
+grep -F "workspace=${NON_GIT}" "${CAPTURE_PREFIX}.7" >/dev/null \
     || fail "non-Git directory did not remain a direct workspace"
 
-echo "Worktree repository default tests passed"
+echo "Worktree direct-default and task-start tests passed"

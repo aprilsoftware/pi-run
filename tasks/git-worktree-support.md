@@ -5,8 +5,8 @@
 The first v0.8 prerelease prototype is implemented and validated, but user
 validation rejected its automatic repository mode. It incorrectly treated a
 fresh Pi conversation as a request for a fresh worktree and branch. This record
-now defines the selected task-oriented replacement; that replacement is not yet
-implemented.
+defines the task-oriented replacement. Named task start and listing are now
+implemented; task-local open and finish remain future increments.
 
 A worktree is the filesystem and branch context for one explicitly named
 parallel task. It may contain many Pi conversations over its lifetime. Ordinary
@@ -28,7 +28,7 @@ pi-run . -c
 pi-run . -r
 ```
 
-Managed worktrees are explicit named tasks:
+The selected complete workflow uses explicit named tasks:
 
 ```bash
 pi-run worktree start <task-name>
@@ -40,7 +40,9 @@ pi-run worktree list --all
 pi-run worktree finish <task-name>
 ```
 
-`start`, `open`, and `finish` resolve the repository containing the current host
+Only `start` and bare `list` are implemented in the current slice; existing
+tasks use global `pi-run resume` until `open` is added. `start`, `open`, and
+`finish` resolve the repository containing the current host
 directory. Task names are unique within that machine-local repository and use a
 short validated command-line spelling rather than exposing UUIDs as the normal
 user interface. Profiles continue to select credentials, instructions, skills,
@@ -276,12 +278,11 @@ from restored names, remotes, or paths.
 
 ## Machine-local metadata
 
-The implemented prerelease machine file uses schema version 2. Its current shape
-is:
+The task-oriented machine file uses schema version 3:
 
 ```json
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "machineId": "<machine-id>",
   "snapshotAuto": {"onSessionExit": true},
   "workspacePaths": [
@@ -293,13 +294,15 @@ is:
       "name": "<display-name>",
       "commonGitDir": "<canonical-host-path>",
       "primaryPath": "<canonical-host-path>",
-      "enabled": true,
       "createdAt": "<UTC-timestamp>",
-      "managedWorkspaces": [
+      "tasks": [
         {
+          "name": "<task-name>",
           "workspaceId": "<workspace-uuid>",
-          "branch": "<branch-name>",
-          "createdAt": "<UTC-timestamp>"
+          "branch": "pi-run/<task-name>/<workspace-uuid>",
+          "state": "active",
+          "createdAt": "<UTC-timestamp>",
+          "finishedAt": null
         }
       ]
     }
@@ -309,23 +312,22 @@ is:
 
 `snapshotAuto` is optional and retains the existing machine-local
 successful-exit snapshot preference. `workspacePaths` remains authoritative for
-the concrete path of every primary, ordinary, or managed workspace. A
-managed-workspace record relates that workspace to a repository and branch
-without duplicating its path. No source content, remote URL, credential, commit
-contents, or Git configuration enters the machine file.
+concrete active paths; task records relate names, workspaces, and branches
+without duplicating paths. No source content, remote URL, credential, commit
+contents, Git configuration, or editor state enters the machine file.
 
-Repository IDs and workspace IDs must be unique. Canonical common Git
-directories must be unique across repository records, and a workspace may
-belong to at most one managed-workspace record. Display names and branch names
-are validated and sanitized before display; paths are canonical absolute host
-paths and are never interpreted as authorization to mount an unrelated target.
+Repository IDs, workspace IDs, branches, canonical common Git directories, and
+task names within each repository are unique. Task names and branch names are
+validated before use; display text is sanitized; paths are canonical absolute
+host paths and are never interpreted as authorization to mount an unrelated
+target.
 
-When worktree functionality first needs a schema-version-1 machine file,
-Pi-Run performs a locked atomic migration that preserves `machineId`,
-`workspacePaths`, and optional `snapshotAuto`, adds an empty `repositories`
-array, writes schema version 2, and publishes the replacement only after
-complete validation. Invalid, linked, hard-linked, unexpectedly permissive, or
-unsupported machine files fail without partial migration.
+When task creation first needs a schema-version-1 machine file, Pi-Run performs
+a locked atomic migration that preserves `machineId`, `workspacePaths`, and
+optional `snapshotAuto`, adds an empty `repositories` array, writes schema
+version 3, and publishes the replacement only after complete validation.
+Invalid, linked, hard-linked, unexpectedly permissive, or unsupported machine
+files fail without partial migration.
 
 The task-oriented replacement does not migrate this prerelease schema. v0.8.0
 and v0.8.1 are unsupported prototype upgrade sources, and their prerelease
@@ -350,10 +352,10 @@ The portable registry and machine file cannot be replaced atomically together.
 Managed-worktree publication therefore uses a recoverable ordered transaction
 while holding the workspace registry lock. After revalidating the worktree's
 repository, path, Git administration, and branch, Pi-Run atomically adds its
-`workspacePaths` and `managedWorkspaces` records together in the machine file.
-That complete machine association is the durable local publication marker.
-Pi-Run then atomically publishes the portable `kind: "git"` workspace entry with
-the same workspace ID, repository-derived display name, and creation timestamp.
+`workspacePaths` and named `tasks` records together in the machine file. That
+complete machine association is the durable local publication marker. Pi-Run
+then atomically publishes the portable `kind: "git"` workspace entry with the
+same workspace ID, repository-and-task display name, and creation timestamp.
 Pi must not launch until both files validate.
 
 An interruption after machine publication can leave a machine-only pending
@@ -438,25 +440,18 @@ source content, commits absent from a durable remote, untracked worktree files,
 or external side effects. Missing worktrees after restore should be reported as
 unavailable, not recreated from guesses.
 
-## Prototype implementation status
+## Task-oriented implementation status
 
-The prerelease implementation completed and validated:
+The replacement now provides unconditional direct ordinary launches, explicit
+`worktree start <task-name>`, schema-v3 named active tasks, collision-safe
+isolated materialization, recoverable machine-first publication, task reporting,
+repository-grouped listing, one-active-launch locking, and association-driven
+global resume. Prototype repository preferences, launch flags, unnamed
+workspaces, and cross-worktree transcript routing have been removed.
 
-1. the disposable linked-worktree mount and isolated-materialization probe;
-2. schema-v2 repository and managed-workspace metadata with atomic migration;
-3. repository preferences and per-launch overrides;
-4. collision-safe creation from attached or detached committed `HEAD`;
-5. recoverable machine-first metadata publication;
-6. managed mounting, reporting, and one-active-launch locking;
-7. profile-specific `-c` and `-r` routing plus association-driven global resume;
-8. repository-grouped, non-mutating status inspection; and
-9. isolated tests plus real-Docker materialization and launch validation.
-
-Its repository preference, launch overrides, cross-worktree activity routing,
-and automatic worktree-per-conversation behavior are rejected product semantics.
-They must be replaced, not retained as a second path. Implementation should
-restore unconditional direct launches, define clean task lifecycle metadata,
-then add `start` and `open`, and only later implement recoverable `finish`.
+The next user-facing increment is `worktree open <task-name>` for fresh, `-c`,
+and `-r` task-local conversations. Recoverable `finish` remains later work and
+must not be inferred from ordinary exit or Git state.
 
 ## Deferred decisions and exclusions
 
