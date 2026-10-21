@@ -147,9 +147,17 @@ one-time cleanup is required.
 
 ## Managed continuation and locking
 
-Named repository-local continuation is reserved for the forthcoming `worktree
-open` command. The current task-start slice does not select a task from transcript
-activity or create a second worktree when resuming.
+`worktree open <task-name>` resolves the repository containing the current
+directory and then requires exactly one active task with that name. It validates
+the recorded path, portable identity, branch, Git administration, common
+directory, and current commit without creating or changing Git or metadata.
+Missing, ambiguous, unavailable, or conflicting state fails before Docker starts.
+
+With no selector, `open` starts a fresh conversation in the task's selected-profile
+session directory. `-c` and `--continue` delegate newest-conversation continuation
+to Pi in that directory; `-r` and `--resume` delegate task-local transcript
+selection. At most one continuation selector is accepted. No transcript activity
+is used to choose among tasks.
 
 Global resume is association-driven. Selecting a managed group reopens its
 immutable recorded path and

@@ -27,6 +27,7 @@ Usage:
   pi-run [--home <path>] workspace list
   pi-run [--home <path>] workspace link <workspace-id> <path>
   pi-run [--home <path>] [--profile <name>] worktree start <task-name> [-- [pi arguments...]]
+  pi-run [--home <path>] [--profile <name>] worktree open <task-name> [pi arguments...]
   pi-run [--home <path>] worktree list
   pi-run [--home <path>] session list [<workspace-id>]
   pi-run [--home <path>] resume [<profile> <workspace-id>]
@@ -146,6 +147,7 @@ PROFILE="default"
 PROFILE_EXPLICIT=false
 HOME_OVERRIDE=""
 WORKTREE_TASK_START=false
+WORKTREE_TASK_OPEN=false
 WORKTREE_TASK_NAME=""
 
 while [[ $# -gt 0 ]]; do
@@ -538,6 +540,12 @@ case "${COMMAND}" in
                 WORKTREE_TASK_NAME="${3:-}"
                 validate_worktree_task_name "${WORKTREE_TASK_NAME}"
                 ;;
+            open)
+                [[ $# -ge 3 ]] || usage
+                WORKTREE_TASK_OPEN=true
+                WORKTREE_TASK_NAME="${3:-}"
+                validate_worktree_task_name "${WORKTREE_TASK_NAME}"
+                ;;
             *) usage ;;
         esac
         ;;
@@ -664,6 +672,9 @@ elif [[ "${WORKTREE_TASK_START}" == true ]]; then
     else
         EXTRA_PI_ARGS=()
     fi
+elif [[ "${WORKTREE_TASK_OPEN}" == true ]]; then
+    WORKSPACE_INPUT="$(pwd -P)"
+    EXTRA_PI_ARGS=("${@:4}")
 else
     WORKSPACE_INPUT="$1"
     shift
@@ -692,6 +703,9 @@ if [[ "${WORKTREE_TASK_START}" == true ]]; then
     (( CONTINUATION_SELECTOR_COUNT == 0 )) \
         || fail "worktree start does not accept continuation or resume selectors"
     USE_MANAGED_WORKTREE=true
+elif [[ "${WORKTREE_TASK_OPEN}" == true ]]; then
+    (( CONTINUATION_SELECTOR_COUNT <= 1 )) \
+        || fail "worktree open accepts at most one continuation or resume selector"
 fi
 MANAGED_WORKTREE=false
 MANAGED_WORKTREE_TASK_NAME=""
@@ -725,6 +739,20 @@ if [[ "${USE_MANAGED_WORKTREE}" == true ]]; then
     [[ "$(git -C "${WORKSPACE}" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" == \
        "${MANAGED_WORKTREE_COMMON_DIR}" ]] \
         || fail "published managed worktree no longer matches its common Git directory"
+    MANAGED_WORKTREE=true
+elif [[ "${WORKTREE_TASK_OPEN}" == true ]]; then
+    SOURCE_WORKSPACE="${WORKSPACE}"
+    SELECTED_WORKTREE="$(resolve_named_managed_task "${SOURCE_WORKSPACE}" "${WORKTREE_TASK_NAME}")"
+    IFS=$'\t' read -r WORKSPACE_ID WORKSPACE <<< "${SELECTED_WORKTREE}"
+    resolve_managed_workspace_launch "${WORKSPACE_ID}" "${WORKSPACE}" \
+        || fail "named worktree task association changed during open: ${WORKTREE_TASK_NAME}"
+    [[ "${RESOLVED_MANAGED_TASK_NAME}" == "${WORKTREE_TASK_NAME}" ]] \
+        || fail "named worktree task association changed during open: ${WORKTREE_TASK_NAME}"
+    MANAGED_WORKTREE_TASK_NAME="${RESOLVED_MANAGED_TASK_NAME}"
+    MANAGED_WORKTREE_BRANCH="${RESOLVED_MANAGED_BRANCH}"
+    MANAGED_WORKTREE_COMMON_DIR="${RESOLVED_MANAGED_COMMON_DIR}"
+    MANAGED_WORKTREE_BASE="${RESOLVED_MANAGED_HEAD}"
+    MANAGED_WORKTREE_CONTINUATION=true
     MANAGED_WORKTREE=true
 elif [[ "${RESUME_LAUNCH}" == true ]] && resolve_managed_workspace_launch "${RESUME_WORKSPACE_ID}" "${WORKSPACE}"; then
     WORKSPACE_ID="${RESUME_WORKSPACE_ID}"

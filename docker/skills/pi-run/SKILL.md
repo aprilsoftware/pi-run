@@ -137,6 +137,9 @@ repository in a host terminal:
 
 ```bash
 pi-run worktree start <task-name>
+pi-run worktree open <task-name>
+pi-run worktree open <task-name> -c
+pi-run worktree open <task-name> -r
 pi-run worktree list
 ```
 
@@ -151,10 +154,11 @@ push, remove worktrees, or delete branches. Managed checkouts live under:
 <Pi-Run home>/worktrees/<repository-id>/<workspace-id>/
 ```
 
-Until named `worktree open` is implemented, resume an existing managed task
-through global `pi-run resume`, which follows the selected workspace's recorded
-association. One Pi-Run process may use a particular managed task at a time,
-while distinct tasks may run concurrently.
+`worktree open` reuses exactly the named task without creating another checkout.
+Without a selector it starts a fresh conversation; `-c` and `-r` stay within the
+selected profile's conversations for that task. Global `pi-run resume` also
+follows the selected workspace's recorded association. One Pi-Run process may
+use a particular managed task at a time, while distinct tasks may run concurrently.
 
 `worktree list` is read-only and reports repository groups plus `available`,
 `missing`, `pending`, `path-conflict`, `git-conflict`, or `unsafe` child status.

@@ -460,6 +460,41 @@ managed_workspace_association_exists() {
     [[ "${count}" == 1 ]] || fail "managed workspace association is ambiguous: ${workspace_id}"
 }
 
+resolve_named_managed_task() (
+    local selected="$1" task_name="$2" machine schema repository_count repository_id task_count workspace_id path
+    validate_worktree_task_name "${task_name}"
+    resolve_worktree_repository "${selected}"
+    machine="$(machine_file)"
+    [[ -f "${machine}" ]] \
+        || fail "no named worktree tasks are registered for this repository"
+
+    acquire_workspace_lock
+    validate_worktree_machine_file "${machine}"
+    validate_workspace_metadata "${machine}"
+    schema="$(jq -r '.schemaVersion' "${machine}")"
+    [[ "${schema}" == 3 ]] \
+        || fail "no named worktree tasks are registered for this repository"
+    repository_count="$(jq -r --arg common "${WORKTREE_REPOSITORY_COMMON_DIR}" \
+        '[.repositories[] | select(.commonGitDir == $common)] | length' "${machine}")"
+    [[ "${repository_count}" == 1 ]] \
+        || fail "no uniquely registered managed repository contains task: ${task_name}"
+    repository_id="$(jq -r --arg common "${WORKTREE_REPOSITORY_COMMON_DIR}" \
+        '.repositories[] | select(.commonGitDir == $common) | .id' "${machine}")"
+    task_count="$(jq -r --arg repository "${repository_id}" --arg name "${task_name}" \
+        '[.repositories[] | select(.id == $repository) | .tasks[] |
+            select(.name == $name and .state == "active")] | length' "${machine}")"
+    [[ "${task_count}" == 1 ]] \
+        || fail "no unique active worktree task is registered with name: ${task_name}"
+    workspace_id="$(jq -r --arg repository "${repository_id}" --arg name "${task_name}" '
+        .repositories[] | select(.id == $repository) | .tasks[] |
+        select(.name == $name and .state == "active") | .workspaceId
+    ' "${machine}")"
+    path="$(jq -r --arg id "${workspace_id}" \
+        '.workspacePaths[] | select(.workspaceId == $id) | .path' "${machine}")"
+    release_workspace_lock
+    printf '%s\t%s\n' "${workspace_id}" "${path}"
+)
+
 RESOLVED_MANAGED_TASK_NAME=""
 RESOLVED_MANAGED_BRANCH=""
 RESOLVED_MANAGED_COMMON_DIR=""

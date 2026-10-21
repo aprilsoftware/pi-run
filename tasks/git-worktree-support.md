@@ -5,8 +5,8 @@
 The first v0.8 prerelease prototype is implemented and validated, but user
 validation rejected its automatic repository mode. It incorrectly treated a
 fresh Pi conversation as a request for a fresh worktree and branch. This record
-defines the task-oriented replacement. Named task start and listing are now
-implemented; task-local open and finish remain future increments.
+defines the task-oriented replacement. Named task start, open, and listing are
+now implemented; finish remains a future increment.
 
 A worktree is the filesystem and branch context for one explicitly named
 parallel task. It may contain many Pi conversations over its lifetime. Ordinary
@@ -40,9 +40,9 @@ pi-run worktree list --all
 pi-run worktree finish <task-name>
 ```
 
-Only `start` and bare `list` are implemented in the current slice; existing
-tasks use global `pi-run resume` until `open` is added. `start`, `open`, and
-`finish` resolve the repository containing the current host
+`start`, `open`, and bare `list` are implemented in the current slice; `finish`
+and `list --all` remain future work. `start`, `open`, and `finish` resolve the
+repository containing the current host
 directory. Task names are unique within that machine-local repository and use a
 short validated command-line spelling rather than exposing UUIDs as the normal
 user interface. Profiles continue to select credentials, instructions, skills,
@@ -449,9 +449,9 @@ repository-grouped listing, one-active-launch locking, and association-driven
 global resume. Prototype repository preferences, launch flags, unnamed
 workspaces, and cross-worktree transcript routing have been removed.
 
-The next user-facing increment is `worktree open <task-name>` for fresh, `-c`,
-and `-r` task-local conversations. Recoverable `finish` remains later work and
-must not be inferred from ordinary exit or Git state.
+Named `worktree open <task-name>` now supports fresh, `-c`, and `-r` task-local
+conversations without creating another checkout. Recoverable `finish` remains
+later work and must not be inferred from ordinary exit or Git state.
 
 ## Deferred decisions and exclusions
 

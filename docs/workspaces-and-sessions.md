@@ -95,11 +95,23 @@ uncommitted changes are excluded from the new checkout. Pi-Run does not stash,
 copy, commit, clean, reset, merge, rebase, push, remove worktrees, or delete
 branches automatically.
 
-Startup reports the task name, managed workspace UUID, branch, base commit, and
-host path. Until named `worktree open` is implemented, resume an existing task
-through `pi-run resume` or `pi-run resume <profile> <workspace-id>`. Global
-resume follows the selected task's immutable machine association and never
-reconnects it as an ordinary checkout.
+Open an existing task from anywhere inside the same repository:
+
+```bash
+pi-run worktree open api-refactor
+pi-run worktree open api-refactor -c
+pi-run worktree open api-refactor -r
+```
+
+Without a selector, `open` starts a fresh Pi conversation in the existing task.
+`-c` continues that task's newest conversation for the selected profile, and
+`-r` opens Pi's selector for that task. Open never creates another branch,
+worktree, UUID, or metadata record. Global `pi-run resume` also follows a
+selected task's immutable machine association and never reconnects it as an
+ordinary checkout.
+
+Startup reports the task name, managed workspace UUID, branch, current commit,
+and generic host path.
 
 Only one Pi-Run process may use a managed task at a time. A private machine-local
 ownership lock detects active use and safely recovers only well-formed stale
@@ -122,8 +134,8 @@ Statuses mean:
 | `git-conflict` | The present checkout does not match recorded Git state. |
 | `unsafe` | Ownership, links, or filesystem structure are unsafe to trust. |
 
-Listing and disabling are non-destructive. Pi-Run currently provides no
-worktree-removal command. Use ordinary Git and filesystem tools only after
+Listing is non-destructive. Pi-Run currently provides no worktree-removal
+command. Use ordinary Git and filesystem tools only after
 reviewing sessions, changes, active locks, and branch retention; do not treat a
 missing transcript as proof that a checkout is disposable.
 
