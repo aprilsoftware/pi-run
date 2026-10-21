@@ -28,7 +28,8 @@ Usage:
   pi-run [--home <path>] workspace link <workspace-id> <path>
   pi-run [--home <path>] [--profile <name>] worktree start <task-name> [-- [pi arguments...]]
   pi-run [--home <path>] [--profile <name>] worktree open <task-name> [pi arguments...]
-  pi-run [--home <path>] worktree list
+  pi-run [--home <path>] worktree finish <task-name>
+  pi-run [--home <path>] worktree list [--all]
   pi-run [--home <path>] session list [<workspace-id>]
   pi-run [--home <path>] resume [<profile> <workspace-id>]
   pi-run [--home <path>] [--profile <name>] ssh-key list
@@ -528,10 +529,14 @@ case "${COMMAND}" in
     worktree)
         case "${2:-}" in
             list)
-                [[ $# -eq 2 ]] || usage
+                [[ $# -eq 2 || ($# -eq 3 && "${3:-}" == --all) ]] || usage
                 initialize_home
                 require_jq
-                list_managed_worktrees
+                if [[ "${3:-}" == --all ]]; then
+                    list_managed_worktrees true
+                else
+                    list_managed_worktrees false
+                fi
                 exit 0
                 ;;
             start)
@@ -545,6 +550,14 @@ case "${COMMAND}" in
                 WORKTREE_TASK_OPEN=true
                 WORKTREE_TASK_NAME="${3:-}"
                 validate_worktree_task_name "${WORKTREE_TASK_NAME}"
+                ;;
+            finish)
+                [[ $# -eq 3 ]] || usage
+                validate_worktree_task_name "${3:-}"
+                initialize_home
+                require_jq
+                finish_managed_worktree_task "$(pwd -P)" "$3"
+                exit 0
                 ;;
             *) usage ;;
         esac

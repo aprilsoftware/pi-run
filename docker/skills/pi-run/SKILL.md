@@ -140,7 +140,9 @@ pi-run worktree start <task-name>
 pi-run worktree open <task-name>
 pi-run worktree open <task-name> -c
 pi-run worktree open <task-name> -r
+pi-run worktree finish <task-name>
 pi-run worktree list
+pi-run worktree list --all
 ```
 
 Run `worktree start` from the repository to create one explicitly named task;
@@ -160,10 +162,16 @@ selected profile's conversations for that task. Global `pi-run resume` also
 follows the selected workspace's recorded association. One Pi-Run process may
 use a particular managed task at a time, while distinct tasks may run concurrently.
 
-`worktree list` is read-only and reports repository groups plus `available`,
-`missing`, `pending`, `path-conflict`, `git-conflict`, or `unsafe` child status.
-Pi-Run has no managed-worktree removal command. Do not interpret an inactive or
-missing session as permission to delete source or Git state.
+`worktree list` is read-only and reports repository groups plus lifecycle state
+and `available`, `missing`, `pending`, `path-conflict`, `git-conflict`, or
+`unsafe` status. `--all` also shows `finished`/`archived` history.
+
+`worktree finish` is the only supported managed-checkout removal path. Run it
+from the primary or another checkout. It requires interactive confirmation and
+refuses active use, dirty or ignored content, submodules, missing active tasks,
+and unsafe or conflicting state.
+It preserves the task branch, commits, workspace identity, and conversations.
+Never interpret exit or an inactive or missing session as permission to finish.
 
 A worktree separates branches, indexes, and working files; it is not a sandbox.
 The selected checkout is mounted at `/workspace`, but the writable common Git

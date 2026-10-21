@@ -137,6 +137,11 @@ empty, unchanged state from that invocation; ambiguous state is preserved.
 | `path-conflict` | Authoritative path mapping differs from the required managed path. |
 | `git-conflict` | The safe path exists but its common directory, administration directory, or branch differs. |
 | `unsafe` | Repository, path, ownership, symlink, hard-link, permission, or administration checks prevent trusted inspection. |
+| `archived` | A finished historical task intentionally has no concrete path. |
+
+Normal listing excludes `finished` tasks; `worktree list --all` includes them.
+The separate `STATE` column distinguishes `active`, recoverable `finishing`, and
+historical `finished` lifecycle records.
 
 Metadata-level contradictions that cannot be represented safely fail the whole
 command rather than being reduced to a row status. Schema-version-1 machine
@@ -174,9 +179,32 @@ recovered as stale; Pi-Run never signals the process. Ownership-token mismatch,
 foreign-machine, malformed, linked, or ambiguous lock state fails closed.
 Different managed task workspace UUIDs can run concurrently.
 
-Pi-Run has no managed-task finish or automatic worktree removal operation yet.
-Ordinary launch and exit do not prune, merge, rebase, push, reset, remove a
-worktree, or delete a branch.
+## Managed task finish
+
+`worktree finish <task-name>` must run from the primary or another checkout in
+the same repository, not from the target task itself. It acquires the task's
+launch lock, revalidates its complete identity, displays the task, branch,
+workspace UUID, path, and state, and requires typing the complete task name on an
+interactive terminal.
+
+Before removal, Pi-Run inspects the checkout twice in a version-matched runtime
+container with network none, a read-only root, read-only worktree and common-Git
+mounts, no capabilities, no-new-privileges, checkout hooks disabled, filesystem
+monitoring disabled, and no profiles or credentials. It refuses submodules and
+any staged, modified, untracked, ignored, or nested-repository content. The host
+then runs non-force `git worktree remove`; no checkout or repository code is run
+on the host merely to decide whether content is disposable.
+
+Finish transitions `active` to `finishing` before removal. Once the checkout and
+its Git administration are absent, it removes the machine path mapping and marks
+the task `finished` with a timestamp. A retry may continue an exact `finishing`
+record, including when Git removal succeeded before final metadata publication.
+Partial, missing-active, or conflicting state fails closed.
+
+The task branch, commits, portable workspace registry entry, and every profile's
+conversation files remain unchanged. Finished tasks cannot be opened or resumed
+as live workspaces. Ordinary launch and exit never finish, prune, merge, rebase,
+push, reset, remove a worktree, or delete a branch.
 
 ## Resume across workspaces
 

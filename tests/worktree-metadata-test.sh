@@ -135,6 +135,30 @@ grep -F 'withdrawn v0.8 worktree metadata requires cleanup' "${TMP}/withdrawn-v2
 [[ "$(sha256sum "${CASE_MACHINE}")" == "${before}" ]] \
     || fail "withdrawn schema-v2 refusal changed machine metadata"
 
+write_valid_lifecycle_case() {
+    local name="$1" mutation="$2"
+    prepare_v1_home "${name}"
+    jq --arg repository "${REPOSITORY_ID}" --arg workspace "${WORKSPACE_ID}" '
+        .schemaVersion=3 | .repositories=[{
+            id:$repository,name:"fixture",commonGitDir:"/tmp/repository/.git",
+            primaryPath:"/tmp/repository",createdAt:"2026-10-20T12:00:00Z",
+            tasks:[{name:"fixture",workspaceId:$workspace,
+                branch:("pi-run/fixture/" + $workspace),state:"active",
+                createdAt:"2026-10-20T12:01:00Z",finishedAt:null}]
+        }]
+    ' "${CASE_MACHINE}" | jq "${mutation}" > "${CASE_MACHINE}.tmp"
+    mv "${CASE_MACHINE}.tmp" "${CASE_MACHINE}"
+    chmod 0600 "${CASE_MACHINE}"
+    run_ensure "${CASE_HOME}" >/dev/null
+}
+
+write_valid_lifecycle_case valid-finishing '.repositories[0].tasks[0].state="finishing"'
+write_valid_lifecycle_case valid-finished '
+    .repositories[0].tasks[0].state="finished" |
+    .repositories[0].tasks[0].finishedAt="2026-10-20T13:00:00Z" |
+    .workspacePaths=[]
+'
+
 write_v3_case() {
     local name="$1" mutation="$2"
     prepare_v1_home "${name}"
@@ -162,5 +186,11 @@ write_v3_case duplicate-task-workspace \
     '.repositories += [(.repositories[0] | .id=$repositoryB | .commonGitDir="/tmp/other/.git" | .primaryPath="/tmp/other")]'
 write_v3_case duplicate-task-name \
     '.repositories[0].tasks += [(.repositories[0].tasks[0] | .workspaceId="44444444-4444-4444-8444-444444444444" | .branch="pi-run/fixture/44444444-4444-4444-8444-444444444444")]'
+write_v3_case active-without-path '.workspacePaths=[]'
+write_v3_case finishing-without-path '.repositories[0].tasks[0].state="finishing" | .workspacePaths=[]'
+write_v3_case finished-with-path \
+    '.repositories[0].tasks[0].state="finished" | .repositories[0].tasks[0].finishedAt="2026-10-20T13:00:00Z"'
+write_v3_case finished-without-timestamp \
+    '.repositories[0].tasks[0].state="finished" | .workspacePaths=[]'
 
 echo "Worktree metadata tests passed"

@@ -117,10 +117,12 @@ Only one Pi-Run process may use a managed task at a time. A private machine-loca
 ownership lock detects active use and safely recovers only well-formed stale
 records. Different tasks may run concurrently.
 
-Inspect every registered repository and managed checkout from any directory:
+Inspect registered repositories and unfinished managed tasks from any directory.
+Include finished task history with `--all`:
 
 ```bash
 pi-run worktree list
+pi-run worktree list --all
 ```
 
 Statuses mean:
@@ -133,11 +135,22 @@ Statuses mean:
 | `path-conflict` | The mapped path is not the required managed path. |
 | `git-conflict` | The present checkout does not match recorded Git state. |
 | `unsafe` | Ownership, links, or filesystem structure are unsafe to trust. |
+| `archived` | A finished task is historical and has no managed checkout path. |
 
-Listing is non-destructive. Pi-Run currently provides no worktree-removal
-command. Use ordinary Git and filesystem tools only after
-reviewing sessions, changes, active locks, and branch retention; do not treat a
-missing transcript as proof that a checkout is disposable.
+Finish a clean task from the primary or another checkout in the same repository:
+
+```bash
+pi-run worktree finish api-refactor
+```
+
+Finish displays the task identity and requires typing its complete name in an
+interactive terminal. It refuses active use, unsafe or conflicting metadata,
+submodules, and staged, modified, untracked, ignored, or nested-repository
+content. Inspection runs in an offline restricted runtime container. A successful
+finish removes only the linked checkout and path mapping; it preserves the task
+branch, commits, portable workspace identity, and every profile's conversations.
+An interrupted `finishing` task is shown by normal listing and can be retried.
+Pi-Run never infers finish from exit, session activity, or Git merge state.
 
 Managed source trees and machine associations are excluded from encrypted
 snapshots. Portable identities and sessions can be restored, but Pi-Run does not

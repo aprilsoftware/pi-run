@@ -14,6 +14,7 @@ ID_PENDING=33333333-3333-4333-8333-333333333333
 ID_PATH=44444444-4444-4444-8444-444444444444
 ID_GIT=55555555-5555-4555-8555-555555555555
 ID_UNSAFE=66666666-6666-4666-8666-666666666666
+ID_FINISHED=77777777-7777-4777-8777-777777777777
 
 fail() {
     echo "worktree-list-test: $*" >&2
@@ -66,7 +67,8 @@ jq --arg repository "${ALPHA_REPOSITORY_ID}" \
     --arg pending "${ID_PENDING}" --arg pendingPath "${PATH_PENDING}" \
     --arg conflict "${ID_PATH}" --arg conflictPath "${PATH_CONFLICT}" \
     --arg git "${ID_GIT}" --arg gitPath "${PATH_GIT}" \
-    --arg unsafe "${ID_UNSAFE}" --arg unsafePath "${PATH_UNSAFE}" '
+    --arg unsafe "${ID_UNSAFE}" --arg unsafePath "${PATH_UNSAFE}" \
+    --arg finished "${ID_FINISHED}" '
     .workspacePaths += [
         {workspaceId:$available,path:$availablePath},
         {workspaceId:$missing,path:$missingPath},
@@ -80,21 +82,24 @@ jq --arg repository "${ALPHA_REPOSITORY_ID}" \
         {name:"git-conflict",workspaceId:$git,branch:("pi-run/git-conflict/" + $git),state:"active",createdAt:"2026-10-20T12:00:05Z",finishedAt:null},
         {name:"path-conflict",workspaceId:$conflict,branch:("pi-run/path-conflict/" + $conflict),state:"active",createdAt:"2026-10-20T12:00:04Z",finishedAt:null},
         {name:"pending",workspaceId:$pending,branch:("pi-run/pending/" + $pending),state:"active",createdAt:"2026-10-20T12:00:03Z",finishedAt:null},
-        {name:"missing",workspaceId:$missing,branch:("pi-run/missing/" + $missing),state:"active",createdAt:"2026-10-20T12:00:02Z",finishedAt:null},
-        {name:"available",workspaceId:$available,branch:("pi-run/available/" + $available),state:"active",createdAt:"2026-10-20T12:00:01Z",finishedAt:null}
+        {name:"missing",workspaceId:$missing,branch:("pi-run/missing/" + $missing),state:"finishing",createdAt:"2026-10-20T12:00:02Z",finishedAt:null},
+        {name:"available",workspaceId:$available,branch:("pi-run/available/" + $available),state:"active",createdAt:"2026-10-20T12:00:01Z",finishedAt:null},
+        {name:"finished",workspaceId:$finished,branch:("pi-run/finished/" + $finished),state:"finished",createdAt:"2026-10-20T12:00:07Z",finishedAt:"2026-10-20T13:00:00Z"}
     ]
 ' "${MACHINE}" > "${MACHINE}.tmp"
 mv "${MACHINE}.tmp" "${MACHINE}"
 chmod 0600 "${MACHINE}"
 
 jq --arg available "${ID_AVAILABLE}" --arg missing "${ID_MISSING}" \
-    --arg conflict "${ID_PATH}" --arg git "${ID_GIT}" --arg unsafe "${ID_UNSAFE}" '
+    --arg conflict "${ID_PATH}" --arg git "${ID_GIT}" --arg unsafe "${ID_UNSAFE}" \
+    --arg finished "${ID_FINISHED}" '
     .workspaces += [
         {id:$available,name:"alpha repository",kind:"git",createdAt:"2026-10-20T12:00:01Z"},
         {id:$missing,name:"alpha repository",kind:"git",createdAt:"2026-10-20T12:00:02Z"},
         {id:$conflict,name:"alpha repository",kind:"git",createdAt:"2026-10-20T12:00:04Z"},
         {id:$git,name:"alpha repository",kind:"git",createdAt:"2026-10-20T12:00:05Z"},
-        {id:$unsafe,name:"alpha repository",kind:"git",createdAt:"2026-10-20T12:00:06Z"}
+        {id:$unsafe,name:"alpha repository",kind:"git",createdAt:"2026-10-20T12:00:06Z"},
+        {id:$finished,name:"alpha repository: finished",kind:"git",createdAt:"2026-10-20T12:00:07Z"}
     ]
 ' "${REGISTRY}" > "${REGISTRY}.tmp"
 mv "${REGISTRY}.tmp" "${REGISTRY}"
@@ -104,7 +109,12 @@ metadata_before="$(sha256sum "${MACHINE}" "${REGISTRY}")"
 git_before="$({ git -C "${ALPHA}" worktree list --porcelain; git -C "${ALPHA}" show-ref; } | sha256sum)"
 output="$(cd "${TMP}" && PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" worktree list)"
 output_again="$(cd "${TMP}" && PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" worktree list)"
+output_all="$(cd "${TMP}" && PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" worktree list --all)"
 [[ "${output}" == "${output_again}" ]] || fail "worktree listing was not deterministic"
+[[ "${output}" != *"${ID_FINISHED}"* ]] || fail "normal listing included a finished task"
+finished_line="$(grep -F "${ID_FINISHED}" <<< "${output_all}")"
+[[ "${finished_line}" == *finished* && "${finished_line}" == *archived* && "${finished_line}" == *'  -' ]] \
+    || fail "--all listing omitted finished task history"
 for expected in \
     "available|${ID_AVAILABLE}|pi-run/available/${ID_AVAILABLE}|available" \
     "missing|${ID_MISSING}|pi-run/missing/${ID_MISSING}|missing" \
@@ -117,6 +127,9 @@ for expected in \
     [[ "${line}" == *"${task}"* && "${line}" == *"${branch}"* && "${line}" == *"${status}"* ]] \
         || fail "listing omitted task status row: ${expected}"
 done
+missing_line="$(grep -F "${ID_MISSING}" <<< "${output}")"
+[[ "${missing_line}" == *finishing* && "${missing_line}" == *missing* ]] \
+    || fail "listing omitted interrupted finishing state"
 alpha_line="$(grep -n '^Repository: alpha repository ' <<< "${output}" | cut -d: -f1)"
 zeta_line="$(grep -n '^Repository: zeta repository ' <<< "${output}" | cut -d: -f1)"
 (( alpha_line < zeta_line )) || fail "repositories were not sorted by name"
