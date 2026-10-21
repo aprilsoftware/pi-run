@@ -126,6 +126,24 @@ For launcher argument changes, place a fake `docker` executable first on
 environment, privilege, network, extension, and image arguments. Do not start a
 container merely to inspect command construction.
 
+The managed-worktree end-to-end test is deliberately opt-in because it starts
+real containers and creates disposable linked worktrees. Build a local candidate
+runtime image and select it explicitly:
+
+```bash
+docker build -t pi-run:worktree-e2e docker
+PI_RUN_TEST_REAL_DOCKER=1 \
+PI_RUN_TEST_IMAGE=pi-run:worktree-e2e \
+tests/worktree-e2e-test.sh
+```
+
+The test uses only a temporary Pi-Run home and repository. It validates named
+task start and open, dirty-finish refusal, clean recoverable finish, preserved
+branches/identities/sessions, sibling isolation, historical listing, and lock
+cleanup. Without `PI_RUN_TEST_IMAGE`, it expects the version-matched release
+runtime image to exist locally. A skipped invocation is not a successful
+real-Docker validation and must be reported as skipped.
+
 ## Build application release artifacts
 
 Create the deterministic host-application archive and checksum in a disposable
