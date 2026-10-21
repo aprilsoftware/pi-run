@@ -112,11 +112,22 @@ run_pi() {
         "${ROOT}/bin/pi-run" "$@"
 }
 
+if run_pi worktree open "${TASK_NAME}" >/dev/null 2>"${TMP}/missing-open-path.err"; then
+    fail "worktree open accepted a missing repository argument"
+fi
+grep -F 'Usage:' "${TMP}/missing-open-path.err" >/dev/null \
+    || fail "missing worktree-open repository did not show usage"
+if run_pi worktree open "${TASK_NAME}" -c >/dev/null 2>"${TMP}/option-open-path.err"; then
+    fail "worktree open accepted an option as its repository argument"
+fi
+grep -F 'Usage:' "${TMP}/option-open-path.err" >/dev/null \
+    || fail "option worktree-open repository did not show usage"
+
 metadata_before="$(sha256sum "${MACHINE}" "${REGISTRY}")"
 git_before="$(git -C "${REPOSITORY}" worktree list --porcelain | sha256sum)"
 for entry in 'fresh|--version|--version ' 'continue|-c| -c ' 'resume|-r| -r '; do
     IFS='|' read -r label argument expected <<< "${entry}"
-    (cd "${REPOSITORY}" && run_pi worktree open "${TASK_NAME}" "${argument}") \
+    (cd "${TMP}" && run_pi worktree open "${TASK_NAME}" repository "${argument}") \
         >/dev/null 2>"${TMP}/${label}.err"
     count="$(< "${COUNT_FILE}")"
     grep -F "workspace=${WORKTREE}" "${CAPTURE_PREFIX}.${count}" >/dev/null \
@@ -135,13 +146,13 @@ done
     || fail "opening a task changed metadata or Git worktrees"
 
 count_before="$(< "${COUNT_FILE}")"
-if (cd "${REPOSITORY}" && run_pi worktree open missing-task) \
+if run_pi worktree open missing-task "${REPOSITORY}" \
     >/dev/null 2>"${TMP}/missing.err"; then
     fail "missing task was opened"
 fi
 grep -F 'no unique active worktree task is registered with name: missing-task' "${TMP}/missing.err" >/dev/null \
     || fail "missing-task diagnostic was unclear"
-if (cd "${REPOSITORY}" && run_pi worktree open "${TASK_NAME}" -c -r) \
+if run_pi worktree open "${TASK_NAME}" "${REPOSITORY}" -c -r \
     >/dev/null 2>"${TMP}/selectors.err"; then
     fail "worktree open accepted multiple continuation selectors"
 fi
@@ -157,7 +168,7 @@ jq --arg id "${WORKSPACE_ID}" --arg path "${TMP}/wrong-path" \
     "${MACHINE}" > "${MACHINE}.tmp"
 mv "${MACHINE}.tmp" "${MACHINE}"
 chmod 0600 "${MACHINE}"
-if (cd "${REPOSITORY}" && run_pi worktree open "${TASK_NAME}") \
+if run_pi worktree open "${TASK_NAME}" "${REPOSITORY}" \
     >/dev/null 2>"${TMP}/path.err"; then
     fail "task with a conflicting path mapping was opened"
 fi
@@ -184,7 +195,7 @@ jq -n --arg machine "$("${ROOT}/bin/pi-run" machine-id)" --argjson pid "${ACTIVE
     '{schemaVersion:1,machineId:$machine,pid:$pid,processStartToken:$start,
       ownershipToken:$token,workspaceId:$workspace,createdAt:$created}' > "${LOCK_DIR}/owner.json"
 chmod 0600 "${LOCK_DIR}/owner.json"
-if (cd "${REPOSITORY}" && run_pi worktree open "${TASK_NAME}") \
+if run_pi worktree open "${TASK_NAME}" "${REPOSITORY}" \
     >/dev/null 2>"${TMP}/active.err"; then
     fail "active task was opened concurrently"
 fi

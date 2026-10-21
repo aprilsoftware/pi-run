@@ -26,8 +26,8 @@ Usage:
   pi-run [--home <path>] [--profile <name>] skill list
   pi-run [--home <path>] workspace list
   pi-run [--home <path>] workspace link <workspace-id> <path>
-  pi-run [--home <path>] [--profile <name>] worktree start <task-name> [-- [pi arguments...]]
-  pi-run [--home <path>] [--profile <name>] worktree open <task-name> [pi arguments...]
+  pi-run [--home <path>] [--profile <name>] worktree start <task-name> <repository> [-- [pi arguments...]]
+  pi-run [--home <path>] [--profile <name>] worktree open <task-name> <repository> [pi arguments...]
   pi-run [--home <path>] worktree finish <task-name>
   pi-run [--home <path>] worktree list [--all]
   pi-run [--home <path>] session list [<workspace-id>]
@@ -150,6 +150,7 @@ HOME_OVERRIDE=""
 WORKTREE_TASK_START=false
 WORKTREE_TASK_OPEN=false
 WORKTREE_TASK_NAME=""
+WORKTREE_REPOSITORY_INPUT=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -540,15 +541,18 @@ case "${COMMAND}" in
                 exit 0
                 ;;
             start)
-                [[ $# -eq 3 || ($# -ge 4 && "${4:-}" == --) ]] || usage
+                [[ $# -eq 4 || ($# -ge 5 && "${5:-}" == --) ]] || usage
+                [[ "${4:-}" != -* ]] || usage
                 WORKTREE_TASK_START=true
                 WORKTREE_TASK_NAME="${3:-}"
+                WORKTREE_REPOSITORY_INPUT="${4:-}"
                 validate_worktree_task_name "${WORKTREE_TASK_NAME}"
                 ;;
             open)
-                [[ $# -ge 3 ]] || usage
+                [[ $# -ge 4 && "${4:-}" != -* ]] || usage
                 WORKTREE_TASK_OPEN=true
                 WORKTREE_TASK_NAME="${3:-}"
+                WORKTREE_REPOSITORY_INPUT="${4:-}"
                 validate_worktree_task_name "${WORKTREE_TASK_NAME}"
                 ;;
             finish)
@@ -679,15 +683,15 @@ if [[ "${RESUME_LAUNCH}" == true ]]; then
     WORKSPACE_INPUT="${RESUME_WORKSPACE_PATH}"
     EXTRA_PI_ARGS=(--resume)
 elif [[ "${WORKTREE_TASK_START}" == true ]]; then
-    WORKSPACE_INPUT="$(pwd -P)"
-    if (( $# >= 4 )); then
-        EXTRA_PI_ARGS=("${@:5}")
+    WORKSPACE_INPUT="${WORKTREE_REPOSITORY_INPUT}"
+    if (( $# >= 5 )); then
+        EXTRA_PI_ARGS=("${@:6}")
     else
         EXTRA_PI_ARGS=()
     fi
 elif [[ "${WORKTREE_TASK_OPEN}" == true ]]; then
-    WORKSPACE_INPUT="$(pwd -P)"
-    EXTRA_PI_ARGS=("${@:4}")
+    WORKSPACE_INPUT="${WORKTREE_REPOSITORY_INPUT}"
+    EXTRA_PI_ARGS=("${@:5}")
 else
     WORKSPACE_INPUT="$1"
     shift

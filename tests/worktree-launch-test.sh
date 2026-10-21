@@ -112,10 +112,8 @@ run_pi() {
     fi
 }
 
-(
-    cd "${REPOSITORY}"
-    run_pi worktree start launch-task -- --version >"${TMP}/launch.out" 2>"${TMP}/launch.err"
-)
+run_pi worktree start launch-task "${REPOSITORY}" -- --version \
+    >"${TMP}/launch.out" 2>"${TMP}/launch.err"
 MACHINE="${HOME_DIR}/machines/$("${ROOT}/bin/pi-run" machine-id).json"
 REPOSITORY_ID="$(jq -r '.repositories[0].id' "${MACHINE}")"
 WORKSPACE_ID="$(jq -r '.repositories[0].tasks[0].workspaceId' "${MACHINE}")"
@@ -180,8 +178,8 @@ if [[ "${LIVE_DOCKER}" != 1 ]]; then
 
     managed_count="$(jq -r '.repositories[0].tasks | length' "${MACHINE}")"
     main_before="$(< "${MAIN_COUNT_FILE}")"
-    if (cd "${REPOSITORY}" && FAKE_DOCKER_MODE=materialize-fail \
-        run_pi worktree start failed-materialize -- --version) \
+    if FAKE_DOCKER_MODE=materialize-fail \
+        run_pi worktree start failed-materialize "${REPOSITORY}" -- --version \
         >/dev/null 2>"${TMP}/failed-create.err"; then
         fail "failed managed creation launched successfully"
     fi
@@ -189,8 +187,8 @@ if [[ "${LIVE_DOCKER}" != 1 ]]; then
        "$(jq -r '.repositories[0].tasks | length' "${MACHINE}")" == "${managed_count}" ]] \
         || fail "failed managed creation launched Pi or published metadata"
 
-    if (cd "${REPOSITORY}" && FAKE_DOCKER_MODE=main-fail \
-        run_pi worktree start failed-main -- --version) \
+    if FAKE_DOCKER_MODE=main-fail \
+        run_pi worktree start failed-main "${REPOSITORY}" -- --version \
         >/dev/null 2>"${TMP}/failed-main.err"; then
         fail "failed Pi container returned success"
     fi

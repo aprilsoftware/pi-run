@@ -58,7 +58,7 @@ SOURCE_STATUS="$(git -C "${REPOSITORY}" status --porcelain=v1)"
 MACHINE="${HOME_DIR}/machines/$("${ROOT}/bin/pi-run" machine-id).json"
 REGISTRY="${HOME_DIR}/workspaces/registry.json"
 
-(cd "${REPOSITORY}" && run_pi worktree start task-a -- --version) \
+(cd "${REPOSITORY}" && run_pi worktree start task-a . -- --version) \
     >"${TMP}/first.out" 2>"${TMP}/first.err"
 REPOSITORY_ID="$(jq -r '.repositories[0].id' "${MACHINE}")"
 [[ "${REPOSITORY_ID}" =~ ^[0-9a-f-]{36}$ ]] \
@@ -74,7 +74,7 @@ grep -F "managed-worktree workspace-id=${ID_A}" "${TMP}/first.err" >/dev/null \
 grep -F "managed-worktree host=${PATH_A}" "${TMP}/first.err" >/dev/null \
     || fail "first launch did not report its managed path"
 
-(cd "${REPOSITORY}" && run_pi worktree start task-b -- --version) \
+(cd "${REPOSITORY}" && run_pi worktree start task-b . -- --version) \
     >"${TMP}/second.out" 2>"${TMP}/second.err"
 [[ "$(jq -r '.repositories[0].tasks | length' "${MACHINE}")" == 2 ]] \
     || fail "second named task was not created"
@@ -112,7 +112,7 @@ done
 
 metadata_before_open="$(sha256sum "${MACHINE}" "${REGISTRY}")"
 git_before_open="$(git -C "${REPOSITORY}" worktree list --porcelain | sha256sum)"
-(cd "${REPOSITORY}" && run_pi worktree open task-a --version) \
+(cd "${REPOSITORY}" && run_pi worktree open task-a . --version) \
     >"${TMP}/open.out" 2>"${TMP}/open.err"
 [[ "$(< "${TMP}/open.out")" == "${PI_VERSION}" ]] \
     || fail "named task open did not execute the same real runtime"
@@ -220,7 +220,7 @@ line_b="$(grep -F "${ID_B}" "${TMP}/list-after.out")"
 [[ "${line_a}" == *finished* && "${line_a}" == *archived* &&
    "${line_b}" == *active* && "${line_b}" == *available* ]] \
     || fail "task listings do not distinguish finished task-a from active task-b"
-if (cd "${REPOSITORY}" && run_pi worktree open task-a --version) \
+if (cd "${REPOSITORY}" && run_pi worktree open task-a . --version) \
     >/dev/null 2>"${TMP}/finished-open.err"; then
     fail "finished task-a was reopened"
 fi

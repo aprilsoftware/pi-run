@@ -104,6 +104,23 @@ run_pi() {
         "${ROOT}/bin/pi-run" "$@"
 }
 
+if run_pi worktree start missing-path >/dev/null 2>"${TMP}/missing-start-path.err"; then
+    fail "worktree start accepted a missing repository argument"
+fi
+grep -F 'Usage:' "${TMP}/missing-start-path.err" >/dev/null \
+    || fail "missing worktree-start repository did not show usage"
+if run_pi worktree start option-path -c >/dev/null 2>"${TMP}/option-start-path.err"; then
+    fail "worktree start accepted an option as its repository argument"
+fi
+grep -F 'Usage:' "${TMP}/option-start-path.err" >/dev/null \
+    || fail "option worktree-start repository did not show usage"
+if run_pi worktree start absent-path "${TMP}/missing repository" \
+    >/dev/null 2>"${TMP}/absent-start-path.err"; then
+    fail "worktree start accepted a missing repository directory"
+fi
+grep -F 'workspace does not exist' "${TMP}/absent-start-path.err" >/dev/null \
+    || fail "missing worktree-start repository directory diagnostic was unclear"
+
 run_pi "${REPOSITORY}" --version >/dev/null 2>"${TMP}/unregistered.err"
 grep -F "workspace=${REPOSITORY}" "${CAPTURE_PREFIX}.1" >/dev/null \
     || fail "unregistered repository did not preserve direct launch behavior"
@@ -123,7 +140,7 @@ run_pi "${REPOSITORY}" -r >/dev/null 2>"${TMP}/direct-resume.err"
 grep -F "workspace=${REPOSITORY}" "${CAPTURE_PREFIX}.3" >/dev/null \
     || fail "ordinary resume stopped using the direct checkout"
 
-(cd "${REPOSITORY}" && run_pi worktree start first-task -- --version) \
+run_pi worktree start first-task "${REPOSITORY}" -- --version \
     >/dev/null 2>"${TMP}/first-task.err"
 REPOSITORY_ID="$(jq -r '.repositories[0].id' "${MACHINE}")"
 MANAGED_ID="$(jq -r '.repositories[0].tasks[0].workspaceId' "${MACHINE}")"
@@ -137,7 +154,7 @@ run_pi "${REPOSITORY}" --version >/dev/null 2>"${TMP}/direct-after-task.err"
 grep -F "workspace=${REPOSITORY}" "${CAPTURE_PREFIX}.5" >/dev/null \
     || fail "ordinary launch stopped using the direct checkout"
 
-(cd "${REPOSITORY}" && run_pi worktree start second-task -- --version) \
+(cd "${TMP}" && run_pi worktree start second-task repository -- --version) \
     >/dev/null 2>"${TMP}/second-task.err"
 [[ "$(jq -r '.repositories[0].tasks | length' "${MACHINE}")" == 2 ]] \
     || fail "second named task was not published"
@@ -145,7 +162,7 @@ grep -F "workspace=${REPOSITORY}" "${CAPTURE_PREFIX}.5" >/dev/null \
 metadata_before="$(sha256sum "${MACHINE}" "${REGISTRY}")"
 git_before="$(git -C "${REPOSITORY}" worktree list --porcelain | sha256sum)"
 main_count_before="$(< "${COUNT_FILE}")"
-if (cd "${REPOSITORY}" && run_pi worktree start first-task -- --version) \
+if run_pi worktree start first-task "${REPOSITORY}" -- --version \
     >/dev/null 2>"${TMP}/duplicate.err"; then
     fail "duplicate task name was accepted"
 fi
@@ -157,7 +174,7 @@ grep -F 'worktree task already exists' "${TMP}/duplicate.err" >/dev/null \
     || fail "duplicate task changed metadata, Git state, or launched Pi"
 
 for invalid_name in Uppercase bad/name "$(printf 'a%.0s' {1..64})"; do
-    if (cd "${REPOSITORY}" && run_pi worktree start "${invalid_name}") \
+    if run_pi worktree start "${invalid_name}" "${REPOSITORY}" \
         >/dev/null 2>"${TMP}/invalid-name.err"; then
         fail "invalid task name was accepted: ${invalid_name}"
     fi
@@ -165,7 +182,7 @@ for invalid_name in Uppercase bad/name "$(printf 'a%.0s' {1..64})"; do
         || fail "invalid-task-name diagnostic was unclear"
 done
 
-if (cd "${REPOSITORY}" && run_pi worktree start third-task -- -c) \
+if run_pi worktree start third-task "${REPOSITORY}" -- -c \
     >/dev/null 2>"${TMP}/selector.err"; then
     fail "worktree start accepted a continuation selector"
 fi

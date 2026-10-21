@@ -245,7 +245,8 @@ all_list="$(PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" worktree list --all)"
 finished_line="$(grep -F "${WORKSPACE_ID}" <<< "${all_list}")"
 [[ "${finished_line}" == *finished* && "${finished_line}" == *archived* && "${finished_line}" == *'  -' ]] \
     || fail "--all listing omitted finished task state"
-if (cd "${REPOSITORY}" && PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" worktree open "${TASK_NAME}") \
+if PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" \
+    worktree open "${TASK_NAME}" "${REPOSITORY}" \
     >/dev/null 2>"${TMP}/finished-open.err"; then
     fail "finished task was reopened"
 fi
