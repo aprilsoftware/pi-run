@@ -197,29 +197,40 @@ Different managed task workspace UUIDs can run concurrently.
 
 `worktree finish <task-name>` must run from the checkout whose attached branch
 should receive the task, not from the task checkout itself. It acquires the
-task's launch lock and revalidates both checkouts. Its confirmation displays only
-the task name, human-readable target branch, and commit count; internal workspace
-identifiers and storage paths are not part of the normal finish interface.
+task's launch lock and revalidates both checkouts. Its confirmation displays the
+task name, human-readable target branch, commit count, task changes, and ignored
+task paths; internal workspace identifiers and storage paths are not part of the
+normal finish interface.
 
-Before integration, Pi-Run inspects both checkouts in a version-matched runtime
+Before confirmation, Pi-Run inspects the task in a version-matched runtime
 container with network none, a read-only root, read-only source and common-Git
 mounts, no capabilities, no-new-privileges, Git hooks and filesystem monitoring
-disabled, and no profiles or credentials. It refuses submodules and any staged,
-modified, untracked, ignored, or nested-repository content in the task, and
-requires the target checkout to be equally clean.
+disabled, and no profiles or credentials. It reports tracked and non-ignored
+untracked changes that will be committed and ignored paths that will be discarded
+with the checkout. Submodules and nested repositories remain refusals.
 
-After the user types the complete task name, Pi-Run merges the local task branch
-into the target in the same restricted environment. It fast-forwards when
-possible and otherwise creates a normal unsigned merge commit using the user's
-resolved Git identity. Merge failure or conflicts trigger `git merge --abort`;
-Pi-Run verifies the original target commit and clean status before reporting that
-the task remains active. An unverifiable rollback fails closed for manual target
+After the user types the complete task name, Pi-Run revalidates the displayed
+state and commits all tracked and non-ignored untracked changes as `Complete task
+<task-name>` in the restricted runtime. Ignored content is never added to that
+commit. A commit failure leaves the task active. When commits need integration,
+the target must have no tracked modifications. Pi-Run enumerates changed task
+paths and actual untracked and ignored target paths, refusing exact or
+parent/child overlap before merge. Unrelated target-local content is normal
+machine-local state and remains untouched. If the task is already integrated, no target
+working-content inspection or merge occurs.
+
+Pi-Run merges in the same restricted environment. It fast-forwards when possible
+and otherwise creates a normal unsigned merge commit using the user's resolved
+Git identity. Merge failure or conflicts trigger `git merge --abort`; Pi-Run
+verifies the original target commit and tracked working state before reporting
+that the task remains active. An unverifiable rollback fails closed for manual target
 inspection.
 
-After successful integration, finish transitions `active` to `finishing`, runs
-its clean inspections again, removes the checkout with non-force `git worktree
-remove`, and deletes the integrated local task branch with non-force `git branch
--d`. Once checkout and branch cleanup are complete, it removes the machine path
+After successful integration, finish revalidates and removes exactly the ignored
+task content disclosed at confirmation, transitions `active` to `finishing`,
+removes the now-clean checkout with non-force `git worktree remove`, and deletes
+the integrated local task branch with non-force `git branch -d`. Once checkout
+and branch cleanup are complete, it removes the machine path
 mapping and marks the task `finished` with a timestamp. A retry may continue an
 exact `finishing` record after partial cleanup. Missing-active or conflicting
 state fails closed.

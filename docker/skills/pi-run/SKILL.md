@@ -176,17 +176,24 @@ internal branch names, and managed storage paths. Status may be `available`,
 shows `finished`/`archived` history.
 
 `worktree finish` is the explicit integration and cleanup workflow. Run it from
-the clean checkout whose attached branch should receive the task. It shows the
-task name, target branch, and commit count without exposing internal workspace
-identifiers, then proposes a local merge, managed-checkout removal, and local
-task-branch deletion. It requires interactive confirmation and refuses active
-use, dirty or ignored content, submodules, missing active tasks, and unsafe or
-conflicting state. Merge and inspection run offline in the restricted runtime
-with Git hooks disabled. Conflicts are aborted and the target is verified
-restored; only successful integration permits non-force checkout and local
-branch removal. Conversations and portable history remain. Finish never fetches,
-pushes, force-deletes, or deletes a remote branch. Never interpret exit or an
-inactive or missing session as permission to finish.
+the checkout whose attached branch should receive the task. It shows existing
+commits, task working content, and ignored task paths without exposing internal
+workspace identifiers. Confirmation authorizes one automatic commit of tracked
+and non-ignored untracked task changes using `Complete task <task-name>`, discard
+of the displayed ignored task output, local integration, managed-checkout
+removal, and local task-branch deletion. Submodules, nested repositories, active
+use, missing tasks, and unsafe or conflicting state remain refusals.
+
+When commits need integration, the target must have no tracked changes.
+Untracked and ignored target content is normal machine-local state and is
+preserved unless a task-changed path overlaps it. An already-integrated task does
+not inspect target working content because no merge occurs. Commit, merge, and
+inspection run offline in the restricted runtime with Git hooks disabled.
+Conflicts are aborted and the target is verified restored; only successful
+integration permits checkout and local branch removal. Conversations and
+portable history remain. Finish never fetches, pushes, force-deletes a branch,
+or deletes a remote branch. Never interpret exit or an inactive or missing
+session as permission to finish.
 
 A worktree separates branches, indexes, and working files; it is not a sandbox.
 The selected checkout is mounted at `/workspace`, but the writable common Git

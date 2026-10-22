@@ -441,23 +441,38 @@ managed_workspace_association_exists() {
 }
 
 confirm_managed_task_finish() {
-    local task_name="$1" target_branch="$2" commits="$3" branch_present="$4" response
+    local task_name="$1" target_branch="$2" commits="$3" branch_present="$4"
+    local changes="$5" ignored="$6" task_status="$7" response line
     [[ -t 0 && -t 2 && -r /dev/tty && -w /dev/tty ]] \
         || fail "worktree finish requires confirmation from an interactive terminal"
     {
         printf 'Task: %s\nTarget branch: %s\n' \
             "$(sanitize_display "${task_name}")" "$(sanitize_display "${target_branch}")"
         if [[ "${branch_present}" == true ]]; then
-            printf 'Commits to merge: %s\n\n' "${commits}"
-            if (( commits > 0 )); then
-                printf 'Finish will merge the task into %s, remove its managed checkout,\n' \
-                    "$(sanitize_display "${target_branch}")"
-            else
-                printf 'The task is already integrated into %s. Finish will remove its managed\n' \
-                    "$(sanitize_display "${target_branch}")"
+            printf 'Task changes to commit: %s\n' "${changes}"
+            printf 'Ignored task paths to discard: %s\n' "${ignored}"
+            printf 'Existing commits to merge: %s\n' "${commits}"
+            if [[ -n "${task_status}" ]]; then
+                printf 'Task working content:\n'
+                while IFS= read -r line; do
+                    printf '  %s\n' "$(sanitize_display "${line}")"
+                done <<< "${task_status}"
             fi
-            printf 'checkout and delete its local task branch. Conversations remain available as\n'
-            printf 'historical records. Pi-Run will not fetch, push, or delete a remote branch.\n'
+            printf '\n'
+            if (( changes > 0 )); then
+                printf 'Finish will create commit "Complete task %s", then merge the task into %s.\n' \
+                    "$(sanitize_display "${task_name}")" "$(sanitize_display "${target_branch}")"
+            elif (( commits > 0 )); then
+                printf 'Finish will merge the task into %s.\n' "$(sanitize_display "${target_branch}")"
+            else
+                printf 'The task is already integrated into %s.\n' "$(sanitize_display "${target_branch}")"
+            fi
+            if (( ignored > 0 )); then
+                printf 'Ignored task content will be discarded when its checkout is removed.\n'
+            fi
+            printf 'Finish will remove the managed checkout and delete its local task branch.\n'
+            printf 'Conversations remain as historical records. Pi-Run will not fetch, push,\n'
+            printf 'or delete a remote branch.\n'
         else
             printf '\nFinish recovery will publish the already completed local cleanup.\n'
             printf 'Conversations remain available as historical records.\n'
@@ -615,7 +630,7 @@ resolve_managed_task_for_finish() (
         "${primary}" "${target}" "${target_git_dir}" "${target_branch}" "${target_head}" "${source_head}"
 )
 
-inspect_managed_task_finish_clean() (
+inspect_managed_task_finish_state() (
     local workspace_id="$1" path="$2" common="$3" task_name="$4" image pointer output status
     command -v docker >/dev/null 2>&1 || fail "docker is required for managed worktree finish inspection"
     image="${PI_RUN_IMAGE:-${DEFAULT_IMAGE}}"
@@ -630,6 +645,7 @@ inspect_managed_task_finish_clean() (
         --security-opt no-new-privileges=true --read-only \
         --tmpfs "/tmp:rw,nosuid,nodev,noexec" --user "$(id -u):$(id -g)" \
         --env HOME=/tmp --env GIT_CONFIG_NOSYSTEM=1 --env GIT_OPTIONAL_LOCKS=0 \
+        --env PI_RUN_FINISH_ACTION=inspect-task \
         --workdir /workspace --entrypoint bash \
         --mount "type=bind,src=${path},dst=/workspace,readonly" \
         --mount "type=bind,src=${common},dst=/run/pi-run-git/common,readonly" \
@@ -638,18 +654,102 @@ inspect_managed_task_finish_clean() (
             if git ls-files --stage | awk '\''$1 == "160000" { found=1 } END { exit(found ? 0 : 1) }'\''; then
                 exit 42
             fi
+            if find . -mindepth 2 -name .git -print -quit | grep -q .; then
+                exit 43
+            fi
             git -c core.hooksPath=/dev/null -c core.fsmonitor=false -c core.untrackedCache=false \
                 status --porcelain=v1 --untracked-files=all --ignored=matching
         ' 2>/dev/null)"
     status=$?
     set -e
-    if (( status == 42 )); then
-        fail "worktree finish refuses repositories containing submodules"
-    elif (( status != 0 )); then
-        fail "restricted worktree finish inspection failed"
-    fi
-    [[ -z "${output}" ]] \
-        || fail "worktree finish refuses staged, modified, untracked, ignored, or nested-repository content"
+    case "${status}" in
+        0) printf '%s\n' "${output}" ;;
+        42) fail "worktree finish refuses repositories containing submodules" ;;
+        43) fail "worktree finish refuses nested repositories" ;;
+        *) fail "restricted worktree finish inspection failed" ;;
+    esac
+)
+
+commit_managed_task_changes() (
+    local workspace_id="$1" path="$2" common="$3" task_name="$4" expected_hash="$5"
+    local user_name="$6" user_email="$7" image pointer status
+    command -v docker >/dev/null 2>&1 || fail "docker is required for managed task commit"
+    image="${PI_RUN_IMAGE:-${DEFAULT_IMAGE}}"
+    pointer="$(mktemp "${PI_RUN_HOME_RESOLVED}/worktrees/.finish-git-${workspace_id}.XXXXXX")"
+    trap 'rm -f "${pointer}"' EXIT
+    printf 'gitdir: /run/pi-run-git/common/worktrees/%s\n' "${task_name}" > "${pointer}"
+    chmod 0600 "${pointer}"
+    set +e
+    docker run --rm --pull never --network none --cap-drop ALL \
+        --security-opt no-new-privileges=true --read-only \
+        --tmpfs "/tmp:rw,nosuid,nodev,noexec" --user "$(id -u):$(id -g)" \
+        --env HOME=/tmp --env GIT_CONFIG_NOSYSTEM=1 \
+        --env PI_RUN_FINISH_ACTION=commit-task --env "PI_RUN_TASK_NAME=${task_name}" \
+        --env "PI_RUN_TASK_STATUS_SHA256=${expected_hash}" \
+        --env "PI_RUN_GIT_USER_NAME=${user_name}" --env "PI_RUN_GIT_USER_EMAIL=${user_email}" \
+        --workdir /workspace --entrypoint bash \
+        --mount "type=bind,src=${path},dst=/workspace" \
+        --mount "type=bind,src=${common},dst=/run/pi-run-git/common" \
+        --mount "type=bind,src=${pointer},dst=/workspace/.git,readonly" \
+        "${image}" -ceu '
+            git_task() {
+                git -c core.hooksPath=/dev/null -c core.fsmonitor=false -c core.untrackedCache=false \
+                    -c "user.name=${PI_RUN_GIT_USER_NAME}" -c "user.email=${PI_RUN_GIT_USER_EMAIL}" "$@"
+            }
+            status="$(git_task status --porcelain=v1 --untracked-files=all --ignored=matching)"
+            actual_hash="$(printf "%s" "${status}" | sha256sum | cut -d " " -f 1)"
+            test "${actual_hash}" = "${PI_RUN_TASK_STATUS_SHA256}" || exit 44
+            git_task add -A
+            git_task diff --cached --quiet && exit 45
+            git_task commit -q --no-gpg-sign -m "Complete task ${PI_RUN_TASK_NAME}"
+        '
+    status=$?
+    set -e
+    case "${status}" in
+        0) return 0 ;;
+        44) fail "task content changed after finish confirmation; inspect and retry" ;;
+        45) fail "task changes produced no committable content" ;;
+        *) fail "restricted task commit failed; task remains active" ;;
+    esac
+)
+
+remove_managed_task_ignored_content() (
+    local workspace_id="$1" path="$2" common="$3" task_name="$4" expected_hash="$5"
+    local image pointer status
+    command -v docker >/dev/null 2>&1 || fail "docker is required for managed task cleanup"
+    image="${PI_RUN_IMAGE:-${DEFAULT_IMAGE}}"
+    pointer="$(mktemp "${PI_RUN_HOME_RESOLVED}/worktrees/.finish-git-${workspace_id}.XXXXXX")"
+    trap 'rm -f "${pointer}"' EXIT
+    printf 'gitdir: /run/pi-run-git/common/worktrees/%s\n' "${task_name}" > "${pointer}"
+    chmod 0600 "${pointer}"
+    set +e
+    docker run --rm --pull never --network none --cap-drop ALL \
+        --security-opt no-new-privileges=true --read-only \
+        --tmpfs "/tmp:rw,nosuid,nodev,noexec" --user "$(id -u):$(id -g)" \
+        --env HOME=/tmp --env GIT_CONFIG_NOSYSTEM=1 --env GIT_OPTIONAL_LOCKS=0 \
+        --env PI_RUN_FINISH_ACTION=clean-task \
+        --env "PI_RUN_TASK_STATUS_SHA256=${expected_hash}" \
+        --workdir /workspace --entrypoint bash \
+        --mount "type=bind,src=${path},dst=/workspace" \
+        --mount "type=bind,src=${common},dst=/run/pi-run-git/common,readonly" \
+        --mount "type=bind,src=${pointer},dst=/workspace/.git,readonly" \
+        "${image}" -ceu '
+            git_task() {
+                git -c core.hooksPath=/dev/null -c core.fsmonitor=false -c core.untrackedCache=false "$@"
+            }
+            status="$(git_task status --porcelain=v1 --untracked-files=all --ignored=matching)"
+            actual_hash="$(printf "%s" "${status}" | sha256sum | cut -d " " -f 1)"
+            test "${actual_hash}" = "${PI_RUN_TASK_STATUS_SHA256}" || exit 44
+            git_task clean -fdX -q
+            test -z "$(git_task status --porcelain=v1 --untracked-files=all --ignored=matching)"
+        '
+    status=$?
+    set -e
+    case "${status}" in
+        0) return 0 ;;
+        44) fail "task content changed before ignored-content cleanup; inspect and retry" ;;
+        *) fail "restricted ignored task-content cleanup failed; task remains active" ;;
+    esac
 )
 
 managed_finish_container_git_dir() {
@@ -663,7 +763,7 @@ managed_finish_container_git_dir() {
 
 inspect_managed_finish_target_clean() (
     local target="$1" common="$2" target_git_dir="$3" target_branch="$4" target_head="$5"
-    local image container_git_dir output status
+    local source_head="${6:-}" image container_git_dir output status
     command -v docker >/dev/null 2>&1 || fail "docker is required for managed worktree finish inspection"
     image="${PI_RUN_IMAGE:-${DEFAULT_IMAGE}}"
     docker image inspect "${image}" >/dev/null 2>&1 \
@@ -677,6 +777,7 @@ inspect_managed_finish_target_clean() (
         --env PI_RUN_FINISH_ACTION=inspect-target \
         --env "PI_RUN_TARGET_GIT_DIR=${container_git_dir}" \
         --env "PI_RUN_TARGET_BRANCH=${target_branch}" --env "PI_RUN_TARGET_HEAD=${target_head}" \
+        --env "PI_RUN_SOURCE_HEAD=${source_head}" \
         --workdir /workspace --entrypoint bash \
         --mount "type=bind,src=${target},dst=/workspace,readonly" \
         --mount "type=bind,src=${common},dst=/run/pi-run-git/common,readonly" \
@@ -687,13 +788,36 @@ inspect_managed_finish_target_clean() (
             }
             test "$(git_target symbolic-ref --quiet --short HEAD)" = "${PI_RUN_TARGET_BRANCH}"
             test "$(git_target rev-parse --verify HEAD^{commit})" = "${PI_RUN_TARGET_HEAD}"
-            git_target status --porcelain=v1 --untracked-files=all --ignored=matching
+            status="$(git_target status --porcelain=v1 --untracked-files=no)"
+            test -z "${status}" || { printf "%s\n" "${status}"; exit 0; }
+            if test -n "${PI_RUN_SOURCE_HEAD}"; then
+                base="$(git_target merge-base "${PI_RUN_TARGET_HEAD}" "${PI_RUN_SOURCE_HEAD}")"
+                mapfile -d "" changed < <(git_target diff --name-only -z --no-renames \
+                    "${base}" "${PI_RUN_SOURCE_HEAD}")
+                mapfile -d "" local_paths < <(
+                    git_target ls-files --others --exclude-standard -z
+                    git_target ls-files --others --ignored --exclude-standard -z
+                )
+                for changed_path in "${changed[@]}"; do
+                    for local_path in "${local_paths[@]}"; do
+                        if test "${changed_path}" = "${local_path}" ||
+                           [[ "${changed_path}" == "${local_path}/"* ]] ||
+                           [[ "${local_path}" == "${changed_path}/"* ]]; then
+                            exit 44
+                        fi
+                    done
+                done
+            fi
         ' 2>/dev/null)"
     status=$?
     set -e
-    (( status == 0 )) || fail "restricted target-checkout inspection failed"
+    if (( status == 44 )); then
+        fail "worktree finish refuses target-local content that overlaps task changes"
+    elif (( status != 0 )); then
+        fail "restricted target-checkout inspection failed"
+    fi
     [[ -z "${output}" ]] \
-        || fail "worktree finish requires a clean target checkout, including ignored and nested-repository content"
+        || fail "worktree finish requires a target checkout without tracked modifications"
 )
 
 merge_managed_task_into_target() (
@@ -727,7 +851,7 @@ merge_managed_task_into_target() (
             }
             target_restored() {
                 test "$(git_target rev-parse --verify HEAD^{commit})" = "${PI_RUN_TARGET_HEAD}" &&
-                    test -z "$(git_target status --porcelain=v1 --untracked-files=all --ignored=matching)"
+                    test -z "$(git_target status --porcelain=v1 --untracked-files=no)"
             }
             rollback_on_signal() {
                 if git_target rev-parse --verify -q MERGE_HEAD >/dev/null; then
@@ -740,7 +864,23 @@ merge_managed_task_into_target() (
             test "$(git_target rev-parse --verify HEAD^{commit})" = "${PI_RUN_TARGET_HEAD}"
             test "$(git_target rev-parse --verify "refs/heads/${PI_RUN_SOURCE_BRANCH}^{commit}")" = \
                 "${PI_RUN_SOURCE_HEAD}"
-            test -z "$(git_target status --porcelain=v1 --untracked-files=all --ignored=matching)"
+            test -z "$(git_target status --porcelain=v1 --untracked-files=no)"
+            base="$(git_target merge-base "${PI_RUN_TARGET_HEAD}" "${PI_RUN_SOURCE_HEAD}")"
+            mapfile -d "" changed < <(git_target diff --name-only -z --no-renames \
+                "${base}" "${PI_RUN_SOURCE_HEAD}")
+            mapfile -d "" local_paths < <(
+                git_target ls-files --others --exclude-standard -z
+                git_target ls-files --others --ignored --exclude-standard -z
+            )
+            for changed_path in "${changed[@]}"; do
+                for local_path in "${local_paths[@]}"; do
+                    if test "${changed_path}" = "${local_path}" ||
+                       [[ "${changed_path}" == "${local_path}/"* ]] ||
+                       [[ "${local_path}" == "${changed_path}/"* ]]; then
+                        exit 44
+                    fi
+                done
+            done
             if ! git_target merge --ff --no-edit --no-gpg-sign \
                 -m "Merge Pi-Run task ${PI_RUN_TASK_NAME}" "refs/heads/${PI_RUN_SOURCE_BRANCH}"; then
                 if git_target rev-parse --verify -q MERGE_HEAD >/dev/null; then
@@ -750,13 +890,14 @@ merge_managed_task_into_target() (
                 exit 43
             fi
             git_target merge-base --is-ancestor "${PI_RUN_SOURCE_HEAD}" HEAD
-            test -z "$(git_target status --porcelain=v1 --untracked-files=all --ignored=matching)"
+            test -z "$(git_target status --porcelain=v1 --untracked-files=no)"
         '
     status=$?
     set -e
     case "${status}" in
         0) return 0 ;;
         42) fail "task merge did not succeed; the target checkout was restored and the task remains active" ;;
+        44) fail "worktree finish refuses target-local content that overlaps task changes" ;;
         *) fail "task merge failed and target recovery could not be verified; inspect the target checkout before retrying" ;;
     esac
 )
@@ -816,6 +957,8 @@ finish_managed_worktree_task() (
     local current_state current_repository current_workspace current_branch current_path current_common current_primary
     local current_target current_target_git_dir current_target_branch current_target_head current_source_head
     local admin_dir commits branch_present=true user_name="" user_email=""
+    local task_status="" post_status="" ignored_status="" post_ignored="" status_hash ignored_hash
+    local changes=0 ignored=0
     initial="$(resolve_managed_task_for_finish "${selected}" "${task_name}")"
     IFS=$'\t' read -r task_state repository_id workspace_id branch path common primary target target_git_dir \
         target_branch target_head source_head <<< "${initial}"
@@ -841,8 +984,18 @@ finish_managed_worktree_task() (
         commits=0
         branch_present=false
     fi
+    if [[ -e "${path}" || -L "${path}" ]]; then
+        task_status="$(inspect_managed_task_finish_state \
+            "${workspace_id}" "${path}" "${common}" "${task_name}")"
+        changes="$(awk 'length && substr($0,1,2) != "!!" { count++ } END { print count+0 }' \
+            <<< "${task_status}")"
+        ignored="$(awk 'length && substr($0,1,2) == "!!" { count++ } END { print count+0 }' \
+            <<< "${task_status}")"
+        ignored_status="$(awk 'length && substr($0,1,2) == "!!"' <<< "${task_status}")"
+    fi
 
-    if ! confirm_managed_task_finish "${task_name}" "${target_branch}" "${commits}" "${branch_present}"; then
+    if ! confirm_managed_task_finish "${task_name}" "${target_branch}" "${commits}" \
+        "${branch_present}" "${changes}" "${ignored}" "${task_status}"; then
         printf 'Worktree finish cancelled.\n'
         release_managed_launch_lock || fail "could not release managed finish lock"
         trap - EXIT
@@ -850,13 +1003,32 @@ finish_managed_worktree_task() (
     fi
 
     if [[ -e "${path}" || -L "${path}" ]]; then
-        inspect_managed_task_finish_clean "${workspace_id}" "${path}" "${common}" "${task_name}"
-        inspect_managed_finish_target_clean \
-            "${target}" "${common}" "${target_git_dir}" "${target_branch}" "${target_head}"
+        if (( changes > 0 )); then
+            user_name="$(git -C "${target}" config user.name || true)"
+            user_email="$(git -C "${target}" config user.email || true)"
+            [[ -n "${user_name}" && -n "${user_email}" ]] \
+                || fail "a Git user name and email are required to commit task changes"
+            status_hash="$(printf '%s' "${task_status}" | sha256sum | cut -d ' ' -f 1)"
+            commit_managed_task_changes "${workspace_id}" "${path}" "${common}" "${task_name}" \
+                "${status_hash}" "${user_name}" "${user_email}"
+            source_head="$(git -C "${path}" rev-parse --verify 'HEAD^{commit}')" \
+                || fail "committed task has no valid HEAD"
+            commits="$(git -C "${target}" rev-list --count "${target_head}..${source_head}")" \
+                || fail "could not compare committed task and target history"
+        fi
+        post_status="$(inspect_managed_task_finish_state \
+            "${workspace_id}" "${path}" "${common}" "${task_name}")"
+        post_ignored="$(awk 'length && substr($0,1,2) == "!!"' <<< "${post_status}")"
+        [[ -z "$(awk 'length && substr($0,1,2) != "!!"' <<< "${post_status}")" ]] \
+            || fail "task still has committable content after automatic commit"
+        [[ "${post_ignored}" == "${ignored_status}" ]] \
+            || fail "ignored task content changed after finish confirmation; inspect and retry"
         if (( commits > 0 )); then
+            inspect_managed_finish_target_clean \
+                "${target}" "${common}" "${target_git_dir}" "${target_branch}" "${target_head}" "${source_head}"
             if ! git -C "${target}" merge-base --is-ancestor "${target_head}" "${source_head}"; then
-                user_name="$(git -C "${target}" config user.name || true)"
-                user_email="$(git -C "${target}" config user.email || true)"
+                [[ -n "${user_name}" ]] || user_name="$(git -C "${target}" config user.name || true)"
+                [[ -n "${user_email}" ]] || user_email="$(git -C "${target}" config user.email || true)"
                 [[ -n "${user_name}" && -n "${user_email}" ]] \
                     || fail "a Git user name and email are required to create the task merge commit"
             fi
@@ -865,11 +1037,16 @@ finish_managed_worktree_task() (
                 "${branch}" "${source_head}" "${user_name}" "${user_email}" "${task_name}"
             target_head="$(git -C "${target}" rev-parse --verify 'HEAD^{commit}')"
         fi
-        inspect_managed_task_finish_clean "${workspace_id}" "${path}" "${common}" "${task_name}"
-        inspect_managed_finish_target_clean \
-            "${target}" "${common}" "${target_git_dir}" "${target_branch}" "${target_head}"
         git -C "${target}" merge-base --is-ancestor "${source_head}" "${target_head}" \
             || fail "task branch is not integrated into the target checkout"
+        if [[ -n "${post_ignored}" ]]; then
+            ignored_hash="$(printf '%s' "${post_status}" | sha256sum | cut -d ' ' -f 1)"
+            remove_managed_task_ignored_content \
+                "${workspace_id}" "${path}" "${common}" "${task_name}" "${ignored_hash}"
+        fi
+        [[ -z "$(inspect_managed_task_finish_state \
+            "${workspace_id}" "${path}" "${common}" "${task_name}")" ]] \
+            || fail "task checkout is not clean after finish preparation"
         mark_managed_task_finishing \
             "${workspace_id}" "${repository_id}" "${task_name}" "${branch}" "${path}"
         if ! git -c core.hooksPath=/dev/null -c core.fsmonitor=false -C "${primary}" \

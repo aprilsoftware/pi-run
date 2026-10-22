@@ -193,18 +193,28 @@ storage paths. The confirmation proposes one understandable outcome: integrate
 the task, remove its managed checkout, and delete its local task branch. Typing
 the complete task name authorizes that bounded local workflow.
 
-The task and target checkouts must both be clean, including ignored and nested
-content. Pi-Run refuses active or ambiguous launch locks, unsafe or conflicting
-metadata, a missing active checkout, Git administration mismatch, submodules,
-or a detached target. Inspection and merge run in a version-matched offline,
-capability-free runtime without profiles or credentials and with Git hooks
-disabled, so repository code is not executed on the host merely to decide or
-perform integration.
+Finish inspects and displays tracked and non-ignored untracked task changes that
+will become one `Complete task <task-name>` commit, plus ignored task paths that
+will be discarded with the checkout. Typing the complete task name authorizes
+that commit, the displayed ignored-content removal, integration, and cleanup.
+The state is revalidated before mutation. Submodules and nested repositories are
+not inferred as task content and remain refusals.
+
+When commits need integration, the target must have no tracked modifications.
+Pi-Run compares task-changed paths with actual untracked and ignored target paths
+and refuses exact or parent/child overlap while preserving unrelated
+machine-local content. An already-integrated task skips target
+working-content inspection because no merge occurs. Pi-Run also refuses active
+or ambiguous launch locks, unsafe or conflicting metadata, a missing active
+checkout, Git administration mismatch, or a detached target. Inspection, commit,
+and merge run in a version-matched offline, capability-free runtime without
+profiles or credentials and with Git hooks disabled, so repository code is not
+executed on the host merely to decide or perform integration.
 
 Finish uses fast-forward integration when possible and a normal unsigned merge
 commit for non-conflicting divergence. On conflict or merge failure, it aborts
-the merge and verifies the target's original commit and clean status. Verified
-rollback leaves the task active; unverifiable target state fails closed for
+the merge and verifies the target's original commit and tracked working state.
+Verified rollback leaves the task active; unverifiable target state fails closed for
 manual inspection. Pi-Run does not fetch or push.
 
 Only successful integration transitions the task to `finishing`. Pi-Run then
@@ -217,8 +227,9 @@ shows finished task metadata without claiming that a checkout exists.
 Finish remains a recoverable state transition rather than an uncoordinated
 sequence of Git and JSON changes. An interruption leaves an explicit `finishing`
 state that a validated retry may complete. It never force-deletes, deletes a
-remote branch, rebases, resets, discards source changes, or infers completion
-from `/quit`, transcript absence, cleanliness, or an inactive lock.
+remote branch, rebases, resets, silently discards task content outside the
+confirmed ignored paths, or infers completion from `/quit`, transcript absence,
+cleanliness, or an inactive lock.
 
 ## Source checkout and base revision
 

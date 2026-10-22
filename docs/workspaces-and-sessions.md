@@ -153,16 +153,23 @@ Finish a task from the checkout whose current branch should receive its work:
 pi-run worktree finish api-refactor
 ```
 
-Finish shows the task name, target branch, and number of commits to integrate;
-internal workspace identifiers and storage paths are omitted. It proposes a
-local merge, managed-checkout removal, and local task-branch deletion, then
-requires typing the complete task name. Both checkouts must be clean, including
-ignored and nested-repository content, and the target must have an attached
-branch. Pi-Run also refuses active use, unsafe or conflicting metadata, and
-submodules.
+Finish shows the task name, target branch, existing commits, task working
+content, and ignored task paths; internal workspace identifiers and storage paths
+are omitted. Typing the complete task name authorizes Pi-Run to commit all
+tracked and non-ignored untracked task changes as `Complete task <task-name>`,
+discard the displayed ignored task output, integrate the result, remove the
+managed checkout, and delete its local task branch. Submodules and nested
+repositories remain explicit refusals.
 
-Inspection and merge run in an offline restricted runtime container without
-profile credentials and with Git hooks disabled. A task that is ahead of the
+The target must have an attached branch. When commits need integration, it must
+have no tracked changes. Untracked and ignored target content is normal
+machine-local state and remains in place unless a changed task path overlaps it.
+If the task is already integrated, no target working-content inspection or merge
+is needed. Pi-Run also refuses active use and unsafe or conflicting metadata.
+
+Inspection, automatic commit, ignored-output cleanup, and merge run in an
+offline restricted runtime container without profile credentials and with Git
+hooks disabled. A task that is ahead of the
 target is fast-forwarded when possible; diverged non-conflicting work creates a
 normal merge commit. A conflicting or failed merge is aborted and the target is
 verified restored before Pi-Run reports a recoverable refusal. Only after

@@ -35,10 +35,10 @@ run_pi() {
 }
 
 run_confirmed_finish() {
-    local task_name="$1" command
+    local task_name="$1" answer="${2:-$1}" command
     printf -v command '%q ' env "PI_RUN_HOME=${HOME_DIR}" "PI_RUN_IMAGE=${IMAGE}" \
         "${ROOT}/bin/pi-run" worktree finish "${task_name}"
-    printf '%s\n' "${task_name}" | \
+    printf '%s\n' "${answer}" | \
         script -qefc "cd $(printf '%q' "${REPOSITORY}") && ${command}" /dev/null
 }
 
@@ -48,7 +48,8 @@ git -C "${REPOSITORY}" config user.name fixture
 git -C "${REPOSITORY}" config user.email fixture@pi-run.invalid
 printf 'committed base\n' > "${REPOSITORY}/base.txt"
 printf 'tracked original\n' > "${REPOSITORY}/tracked.txt"
-git -C "${REPOSITORY}" add base.txt tracked.txt
+printf 'local-ignored/\n' > "${REPOSITORY}/.gitignore"
+git -C "${REPOSITORY}" add base.txt tracked.txt .gitignore
 git -C "${REPOSITORY}" commit -qm base
 BASE="$(git -C "${REPOSITORY}" rev-parse HEAD)"
 printf 'tracked dirty\n' > "${REPOSITORY}/tracked.txt"
@@ -189,24 +190,23 @@ grep -F "profile=default workspace=${REPOSITORY}" "${TMP}/ordinary.err" >/dev/nu
 [[ "$(jq -r '.repositories[0].tasks | length' "${MACHINE}")" == "${managed_count}" ]] \
     || fail "ordinary direct launch created another task"
 
-if run_confirmed_finish task-a >"${TMP}/dirty-finish.out" 2>&1; then
-    fail "dirty task-a was finished"
-fi
-grep -F 'refuses staged, modified, untracked, ignored, or nested-repository content' \
-    "${TMP}/dirty-finish.out" >/dev/null || fail "dirty finish refusal was unclear"
+run_confirmed_finish task-a cancel >"${TMP}/cancel-finish.out" 2>&1
+grep -F 'Task changes to commit: 1' "${TMP}/cancel-finish.out" >/dev/null \
+    || fail "finish did not report staged task content"
+grep -F 'Worktree finish cancelled.' "${TMP}/cancel-finish.out" >/dev/null \
+    || fail "finish cancellation was unclear"
 [[ -d "${PATH_A}" && "$(jq -r '.repositories[0].tasks[] | select(.name == "task-a") | .state' \
-    "${MACHINE}")" == active ]] || fail "dirty finish changed task-a"
+    "${MACHINE}")" == active ]] || fail "cancelled finish changed task-a"
 
-# Prepare a committed task result and clean integration checkout; task-b remains isolated and dirty.
+# Prepare uncommitted task work; finish commits and integrates it while task-b stays isolated and dirty.
 git -C "${PATH_A}" reset --hard -q "${BASE}"
 printf 'completed task A\n' > "${PATH_A}/task-a-result.txt"
-git -C "${PATH_A}" add task-a-result.txt
-git -C "${PATH_A}" commit -qm 'complete task A'
-task_a_head="$(git -C "${PATH_A}" rev-parse HEAD)"
 git -C "${REPOSITORY}" checkout -q -- tracked.txt
 rm "${REPOSITORY}/primary-untracked.txt"
+mkdir "${REPOSITORY}/local-ignored"
+printf 'preserve target ignored content\n' > "${REPOSITORY}/local-ignored/credentials"
 [[ -z "$(git -C "${PATH_A}" status --porcelain=v1 --ignored=matching)" &&
-   -z "$(git -C "${REPOSITORY}" status --porcelain=v1 --ignored=matching)" ]] \
+   -z "$(git -C "${REPOSITORY}" status --porcelain=v1)" ]] \
     || fail "task-a and its integration checkout could not be prepared for finish"
 [[ "$(git -C "${PATH_B}" diff --cached --name-only)" == workspace-b.txt ]] \
     || fail "preparing task-a changed task-b"
@@ -222,9 +222,10 @@ if grep -F "${ID_A}" "${TMP}/finish.out" >/dev/null; then
 fi
 [[ ! -e "${PATH_A}" && ! -e "${REPOSITORY}/.git/worktrees/task-a" ]] \
     || fail "task-a checkout or Git administration remains after finish"
-[[ "$(git -C "${REPOSITORY}" rev-parse HEAD)" == "${task_a_head}" &&
-   "$(< "${REPOSITORY}/task-a-result.txt")" == 'completed task A' ]] \
-    || fail "task-a was not integrated into main"
+[[ "$(git -C "${REPOSITORY}" log -1 --format=%s)" == 'Complete task task-a' &&
+   "$(< "${REPOSITORY}/task-a-result.txt")" == 'completed task A' &&
+   "$(< "${REPOSITORY}/local-ignored/credentials")" == 'preserve target ignored content' ]] \
+    || fail "task-a was not integrated without changing ignored target content"
 if git -C "${REPOSITORY}" show-ref --verify --quiet "refs/heads/pi-run/task-a"; then
     fail "task-a branch remains after finish"
 fi
