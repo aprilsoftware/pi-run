@@ -60,6 +60,7 @@ case "${1:-}" in
         [[ -n "${workspace}" ]] || exit 2
         if [[ "${materialize}" == true ]]; then
             [[ -n "${base}" ]] || exit 2
+            [[ "${MATERIALIZE_FAIL:-0}" != 1 ]] || exit 1
             git -C "${workspace}" -c core.hooksPath=/dev/null reset --hard "${base}" >/dev/null
             exit 0
         fi
@@ -161,10 +162,14 @@ run_pi "${REPOSITORY}" --version >/dev/null 2>"${TMP}/direct-after-task.err"
 grep -F "workspace=${REPOSITORY}" "${CAPTURE_PREFIX}.5" >/dev/null \
     || fail "ordinary launch stopped using the direct checkout"
 
-(cd "${TMP}" && run_pi worktree start second-task repository -- --version) \
+(cd "${TMP}" && run_pi worktree start second-task repository --version) \
     >/dev/null 2>"${TMP}/second-task.err"
 [[ "$(jq -r '.repositories[0].tasks | length' "${MACHINE}")" == 2 ]] \
     || fail "second named task was not published"
+SECOND_ID="$(jq -r '.repositories[0].tasks[] | select(.name == "second-task") | .workspaceId' "${MACHINE}")"
+SECOND_PATH="${HOME_DIR}/worktrees/${REPOSITORY_ID}/second-task"
+grep -F -- '--version' "${CAPTURE_PREFIX}.6" >/dev/null \
+    || fail "worktree start did not forward a direct Pi argument"
 
 metadata_before="$(sha256sum "${MACHINE}" "${REGISTRY}")"
 git_before="$(git -C "${REPOSITORY}" worktree list --porcelain | sha256sum)"
@@ -189,12 +194,69 @@ for invalid_name in Uppercase bad/name "$(printf 'a%.0s' {1..64})"; do
         || fail "invalid-task-name diagnostic was unclear"
 done
 
-if run_pi worktree start third-task "${REPOSITORY}" -- -c \
+if run_pi worktree start third-task "${REPOSITORY}" -c \
     >/dev/null 2>"${TMP}/selector.err"; then
-    fail "worktree start accepted a continuation selector"
+    fail "new worktree task accepted a continuation selector"
 fi
-grep -F 'does not accept continuation or resume selectors' "${TMP}/selector.err" >/dev/null \
-    || fail "worktree-start selector diagnostic was unclear"
+grep -F 'new worktree task has no previous conversation' "${TMP}/selector.err" >/dev/null \
+    || fail "new-task continuation diagnostic was unclear"
+[[ "$(jq -r '[.repositories[].tasks[] | select(.name == "third-task")] | length' "${MACHINE}")" == 0 ]] \
+    || fail "refused new-task continuation published task metadata"
+
+archive_task() {
+    local task_name="$1" workspace_id="$2" path="$3"
+    git -C "${REPOSITORY}" worktree remove "${path}"
+    git -C "${REPOSITORY}" branch -d "pi-run/${task_name}" >/dev/null
+    jq --arg id "${workspace_id}" '
+        del(.workspacePaths[] | select(.workspaceId == $id)) |
+        (.repositories[].tasks[] | select(.workspaceId == $id)) |=
+            (.state = "finished" | .finishedAt = "2026-10-22T16:00:00Z")
+    ' "${MACHINE}" > "${MACHINE}.tmp"
+    mv "${MACHINE}.tmp" "${MACHINE}"
+    chmod 0600 "${MACHINE}"
+}
+
+archive_task second-task "${SECOND_ID}" "${SECOND_PATH}"
+metadata_before="$(sha256sum "${MACHINE}" "${REGISTRY}")"
+if MATERIALIZE_FAIL=1 run_pi worktree start second-task "${REPOSITORY}" --version \
+    >/dev/null 2>"${TMP}/restart-failure.err"; then
+    fail "failed finished-task recreation was accepted"
+fi
+grep -F 'materialization failed and its empty state was rolled back' \
+    "${TMP}/restart-failure.err" >/dev/null || fail "restart rollback diagnostic was unclear"
+[[ "$(sha256sum "${MACHINE}" "${REGISTRY}")" == "${metadata_before}" &&
+   ! -e "${SECOND_PATH}" &&
+   ! -e "${REPOSITORY}/.git/worktrees/second-task" ]] \
+    || fail "failed recreation changed archived metadata or left worktree state"
+if git -C "${REPOSITORY}" show-ref --verify --quiet refs/heads/pi-run/second-task; then
+    fail "failed recreation left its local task branch"
+fi
+
+run_pi worktree start second-task "${REPOSITORY}" --version \
+    >/dev/null 2>"${TMP}/second-restart.err"
+[[ "$(jq -r '.repositories[0].tasks[] | select(.name == "second-task") | .workspaceId' \
+        "${MACHINE}")" == "${SECOND_ID}" &&
+   "$(jq -r '.repositories[0].tasks[] | select(.name == "second-task") | .state' \
+        "${MACHINE}")" == active ]] || fail "finished task did not reactivate its workspace identity"
+grep -F 'restarting finished task second-task' "${TMP}/second-restart.err" >/dev/null \
+    || fail "finished-task restart was not reported"
+grep -F -- '--version' "${CAPTURE_PREFIX}.7" >/dev/null \
+    || fail "restarted task did not forward a direct Pi argument"
+
+archive_task first-task "${MANAGED_ID}" "${MANAGED_PATH}"
+mkdir -p "${HOME_DIR}/profiles/default/sessions/${MANAGED_ID}"
+printf '{"type":"session","id":"managed","timestamp":"2026-10-22T15:00:00Z","cwd":"/workspace","version":1}\n' \
+    > "${HOME_DIR}/profiles/default/sessions/${MANAGED_ID}/managed.jsonl"
+run_pi worktree start first-task "${REPOSITORY}" -c \
+    >/dev/null 2>"${TMP}/first-restart.err"
+[[ "$(jq -r '.repositories[0].tasks[] | select(.name == "first-task") | .workspaceId' \
+        "${MACHINE}")" == "${MANAGED_ID}" &&
+   "$(jq -r '.repositories[0].tasks[] | select(.name == "first-task") | .state' \
+        "${MACHINE}")" == active ]] || fail "continued task did not reuse its workspace identity"
+grep -F -- '-c' "${CAPTURE_PREFIX}.8" >/dev/null \
+    || fail "restarted task did not forward continuation selection"
+[[ -f "${HOME_DIR}/profiles/default/sessions/${MANAGED_ID}/managed.jsonl" ]] \
+    || fail "restarting a finished task removed its conversation history"
 
 for removed_flag in --worktree --no-worktree; do
     if run_pi "${removed_flag}" "${REPOSITORY}" >/dev/null 2>"${TMP}/removed-flag.err"; then
@@ -220,7 +282,7 @@ for removed_command in status enable disable; do
 done
 
 run_pi "${NON_GIT}" --version >/dev/null 2>"${TMP}/non-git.err"
-grep -F "workspace=${NON_GIT}" "${CAPTURE_PREFIX}.7" >/dev/null \
+grep -F "workspace=${NON_GIT}" "${CAPTURE_PREFIX}.9" >/dev/null \
     || fail "non-Git directory did not remain a direct workspace"
 
 echo "Worktree direct-default and task-start tests passed"

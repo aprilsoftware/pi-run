@@ -71,14 +71,18 @@ indexes, and working files from one normal non-bare Git repository. They are
 persistent, host-visible source checkouts—not temporary container state and not
 a security boundary.
 
-Create one explicitly named managed task for a selected repository:
+Create or restart one explicitly named managed task for a selected repository:
 
 ```bash
 pi-run worktree start api-refactor .
+pi-run worktree start api-refactor . -c
+pi-run worktree start api-refactor . -r
 ```
 
 The repository argument is required and accepts `.` or another relative or
-absolute repository path. Ordinary launches use the selected checkout directly.
+absolute repository path. Additional Pi arguments follow it directly; a
+standalone `--` separator remains accepted but is unnecessary. Ordinary launches
+use the selected checkout directly.
 Task names begin with a lowercase letter or digit, contain only lowercase
 letters, digits, `.`, `_`, or
 `-`, are at most 63 characters, and are unique within the repository. Separate
@@ -92,7 +96,13 @@ branch `pi-run/<task-name>`, and places the checkout at:
 ```
 
 The task name is the persistent worktree identity. Repository and workspace UUIDs
-remain internal and are not shown by normal startup or task-list output.
+remain internal and are not shown by normal startup or task-list output. Starting
+a finished task recreates its branch and checkout from the selected checkout's
+current committed `HEAD` and reactivates the same workspace identity. Without a
+selector it starts a new conversation; `-c` continues its newest retained
+conversation and `-r` opens Pi's selector. A failed recreation leaves the task
+finished and archived. An active or finishing task with the same name remains a
+refusal.
 
 Attached and detached committed `HEAD` are accepted; an unborn repository is
 not. Dirty source state is allowed, but staged, modified, untracked, and other

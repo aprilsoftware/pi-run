@@ -26,7 +26,7 @@ Usage:
   pi-run [--home <path>] [--profile <name>] skill list
   pi-run [--home <path>] workspace list
   pi-run [--home <path>] workspace link <workspace-id> <path>
-  pi-run [--home <path>] [--profile <name>] worktree start <task-name> <repository> [-- [pi arguments...]]
+  pi-run [--home <path>] [--profile <name>] worktree start <task-name> <repository> [pi arguments...]
   pi-run [--home <path>] [--profile <name>] worktree open <task-name> <repository> [pi arguments...]
   pi-run [--home <path>] worktree finish <task-name>
   pi-run [--home <path>] worktree list [--all]
@@ -541,8 +541,7 @@ case "${COMMAND}" in
                 exit 0
                 ;;
             start)
-                [[ $# -eq 4 || ($# -ge 5 && "${5:-}" == --) ]] || usage
-                [[ "${4:-}" != -* ]] || usage
+                [[ $# -ge 4 && "${4:-}" != -* ]] || usage
                 WORKTREE_TASK_START=true
                 WORKTREE_TASK_NAME="${3:-}"
                 WORKTREE_REPOSITORY_INPUT="${4:-}"
@@ -684,10 +683,10 @@ if [[ "${RESUME_LAUNCH}" == true ]]; then
     EXTRA_PI_ARGS=(--resume)
 elif [[ "${WORKTREE_TASK_START}" == true ]]; then
     WORKSPACE_INPUT="${WORKTREE_REPOSITORY_INPUT}"
-    if (( $# >= 5 )); then
+    if [[ "${5:-}" == -- ]]; then
         EXTRA_PI_ARGS=("${@:6}")
     else
-        EXTRA_PI_ARGS=()
+        EXTRA_PI_ARGS=("${@:5}")
     fi
 elif [[ "${WORKTREE_TASK_OPEN}" == true ]]; then
     WORKSPACE_INPUT="${WORKTREE_REPOSITORY_INPUT}"
@@ -717,8 +716,8 @@ if [[ "${RESUME_LAUNCH}" == false ]]; then
 fi
 USE_MANAGED_WORKTREE=false
 if [[ "${WORKTREE_TASK_START}" == true ]]; then
-    (( CONTINUATION_SELECTOR_COUNT == 0 )) \
-        || fail "worktree start does not accept continuation or resume selectors"
+    (( CONTINUATION_SELECTOR_COUNT <= 1 )) \
+        || fail "worktree start accepts at most one continuation or resume selector"
     USE_MANAGED_WORKTREE=true
 elif [[ "${WORKTREE_TASK_OPEN}" == true ]]; then
     (( CONTINUATION_SELECTOR_COUNT <= 1 )) \
@@ -737,7 +736,15 @@ if [[ "${USE_MANAGED_WORKTREE}" == true ]]; then
     TASK_START_LOCK_ID="$(worktree_task_start_lock_id "${REPOSITORY_ID}" "${MANAGED_WORKTREE_TASK_NAME}")"
     trap 'release_managed_launch_lock || true' EXIT
     acquire_managed_launch_lock "${TASK_START_LOCK_ID}"
-    WORKSPACE_ID="$(new_workspace_id)"
+    START_IDENTITY="$(resolve_managed_task_start_identity \
+        "${REPOSITORY_ID}" "${MANAGED_WORKTREE_TASK_NAME}")"
+    IFS=$'\t' read -r WORKSPACE_ID RESTARTING_FINISHED_TASK <<< "${START_IDENTITY}"
+    if [[ "${RESTARTING_FINISHED_TASK}" == false ]] && (( CONTINUATION_SELECTOR_COUNT > 0 )); then
+        fail "a new worktree task has no previous conversation to continue or resume"
+    fi
+    if [[ "${RESTARTING_FINISHED_TASK}" == true ]]; then
+        echo "pi-run: restarting finished task ${MANAGED_WORKTREE_TASK_NAME}" >&2
+    fi
     CREATED_WORKTREE="$(create_managed_worktree_checkout \
         "${WORKSPACE_ID}" "${MANAGED_WORKTREE_TASK_NAME}" "${SOURCE_WORKSPACE}")"
     IFS=$'\t' read -r CREATED_ID CREATED_REPOSITORY_ID MANAGED_WORKTREE_BRANCH WORKSPACE MANAGED_WORKTREE_BASE \

@@ -107,10 +107,19 @@ with no managed children. Its dynamically sized table contains only `TASK`,
 names, and managed storage paths are omitted from normal output.
 
 Ordinary launches use the selected checkout directly. `worktree start
-<task-name> <repository>` explicitly creates one named managed task from the
-required repository path. The path may be relative or absolute; `.` selects the
-current directory. Additional Pi arguments require a `--` separator. Missing
-paths and duplicate or invalid names fail before Git worktree mutation.
+<task-name> <repository>` explicitly creates or restarts one named managed task
+from the required repository path. The path may be relative or absolute; `.`
+selects the current directory. Additional Pi arguments follow directly; the old
+`--` separator remains optional compatibility. Missing paths and invalid names
+fail before Git worktree mutation, as does the name of an active or finishing
+task.
+
+Starting a finished task reuses its existing workspace identity and retained
+profile conversations while recreating its branch and checkout from the selected
+checkout's current `HEAD`. No selector starts a new conversation, `-c` continues
+the newest retained conversation, and `-r` delegates selection to Pi. A new task
+has no conversation to continue or resume. Failed recreation leaves the finished
+metadata and portable conversation identity unchanged.
 
 Creation accepts a supported non-bare repository with attached or detached
 committed `HEAD` and rejects an unborn repository. Pi-Run resolves `HEAD^{commit}`
@@ -236,10 +245,10 @@ exact `finishing` record after partial cleanup. Missing-active or conflicting
 state fails closed.
 
 The portable workspace registry entry and every profile's conversation files
-remain unchanged as historical records. Finish never fetches, pushes,
-force-deletes, or deletes a remote branch. Finished tasks cannot be opened or
-resumed as live workspaces. Ordinary launch and exit never imply finish or
-integration.
+remain unchanged. Finish never fetches, pushes, force-deletes, or deletes a
+remote branch. A finished task cannot be opened or resumed while its checkout is
+absent; explicit `worktree start` recreates it before a new or retained
+conversation can run. Ordinary launch and exit never imply finish or integration.
 
 ## Resume across workspaces
 

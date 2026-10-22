@@ -1194,6 +1194,54 @@ ensure_worktree_repository_record() {
     printf '%s\n' "${repository_id}"
 }
 
+resolve_managed_task_start_identity() (
+    local repository_id="$1" task_name="$2" machine registry existing_count workspace_id restarting=false
+    local repository_name created display_name
+    [[ "${repository_id}" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] \
+        || fail "invalid managed repository UUID: ${repository_id}"
+    validate_worktree_task_name "${task_name}"
+    machine="$(machine_file)"
+    registry="${PI_RUN_HOME_RESOLVED}/workspaces/registry.json"
+    acquire_workspace_lock
+    validate_worktree_machine_file "${machine}"
+    validate_workspace_metadata "${machine}"
+    [[ "$(jq -r --arg id "${repository_id}" \
+        '[.repositories[] | select(.id == $id)] | length' "${machine}")" == 1 ]] \
+        || fail "managed worktree repository identity is not registered uniquely: ${repository_id}"
+    existing_count="$(jq -r --arg repository "${repository_id}" --arg name "${task_name}" '
+        [.repositories[] | select(.id == $repository) | .tasks[] | select(.name == $name)] | length
+    ' "${machine}")"
+    if [[ "${existing_count}" == 0 ]]; then
+        workspace_id="$(new_workspace_id)"
+    elif [[ "${existing_count}" == 1 ]]; then
+        workspace_id="$(jq -r --arg repository "${repository_id}" --arg name "${task_name}" '
+            .repositories[] | select(.id == $repository) | .tasks[] |
+            select(.name == $name and .state == "finished") | .workspaceId
+        ' "${machine}")"
+        [[ "${workspace_id}" =~ ^[0-9a-f-]{36}$ ]] \
+            || fail "worktree task already exists in this repository: ${task_name}"
+        [[ "$(jq -r --arg id "${workspace_id}" \
+            '[.workspacePaths[] | select(.workspaceId == $id)] | length' "${machine}")" == 0 ]] \
+            || fail "finished worktree task metadata is incomplete: ${task_name}"
+        repository_name="$(jq -r --arg id "${repository_id}" \
+            '.repositories[] | select(.id == $id) | .name' "${machine}")"
+        created="$(jq -r --arg id "${workspace_id}" \
+            '.repositories[].tasks[] | select(.workspaceId == $id) | .createdAt' "${machine}")"
+        display_name="${repository_name}: ${task_name}"
+        jq -e --arg id "${workspace_id}" --arg name "${display_name}" --arg created "${created}" '
+            [.workspaces[] | select(.id == $id)] | .[0] |
+            (keys | sort == ["createdAt","id","kind","name"]) and
+            .name == $name and .kind == "git" and .createdAt == $created
+        ' "${registry}" >/dev/null \
+            || fail "finished worktree task registry metadata is incomplete: ${task_name}"
+        restarting=true
+    else
+        fail "worktree task metadata is ambiguous: ${task_name}"
+    fi
+    release_workspace_lock
+    printf '%s\t%s\n' "${workspace_id}" "${restarting}"
+)
+
 create_managed_worktree_checkout() (
     local workspace_id="$1" task_name="$2" selected="${3:-.}" machine registry record_count task_count repository_id branch base dirty
     local root repository_root worktree admin_dir image pointer="" git_dir output status
@@ -1233,13 +1281,27 @@ create_managed_worktree_checkout() (
     task_count="$(jq -r --arg repository "${repository_id}" --arg name "${task_name}" \
         '[.repositories[] | select(.id == $repository) | .tasks[] | select(.name == $name)] | length' \
         "${machine}")"
-    [[ "${task_count}" == 0 ]] || fail "worktree task already exists in this repository: ${task_name}"
-    [[ "$(jq -r --arg id "${workspace_id}" \
-        '[.workspacePaths[], .repositories[].tasks[] | select(.workspaceId == $id)] | length' \
-        "${machine}")" == 0 ]] || fail "managed workspace UUID already exists in machine metadata: ${workspace_id}"
-    [[ "$(jq -r --arg id "${workspace_id}" \
-        '[.workspaces[] | select(.id == $id)] | length' "${registry}")" == 0 ]] \
-        || fail "managed workspace UUID already exists in the workspace registry: ${workspace_id}"
+    if [[ "${task_count}" == 0 ]]; then
+        [[ "$(jq -r --arg id "${workspace_id}" \
+            '[.workspacePaths[], .repositories[].tasks[] | select(.workspaceId == $id)] | length' \
+            "${machine}")" == 0 ]] \
+            || fail "managed workspace UUID already exists in machine metadata: ${workspace_id}"
+        [[ "$(jq -r --arg id "${workspace_id}" \
+            '[.workspaces[] | select(.id == $id)] | length' "${registry}")" == 0 ]] \
+            || fail "managed workspace UUID already exists in the workspace registry: ${workspace_id}"
+    elif [[ "${task_count}" == 1 ]]; then
+        jq -e --arg repository "${repository_id}" --arg name "${task_name}" --arg id "${workspace_id}" '
+            ([.repositories[] | select(.id == $repository) | .tasks[] |
+                select(.name == $name and .workspaceId == $id and .state == "finished")] | length) == 1 and
+            ([.workspacePaths[] | select(.workspaceId == $id)] | length) == 0
+        ' "${machine}" >/dev/null \
+            || fail "worktree task already exists in this repository: ${task_name}"
+        [[ "$(jq -r --arg id "${workspace_id}" \
+            '[.workspaces[] | select(.id == $id)] | length' "${registry}")" == 1 ]] \
+            || fail "finished worktree task registry metadata is missing: ${task_name}"
+    else
+        fail "worktree task metadata is ambiguous: ${task_name}"
+    fi
 
     branch="pi-run/${task_name}"
     git check-ref-format --branch "${branch}" >/dev/null 2>&1 \
@@ -1403,6 +1465,24 @@ publish_managed_worktree_metadata() (
             .workspacePaths += [{workspaceId:$id,path:$path}] |
             (.repositories[] | select(.id == $repository) | .tasks) +=
                 [{name:$name,workspaceId:$id,branch:$branch,state:"active",createdAt:$created,finishedAt:null}]
+        '
+        validate_worktree_machine_file "${machine}"
+        validate_workspace_metadata "${machine}"
+    elif [[ "${machine_path_count}" == 0 && "${machine_association_count}" == 1 && "${registry_count}" == 1 ]] &&
+         jq -e --arg id "${workspace_id}" --arg repository "${repository_id}" --arg name "${task_name}" \
+            --arg branch "${branch}" '
+            [.repositories[] | select(.id == $repository) | .tasks[] |
+                select(.workspaceId == $id and .name == $name and .branch == $branch and
+                    .state == "finished" and (.finishedAt | type == "string"))] | length == 1
+         ' "${machine}" >/dev/null; then
+        created="$(jq -r --arg id "${workspace_id}" '
+            .repositories[].tasks[] | select(.workspaceId == $id) | .createdAt
+        ' "${machine}")"
+        # shellcheck disable=SC2016 # Dollar-prefixed names are jq variables.
+        update_json "${machine}" --arg id "${workspace_id}" --arg path "${worktree}" '
+            .workspacePaths += [{workspaceId:$id,path:$path}] |
+            (.repositories[].tasks[] | select(.workspaceId == $id)) |=
+                (.state = "active" | .finishedAt = null)
         '
         validate_worktree_machine_file "${machine}"
         validate_workspace_metadata "${machine}"

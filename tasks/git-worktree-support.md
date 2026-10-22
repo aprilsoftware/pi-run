@@ -102,16 +102,19 @@ can be reconstructed on another machine.
 
 Starting a named task must:
 
-1. validate the task name and reject duplicates in the selected repository;
+1. validate the task name and reject an active or finishing duplicate in the
+   selected repository;
 2. validate a supported non-bare Git repository and its common Git directory;
 3. resolve the selected checkout's `HEAD` to one exact commit and inspect its
    working state;
-4. allocate one workspace UUID and preflight its task name, branch, checkout
-   path, Git administration path, and metadata associations;
-5. create the dedicated branch and host-visible worktree at the recorded commit;
-6. publish the workspace registration, path mapping, and task association using
-   the recoverable metadata transaction; and
-7. launch a fresh Pi conversation with that task mounted at `/workspace`.
+4. allocate one workspace UUID for a new task or reuse the exact workspace UUID
+   of one finished task with that name;
+5. preflight the branch, checkout path, Git administration path, registry, and
+   machine associations;
+6. create the dedicated branch and host-visible worktree at the recorded commit;
+7. publish a new association or atomically reactivate the finished association;
+   and
+8. launch a fresh Pi conversation by default.
 
 New branches use the validated form `pi-run/<task-name>`. Managed checkout
 storage is `<Pi-Run home>/worktrees/<repository-id>/<task-name>/`, and Git's
@@ -119,6 +122,15 @@ administration directory is `<common-git-dir>/worktrees/<task-name>/`. The
 workspace UUID is generated once but remains internal. Any collision involving
 the task name, UUID, branch, checkout path, Git administration path, registry,
 or machine metadata fails without silently selecting another identity.
+
+Starting a finished task recreates its branch and checkout from the selected
+checkout's current committed `HEAD`, transitions its existing record back to
+`active`, and retains its profile conversations. Direct trailing Pi arguments do
+not require a `--` separator, though the separator remains accepted. With no
+selector the restarted task opens a new conversation; `-c` continues its newest
+conversation and `-r` delegates selection to Pi. Continuation selectors remain
+invalid for a new task with no prior conversations. Any recreation failure before
+publication leaves the task finished and archived.
 
 `open` resolves exactly one active task by name in the current repository. It
 never creates a branch or checkout. Without a selector it starts another Pi
@@ -135,8 +147,9 @@ named the source context.
 
 Interactive and explicit global `pi-run resume` remain association-driven. A
 selected active task reopens its exact worktree and acquires its launch lock. A
-finished task is historical and cannot be resumed as though its checkout still
-exists. Direct sessions remain direct and are never migrated automatically.
+finished task cannot be resumed while its checkout is absent; explicit
+`worktree start` must first recreate and reactivate it. Direct sessions remain
+direct and are never migrated automatically.
 
 ## Concurrency
 
