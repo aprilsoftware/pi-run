@@ -1056,16 +1056,15 @@ for SKILL in "${GLOBAL_SKILLS[@]}"; do
 done
 
 echo "pi-run: home=${PI_RUN_HOME_RESOLVED}" >&2
-echo "pi-run: profile=${PROFILE} workspace=${WORKSPACE}" >&2
 if [[ "${MANAGED_WORKTREE}" == true ]]; then
-    echo "pi-run: managed-worktree task=${MANAGED_WORKTREE_TASK_NAME}" >&2
-    echo "pi-run: managed-worktree workspace-id=${WORKSPACE_ID}" >&2
+    echo "pi-run: profile=${PROFILE} task=${MANAGED_WORKTREE_TASK_NAME}" >&2
     if [[ "${MANAGED_WORKTREE_CONTINUATION}" == true ]]; then
-        echo "pi-run: managed-worktree branch=${MANAGED_WORKTREE_BRANCH} head=${MANAGED_WORKTREE_BASE}" >&2
+        echo "pi-run: task-head=${MANAGED_WORKTREE_BASE}" >&2
     else
-        echo "pi-run: managed-worktree branch=${MANAGED_WORKTREE_BRANCH} base=${MANAGED_WORKTREE_BASE}" >&2
+        echo "pi-run: task-base=${MANAGED_WORKTREE_BASE}" >&2
     fi
-    echo "pi-run: managed-worktree host=$(sanitize_display "${WORKSPACE}")" >&2
+else
+    echo "pi-run: profile=${PROFILE} workspace=${WORKSPACE}" >&2
 fi
 echo "pi-run: network=${NETWORK_BACKEND}" >&2
 if [[ "${NETWORK_BACKEND}" == docker-restricted ]]; then

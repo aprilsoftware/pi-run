@@ -99,7 +99,9 @@ context. It does not copy conversations or credentials between profiles.
 
 `worktree list` is repository-grouped, deterministically sorted, sanitized for
 terminal display, and inspection-only. It also shows registered repositories
-with no managed children.
+with no managed children. Its dynamically sized table contains only `TASK`,
+`STATE`, `STATUS`, and `CREATED`; repository/workspace UUIDs, internal branch
+names, and managed storage paths are omitted from normal output.
 
 Ordinary launches use the selected checkout directly. `worktree start
 <task-name> <repository>` explicitly creates one named managed task from the
@@ -142,7 +144,9 @@ empty, unchanged state from that invocation; ambiguous state is preserved.
 
 Normal listing excludes `finished` tasks; `worktree list --all` includes them.
 The separate `STATE` column distinguishes `active`, recoverable `finishing`, and
-historical `finished` lifecycle records.
+historical `finished` lifecycle records. Status computation still validates the
+hidden path, identity, Git administration, and branch relationships before
+printing each compact row.
 
 Metadata-level contradictions that cannot be represented safely fail the whole
 command rather than being reduced to a row status. Schema-version-1 machine
@@ -165,6 +169,10 @@ session directory. `-c` and `--continue` delegate newest-conversation continuati
 to Pi in that directory; `-r` and `--resume` delegate task-local transcript
 selection. At most one continuation selector is accepted. No transcript activity
 is used to choose among tasks.
+
+Managed startup identifies the selected profile and task and reports only the
+current task revision. Internal workspace identity, branch, and host path remain
+available to validation logic but are not printed.
 
 Global resume is association-driven. Selecting a managed group reopens its
 immutable recorded path and

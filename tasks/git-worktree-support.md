@@ -126,10 +126,11 @@ for the selected profile, and `-r` delegates selection among that task's
 conversations to Pi. Missing, finished, active elsewhere, or ambiguous task state
 fails before Docker starts.
 
-Every managed launch reports the task name, full workspace identity, sanitized
-branch and generic host path, and current commit. No automatic selection by
-newest transcript occurs across tasks because the user has already named the
-source context.
+Every managed launch reports the selected profile, task name, and current task
+revision. Workspace UUIDs, internal branches, and managed storage paths remain
+validation details and are not part of normal startup output. No automatic
+selection by newest transcript occurs across tasks because the user has already
+named the source context.
 
 Interactive and explicit global `pi-run resume` remain association-driven. A
 selected active task reopens its exact worktree and acquires its launch lock. A
@@ -461,8 +462,9 @@ unavailable, not recreated from guesses.
 The replacement now provides unconditional direct ordinary launches, explicit
 `worktree start <task-name> <repository>`, schema-v3 named task lifecycle records,
 collision-safe isolated materialization, recoverable machine-first publication,
-task reporting, repository-grouped listing, one-active-launch locking, and
-association-driven global resume. Prototype repository preferences, launch flags, unnamed
+name-first task reporting, compact repository-grouped listing, one-active-launch
+locking, and association-driven global resume. Prototype repository preferences,
+launch flags, unnamed
 workspaces, and cross-worktree transcript routing have been removed.
 
 Named `worktree open <task-name> <repository>` supports fresh, `-c`, and `-r`

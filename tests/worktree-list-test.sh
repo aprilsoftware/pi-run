@@ -111,32 +111,46 @@ output="$(cd "${TMP}" && PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" worktree
 output_again="$(cd "${TMP}" && PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" worktree list)"
 output_all="$(cd "${TMP}" && PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" worktree list --all)"
 [[ "${output}" == "${output_again}" ]] || fail "worktree listing was not deterministic"
-[[ "${output}" != *"${ID_FINISHED}"* ]] || fail "normal listing included a finished task"
-finished_line="$(grep -F "${ID_FINISHED}" <<< "${output_all}")"
-[[ "${finished_line}" == *finished* && "${finished_line}" == *archived* && "${finished_line}" == *'  -' ]] \
+row_for() {
+    local task="$1" content="$2"
+    awk -v task="${task}" '$1 == task { print; exit }' <<< "${content}"
+}
+[[ -z "$(row_for finished "${output}")" ]] || fail "normal listing included a finished task"
+finished_line="$(row_for finished "${output_all}")"
+[[ "${finished_line}" == *finished* && "${finished_line}" == *archived* ]] \
     || fail "--all listing omitted finished task history"
 for expected in \
-    "available|${ID_AVAILABLE}|pi-run/available/${ID_AVAILABLE}|available" \
-    "missing|${ID_MISSING}|pi-run/missing/${ID_MISSING}|missing" \
-    "pending|${ID_PENDING}|pi-run/pending/${ID_PENDING}|pending" \
-    "path-conflict|${ID_PATH}|pi-run/path-conflict/${ID_PATH}|path-conflict" \
-    "git-conflict|${ID_GIT}|pi-run/git-conflict/${ID_GIT}|git-conflict" \
-    "unsafe|${ID_UNSAFE}|pi-run/unsafe/${ID_UNSAFE}|unsafe"; do
-    IFS='|' read -r task id branch status <<< "${expected}"
-    line="$(grep -F "${id}" <<< "${output}")"
-    [[ "${line}" == *"${task}"* && "${line}" == *"${branch}"* && "${line}" == *"${status}"* ]] \
+    'available|active|available' \
+    'missing|finishing|missing' \
+    'pending|active|pending' \
+    'path-conflict|active|path-conflict' \
+    'git-conflict|active|git-conflict' \
+    'unsafe|active|unsafe'; do
+    IFS='|' read -r task state status <<< "${expected}"
+    line="$(row_for "${task}" "${output}")"
+    [[ "${line}" == *"${state}"* && "${line}" == *"${status}"* ]] \
         || fail "listing omitted task status row: ${expected}"
 done
-missing_line="$(grep -F "${ID_MISSING}" <<< "${output}")"
-[[ "${missing_line}" == *finishing* && "${missing_line}" == *missing* ]] \
-    || fail "listing omitted interrupted finishing state"
-alpha_line="$(grep -n '^Repository: alpha repository ' <<< "${output}" | cut -d: -f1)"
-zeta_line="$(grep -n '^Repository: zeta repository ' <<< "${output}" | cut -d: -f1)"
+printf -v expected_header '  %-13s  %-10s  %-13s  %s' TASK STATE STATUS CREATED
+grep -Fx "${expected_header}" <<< "${output}" >/dev/null \
+    || fail "worktree list columns were not dynamically aligned"
+for internal in "${ALPHA_REPOSITORY_ID}" "${ID_AVAILABLE}" "${ID_MISSING}" "${ID_PENDING}" \
+    "${ID_PATH}" "${ID_GIT}" "${ID_UNSAFE}" "${ID_FINISHED}" "${ALPHA_ROOT}" 'pi-run/available/'; do
+    if grep -F "${internal}" <<< "${output_all}" >/dev/null; then
+        fail "worktree list exposed internal identity: ${internal}"
+    fi
+done
+if grep -E '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' \
+    <<< "${output_all}" >/dev/null; then
+    fail "worktree list exposed a UUID"
+fi
+alpha_line="$(grep -n '^Repository: alpha repository$' <<< "${output}" | cut -d: -f1)"
+zeta_line="$(grep -n '^Repository: zeta repository$' <<< "${output}" | cut -d: -f1)"
 (( alpha_line < zeta_line )) || fail "repositories were not sorted by name"
 if grep -F 'Preference:' <<< "${output}" >/dev/null; then
     fail "obsolete repository preference was listed"
 fi
-grep -A2 '^Repository: zeta repository ' <<< "${output}" | grep -Fx 'Tasks: none' >/dev/null \
+grep -A2 '^Repository: zeta repository$' <<< "${output}" | grep -Fx 'Tasks: none' >/dev/null \
     || fail "empty repository group was not listed"
 [[ "$(sha256sum "${MACHINE}" "${REGISTRY}")" == "${metadata_before}" &&
    "$({ git -C "${ALPHA}" worktree list --porcelain; git -C "${ALPHA}" show-ref; } | sha256sum)" == "${git_before}" &&

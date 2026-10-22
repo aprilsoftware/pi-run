@@ -142,13 +142,16 @@ jq -e --arg workspace "${WORKSPACE_ID}" '
 [[ -d "${HOME_DIR}/profiles/default/sessions/${WORKSPACE_ID}" ]] \
     || fail "managed launch did not select its own session directory"
 for report in \
-    'managed-worktree task=launch-task' \
-    "managed-worktree workspace-id=${WORKSPACE_ID}" \
-    "managed-worktree branch=${BRANCH} base=${BASE}" \
-    "managed-worktree host=${WORKTREE}" \
-    'selected checkout has uncommitted changes'; do
+    'profile=default task=launch-task' \
+    "task-base=${BASE}" \
+    'selected checkout has uncommitted changes; task launch-task starts at'; do
     grep -F "${report}" "${TMP}/launch.err" >/dev/null \
         || fail "managed launch omitted startup report: ${report}"
+done
+for internal in "${WORKSPACE_ID}" "${BRANCH}" "${WORKTREE}"; do
+    if grep -F "${internal}" "${TMP}/launch.err" >/dev/null; then
+        fail "managed launch exposed internal worktree identity: ${internal}"
+    fi
 done
 if [[ "${LIVE_DOCKER}" != 1 ]]; then
     [[ "$(< "${MAIN_COUNT_FILE}")" == 1 ]] || fail "managed launch did not start Pi exactly once"

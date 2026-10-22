@@ -270,10 +270,14 @@ jq -e --arg id "${WORKSPACE_ID}" '
     || fail "finish changed the registry or conversation history"
 normal_list="$(PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" worktree list)"
 all_list="$(PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" worktree list --all)"
-[[ "${normal_list}" != *"${WORKSPACE_ID}"* ]] || fail "normal listing included a finished task"
-finished_line="$(grep -F "${WORKSPACE_ID}" <<< "${all_list}")"
-[[ "${finished_line}" == *finished* && "${finished_line}" == *archived* && "${finished_line}" == *'  -' ]] \
+[[ -z "$(awk -v task="${TASK_NAME}" '$1 == task { print; exit }' <<< "${normal_list}")" ]] \
+    || fail "normal listing included a finished task"
+finished_line="$(awk -v task="${TASK_NAME}" '$1 == task { print; exit }' <<< "${all_list}")"
+[[ "${finished_line}" == *finished* && "${finished_line}" == *archived* ]] \
     || fail "--all listing omitted finished task state"
+if grep -F "${WORKSPACE_ID}" <<< "${all_list}" >/dev/null; then
+    fail "--all listing exposed the internal workspace identity"
+fi
 if PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" \
     worktree open "${TASK_NAME}" "${REPOSITORY}" \
     >/dev/null 2>"${TMP}/finished-open.err"; then

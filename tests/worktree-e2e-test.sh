@@ -69,10 +69,14 @@ PATH_A="${HOME_DIR}/worktrees/${REPOSITORY_ID}/${ID_A}"
 [[ -s "${TMP}/first.out" ]] \
     || fail "first real runtime launch produced no Pi version output"
 PI_VERSION="$(< "${TMP}/first.out")"
-grep -F "managed-worktree workspace-id=${ID_A}" "${TMP}/first.err" >/dev/null \
-    || fail "first launch did not report its managed workspace"
-grep -F "managed-worktree host=${PATH_A}" "${TMP}/first.err" >/dev/null \
-    || fail "first launch did not report its managed path"
+grep -F 'profile=default task=task-a' "${TMP}/first.err" >/dev/null \
+    || fail "first launch did not report its task name"
+grep -F "task-base=${BASE}" "${TMP}/first.err" >/dev/null \
+    || fail "first launch did not report its task base"
+if grep -F "${ID_A}" "${TMP}/first.err" >/dev/null ||
+   grep -F "${PATH_A}" "${TMP}/first.err" >/dev/null; then
+    fail "first launch exposed internal worktree identity"
+fi
 
 (cd "${REPOSITORY}" && run_pi worktree start task-b . -- --version) \
     >"${TMP}/second.out" 2>"${TMP}/second.err"
@@ -84,8 +88,12 @@ PATH_B="${HOME_DIR}/worktrees/${REPOSITORY_ID}/${ID_B}"
     || fail "managed launches did not receive distinct identities and paths"
 [[ "$(< "${TMP}/second.out")" == "${PI_VERSION}" ]] \
     || fail "second real runtime launch reported inconsistent Pi version output"
-grep -F "managed-worktree workspace-id=${ID_B}" "${TMP}/second.err" >/dev/null \
-    || fail "second launch did not report its managed workspace"
+grep -F 'profile=default task=task-b' "${TMP}/second.err" >/dev/null \
+    || fail "second launch did not report task-b"
+if grep -F "${ID_B}" "${TMP}/second.err" >/dev/null ||
+   grep -F "${PATH_B}" "${TMP}/second.err" >/dev/null; then
+    fail "second launch exposed internal worktree identity"
+fi
 
 for entry in "task-a:${ID_A}:${PATH_A}" "task-b:${ID_B}:${PATH_B}"; do
     task_name="${entry%%:*}"
@@ -116,10 +124,14 @@ git_before_open="$(git -C "${REPOSITORY}" worktree list --porcelain | sha256sum)
     >"${TMP}/open.out" 2>"${TMP}/open.err"
 [[ "$(< "${TMP}/open.out")" == "${PI_VERSION}" ]] \
     || fail "named task open did not execute the same real runtime"
-grep -F 'managed-worktree task=task-a' "${TMP}/open.err" >/dev/null \
+grep -F 'profile=default task=task-a' "${TMP}/open.err" >/dev/null \
     || fail "named task open did not report task-a"
-grep -F "managed-worktree workspace-id=${ID_A}" "${TMP}/open.err" >/dev/null \
-    || fail "named task open did not reuse task-a's workspace"
+grep -F "task-head=${BASE}" "${TMP}/open.err" >/dev/null \
+    || fail "named task open did not report task-a's current revision"
+if grep -F "${ID_A}" "${TMP}/open.err" >/dev/null ||
+   grep -F "${PATH_A}" "${TMP}/open.err" >/dev/null; then
+    fail "named task open exposed internal worktree identity"
+fi
 [[ "$(sha256sum "${MACHINE}" "${REGISTRY}")" == "${metadata_before_open}" &&
    "$(git -C "${REPOSITORY}" worktree list --porcelain | sha256sum)" == "${git_before_open}" ]] \
     || fail "named task open changed metadata or Git worktrees"
@@ -150,15 +162,20 @@ metadata_before_list="$(sha256sum "${MACHINE}" "${REGISTRY}")"
     cd "${TMP}"
     PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" worktree list >"${TMP}/list.out"
 )
-grep -F "Repository: source repository (${REPOSITORY_ID})" "${TMP}/list.out" >/dev/null \
+grep -Fx 'Repository: source repository' "${TMP}/list.out" >/dev/null \
     || fail "worktree list omitted the repository group"
 if grep -F 'Preference:' "${TMP}/list.out" >/dev/null; then
     fail "worktree list reported the obsolete repository preference"
 fi
-for workspace_id in "${ID_A}" "${ID_B}"; do
-    line="$(grep -F "${workspace_id}" "${TMP}/list.out")"
-    [[ "${line}" == *available* ]] \
-        || fail "worktree list did not report ${workspace_id} as available"
+for task_name in task-a task-b; do
+    line="$(awk -v task="${task_name}" '$1 == task { print; exit }' "${TMP}/list.out")"
+    [[ "${line}" == *active* && "${line}" == *available* ]] \
+        || fail "worktree list did not report ${task_name} as available"
+done
+for internal in "${REPOSITORY_ID}" "${ID_A}" "${ID_B}" "${PATH_A}" "${PATH_B}"; do
+    if grep -F "${internal}" "${TMP}/list.out" >/dev/null; then
+        fail "worktree list exposed internal identity: ${internal}"
+    fi
 done
 [[ "$(sha256sum "${MACHINE}" "${REGISTRY}")" == "${metadata_before_list}" ]] \
     || fail "worktree list changed metadata"
@@ -227,14 +244,18 @@ jq -e --arg a "${ID_A}" --arg b "${ID_B}" '
 
 PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" worktree list >"${TMP}/list-after.out"
 PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" worktree list --all >"${TMP}/list-all.out"
-if grep -F "${ID_A}" "${TMP}/list-after.out" >/dev/null; then
-    fail "normal listing retained finished task-a"
-fi
-line_a="$(grep -F "${ID_A}" "${TMP}/list-all.out")"
-line_b="$(grep -F "${ID_B}" "${TMP}/list-after.out")"
+line_a="$(awk '$1 == "task-a" { print; exit }' "${TMP}/list-after.out")"
+[[ -z "${line_a}" ]] || fail "normal listing retained finished task-a"
+line_a="$(awk '$1 == "task-a" { print; exit }' "${TMP}/list-all.out")"
+line_b="$(awk '$1 == "task-b" { print; exit }' "${TMP}/list-after.out")"
 [[ "${line_a}" == *finished* && "${line_a}" == *archived* &&
    "${line_b}" == *active* && "${line_b}" == *available* ]] \
     || fail "task listings do not distinguish finished task-a from active task-b"
+for internal in "${REPOSITORY_ID}" "${ID_A}" "${ID_B}" "${PATH_A}" "${PATH_B}"; do
+    if grep -F "${internal}" "${TMP}/list-all.out" >/dev/null; then
+        fail "historical worktree list exposed internal identity: ${internal}"
+    fi
+done
 if (cd "${REPOSITORY}" && run_pi worktree open task-a . --version) \
     >/dev/null 2>"${TMP}/finished-open.err"; then
     fail "finished task-a was reopened"

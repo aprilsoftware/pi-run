@@ -164,9 +164,12 @@ conversations for that task. Global `pi-run resume` also
 follows the selected workspace's recorded association. One Pi-Run process may
 use a particular managed task at a time, while distinct tasks may run concurrently.
 
-`worktree list` is read-only and reports repository groups plus lifecycle state
-and `available`, `missing`, `pending`, `path-conflict`, `git-conflict`, or
-`unsafe` status. `--all` also shows `finished`/`archived` history.
+Managed startup reports only the selected profile, task name, and current task
+revision. `worktree list` is read-only and uses a compact `TASK`, `STATE`,
+`STATUS`, and `CREATED` table. Normal output omits repository/workspace UUIDs,
+internal branch names, and managed storage paths. Status may be `available`,
+`missing`, `pending`, `path-conflict`, `git-conflict`, or `unsafe`; `--all` also
+shows `finished`/`archived` history.
 
 `worktree finish` is the explicit integration and cleanup workflow. Run it from
 the clean checkout whose attached branch should receive the task. It shows the

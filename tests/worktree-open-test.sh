@@ -136,10 +136,15 @@ for entry in 'fresh|--version|--version ' 'continue|-c| -c ' 'resume|-r| -r '; d
         || fail "${label} open selected the wrong session directory"
     grep -F -- "${expected}" "${CAPTURE_PREFIX}.${count}" >/dev/null \
         || fail "${label} open did not preserve its Pi arguments"
-    grep -F "managed-worktree task=${TASK_NAME}" "${TMP}/${label}.err" >/dev/null \
+    grep -F "profile=default task=${TASK_NAME}" "${TMP}/${label}.err" >/dev/null \
         || fail "${label} open omitted task reporting"
-    grep -F "managed-worktree branch=${BRANCH} head=${HEAD_COMMIT}" "${TMP}/${label}.err" >/dev/null \
-        || fail "${label} open omitted current branch and head reporting"
+    grep -F "task-head=${HEAD_COMMIT}" "${TMP}/${label}.err" >/dev/null \
+        || fail "${label} open omitted current revision reporting"
+    for internal in "${WORKSPACE_ID}" "${BRANCH}" "${WORKTREE}"; do
+        if grep -F "${internal}" "${TMP}/${label}.err" >/dev/null; then
+            fail "${label} open exposed internal identity: ${internal}"
+        fi
+    done
 done
 [[ "$(sha256sum "${MACHINE}" "${REGISTRY}")" == "${metadata_before}" &&
    "$(git -C "${REPOSITORY}" worktree list --porcelain | sha256sum)" == "${git_before}" ]] \

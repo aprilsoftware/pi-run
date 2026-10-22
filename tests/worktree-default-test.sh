@@ -147,8 +147,15 @@ MANAGED_ID="$(jq -r '.repositories[0].tasks[0].workspaceId' "${MACHINE}")"
 MANAGED_PATH="${HOME_DIR}/worktrees/${REPOSITORY_ID}/${MANAGED_ID}"
 grep -F "workspace=${MANAGED_PATH}" "${CAPTURE_PREFIX}.4" >/dev/null \
     || fail "worktree start did not create a managed task workspace"
-grep -F 'managed-worktree task=first-task' "${TMP}/first-task.err" >/dev/null \
+grep -F 'profile=default task=first-task' "${TMP}/first-task.err" >/dev/null \
     || fail "worktree start did not report the task name"
+grep -F "task-base=$(git -C "${MANAGED_PATH}" rev-parse HEAD)" "${TMP}/first-task.err" >/dev/null \
+    || fail "worktree start did not report the task base"
+for internal in "${REPOSITORY_ID}" "${MANAGED_ID}" "${MANAGED_PATH}"; do
+    if grep -F "${internal}" "${TMP}/first-task.err" >/dev/null; then
+        fail "worktree start exposed internal identity: ${internal}"
+    fi
+done
 
 run_pi "${REPOSITORY}" --version >/dev/null 2>"${TMP}/direct-after-task.err"
 grep -F "workspace=${REPOSITORY}" "${CAPTURE_PREFIX}.5" >/dev/null \

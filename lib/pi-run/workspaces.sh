@@ -220,7 +220,7 @@ resolve_worktree_repository() {
 list_managed_worktrees() {
     local include_finished="${1:-false}" machine registry schema repository repository_id name primary common repository_root
     local task task_name task_state workspace_id branch created path expected_path status registry_count admin_dir
-    local actual_common actual_git_dir actual_branch repository_safe path_safe
+    local actual_common actual_git_dir actual_branch repository_safe path_safe task_width task_length
     local -a repositories tasks
     machine="$(machine_file)"
     registry="${PI_RUN_HOME_RESOLVED}/workspaces/registry.json"
@@ -256,7 +256,7 @@ list_managed_worktrees() {
               "$(stat -c %u "${common}")" == "$(id -u)" ]]; then
             repository_safe=true
         fi
-        printf 'Repository: %s (%s)\n' "$(sanitize_display "${name}")" "${repository_id}"
+        printf 'Repository: %s\n' "$(sanitize_display "${name}")"
         printf 'Primary checkout: %s\n' "$(sanitize_display "${primary}")"
         mapfile -t tasks < <(jq -c --argjson include_finished "${include_finished}" '
             [.tasks[] | select($include_finished or .state != "finished")] |
@@ -266,8 +266,14 @@ list_managed_worktrees() {
             printf 'Tasks: none\n\n'
             continue
         fi
-        printf '  %-63s  %-36s  %-107s  %-20s  %-10s  %-13s  %s\n' \
-            TASK 'WORKSPACE ID' BRANCH CREATED STATE STATUS PATH
+        task_width=4
+        for task in "${tasks[@]}"; do
+            task_name="$(jq -r '.name' <<< "${task}")"
+            task_length="${#task_name}"
+            (( task_length <= task_width )) || task_width="${task_length}"
+        done
+        printf '  %-*s  %-10s  %-13s  %s\n' \
+            "${task_width}" TASK STATE STATUS CREATED
         for task in "${tasks[@]}"; do
             task_name="$(jq -r '.name' <<< "${task}")"
             task_state="$(jq -r '.state' <<< "${task}")"
@@ -325,9 +331,9 @@ list_managed_worktrees() {
                     fi
                 fi
             fi
-            printf '  %-63s  %-36s  %-107s  %-20s  %-10s  %-13s  %s\n' \
-                "$(sanitize_display "${task_name}")" "${workspace_id}" "$(sanitize_display "${branch}")" \
-                "${created}" "${task_state}" "${status}" "$(sanitize_display "${path}")"
+            printf '  %-*s  %-10s  %-13s  %s\n' \
+                "${task_width}" "$(sanitize_display "${task_name}")" \
+                "${task_state}" "${status}" "${created}"
         done
         printf '\n'
     done
@@ -1084,8 +1090,8 @@ create_managed_worktree_checkout() (
         -C "${WORKTREE_REPOSITORY_SELECTED_PATH}" status --porcelain --untracked-files=normal)" \
         || fail "could not inspect the selected checkout state"
     if [[ -n "${dirty}" ]]; then
-        printf 'pi-run: selected checkout has uncommitted changes; managed worktree %s starts at %s and excludes them\n' \
-            "${workspace_id}" "${base}" >&2
+        printf 'pi-run: selected checkout has uncommitted changes; task %s starts at %s and excludes them\n' \
+            "$(sanitize_display "${task_name}")" "${base}" >&2
     fi
 
     acquire_workspace_lock

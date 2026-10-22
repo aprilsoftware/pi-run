@@ -121,10 +121,15 @@ grep -F "pointer-content=gitdir: /run/pi-run-git/common/worktrees/${WORKSPACE_ID
 grep -F -- "--session-dir /profile/sessions/${WORKSPACE_ID}" "${CAPTURE_PREFIX}.1" >/dev/null \
     || fail "explicit global resume selected the wrong session directory"
 grep -F -- '--resume' "${CAPTURE_PREFIX}.1" >/dev/null || fail "global resume did not preserve --resume for Pi"
-grep -F "managed-worktree task=${TASK_NAME}" "${TMP}/explicit.err" >/dev/null \
+grep -F "profile=default task=${TASK_NAME}" "${TMP}/explicit.err" >/dev/null \
     || fail "managed global resume omitted task reporting"
-grep -F "managed-worktree branch=${BRANCH} head=${HEAD_COMMIT}" "${TMP}/explicit.err" >/dev/null \
-    || fail "managed global resume omitted branch and head reporting"
+grep -F "task-head=${HEAD_COMMIT}" "${TMP}/explicit.err" >/dev/null \
+    || fail "managed global resume omitted current revision reporting"
+for internal in "${WORKSPACE_ID}" "${BRANCH}" "${WORKTREE}"; do
+    if grep -F "${internal}" "${TMP}/explicit.err" >/dev/null; then
+        fail "managed global resume exposed internal identity: ${internal}"
+    fi
+done
 LOCK="$(grep '^lock=' "${CAPTURE_PREFIX}.1" | cut -d= -f2-)"
 POINTER="$(grep '^pointer=' "${CAPTURE_PREFIX}.1" | cut -d= -f2-)"
 [[ ! -e "${LOCK}" && ! -e "${POINTER}" ]] \

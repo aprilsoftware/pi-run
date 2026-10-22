@@ -84,12 +84,10 @@ letters, digits, `.`, `_`, or
 `-`, are at most 63 characters, and are unique within the repository. Separate
 clones remain separate repository identities even when their remotes match.
 
-A task start records the selected checkout's exact committed `HEAD`, creates
-`pi-run/<task-name>/<workspace-uuid>`, and places the checkout at:
-
-```text
-<Pi-Run home>/worktrees/<repository-id>/<workspace-id>/
-```
+A task start records the selected checkout's exact committed `HEAD` and creates
+one isolated internal branch and checkout associated with the task name. Their
+machine identifiers and storage paths are implementation details and are not
+shown by normal startup or task-list output.
 
 Attached and detached committed `HEAD` are accepted; an unborn repository is
 not. Dirty source state is allowed, but staged, modified, untracked, and other
@@ -113,8 +111,8 @@ worktree, UUID, or metadata record. Global `pi-run resume` also follows a
 selected task's immutable machine association and never reconnects it as an
 ordinary checkout.
 
-Startup reports the task name, managed workspace UUID, branch, current commit,
-and generic host path.
+Startup reports the selected profile, task name, and current task revision. It
+does not print the internal workspace identity, branch name, or storage path.
 
 Only one Pi-Run process may use a managed task at a time. A private machine-local
 ownership lock detects active use and safely recovers only well-formed stale
@@ -127,6 +125,10 @@ Include finished task history with `--all`:
 pi-run worktree list
 pi-run worktree list --all
 ```
+
+The compact, dynamically aligned table reports only `TASK`, `STATE`, `STATUS`,
+and `CREATED`. Repository and workspace UUIDs, internal branches, and managed
+storage paths are intentionally omitted.
 
 Statuses mean:
 
