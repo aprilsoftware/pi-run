@@ -205,7 +205,7 @@ git -C "${REPOSITORY}" checkout -q -- tracked.txt
 rm "${REPOSITORY}/primary-untracked.txt"
 mkdir "${REPOSITORY}/local-ignored"
 printf 'preserve target ignored content\n' > "${REPOSITORY}/local-ignored/credentials"
-[[ -z "$(git -C "${PATH_A}" status --porcelain=v1 --ignored=matching)" &&
+[[ "$(git -C "${PATH_A}" status --porcelain=v1 --ignored=matching)" == '?? task-a-result.txt' &&
    -z "$(git -C "${REPOSITORY}" status --porcelain=v1)" ]] \
     || fail "task-a and its integration checkout could not be prepared for finish"
 [[ "$(git -C "${PATH_B}" diff --cached --name-only)" == workspace-b.txt ]] \
