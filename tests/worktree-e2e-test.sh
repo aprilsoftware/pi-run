@@ -269,13 +269,56 @@ fi
 grep -F 'managed worktree is unavailable' "${TMP}/finished-resume.err" >/dev/null \
     || fail "finished task resume refusal was unclear"
 
+# Explicit start recreates the finished task at current main while retaining its conversation identity.
+restart_head="$(git -C "${REPOSITORY}" rev-parse HEAD)"
+restart_registry="$(sha256sum "${REGISTRY}")"
+restart_session="$(sha256sum "${HOME_DIR}/profiles/default/sessions/${ID_A}/lifecycle.jsonl")"
+(cd "${REPOSITORY}" && run_pi worktree start task-a . -c --version) \
+    >"${TMP}/restart.out" 2>"${TMP}/restart.err"
+[[ "$(< "${TMP}/restart.out")" == "${PI_VERSION}" ]] \
+    || fail "restarted task did not execute the real runtime with direct Pi arguments"
+grep -F 'restarting finished task task-a' "${TMP}/restart.err" >/dev/null \
+    || fail "finished-task recreation was not reported"
+grep -F 'profile=default task=task-a' "${TMP}/restart.err" >/dev/null \
+    || fail "restarted task did not report its task name"
+grep -F "task-base=${restart_head}" "${TMP}/restart.err" >/dev/null \
+    || fail "restarted task did not use the current integration revision"
+if grep -F "${ID_A}" "${TMP}/restart.err" >/dev/null ||
+   grep -F "${PATH_A}" "${TMP}/restart.err" >/dev/null; then
+    fail "restarted task exposed internal worktree identity"
+fi
+[[ -d "${PATH_A}" && "$(git -C "${PATH_A}" branch --show-current)" == pi-run/task-a &&
+   "$(git -C "${PATH_A}" rev-parse HEAD)" == "${restart_head}" &&
+   "$(< "${PATH_A}/task-a-result.txt")" == 'completed task A' &&
+   "$(jq -r --arg a "${ID_A}" \
+        '[.repositories[0].tasks[] | select(.name == "task-a" and .workspaceId == $a and
+            .state == "active" and .finishedAt == null)] | length' "${MACHINE}")" == 1 ]] \
+    || fail "finished task was not recreated with its original identity at current main"
+[[ "$(sha256sum "${REGISTRY}")" == "${restart_registry}" &&
+   "$(sha256sum "${HOME_DIR}/profiles/default/sessions/${ID_A}/lifecycle.jsonl")" == \
+       "${restart_session}" &&
+   "$(jq -r --arg a "${ID_A}" \
+        '[.workspacePaths[] | select(.workspaceId == $a)] | length' "${MACHINE}")" == 1 &&
+   "$(jq -r '[.repositories[0].tasks[] | select(.name == "task-a")] | length' \
+        "${MACHINE}")" == 1 ]] \
+    || fail "finished-task recreation changed portable history or duplicated metadata"
+[[ "$(jq -r --arg b "${ID_B}" \
+        '[.workspacePaths[] | select(.workspaceId == $b)] | length' "${MACHINE}")" == 1 &&
+   -d "${PATH_B}" && "$(git -C "${PATH_B}" diff --cached --name-only)" == workspace-b.txt &&
+   "$(< "${REPOSITORY}/local-ignored/credentials")" == 'preserve target ignored content' ]] \
+    || fail "restarting task-a changed task-b or target-local content"
+PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" worktree list >"${TMP}/list-restarted.out"
+line_a="$(awk '$1 == "task-a" { print; exit }' "${TMP}/list-restarted.out")"
+[[ "${line_a}" == *active* && "${line_a}" == *available* ]] \
+    || fail "normal listing did not show restarted task-a as active and available"
+
 if [[ -d "${HOME_DIR}/worktrees/.launch-locks" ]] &&
    find "${HOME_DIR}/worktrees/.launch-locks" -mindepth 1 -print -quit | grep -q .; then
     fail "completed lifecycle operations retained managed workspace locks"
 fi
-[[ "$(git -C "${REPOSITORY}" worktree list --porcelain | grep -c '^worktree ')" == 2 ]] \
-    || fail "final Git state does not retain exactly the primary and active task-b worktrees"
+[[ "$(git -C "${REPOSITORY}" worktree list --porcelain | grep -c '^worktree ')" == 3 ]] \
+    || fail "final Git state does not retain the primary and both active task worktrees"
 jq -e '.repositories[0] | (has("enabled") or has("managedWorkspaces")) | not' \
     "${MACHINE}" >/dev/null || fail "prototype repository fields remain in task metadata"
 
-echo "Managed worktree real-Docker start/open/finish lifecycle test passed"
+echo "Managed worktree real-Docker start/open/finish/restart lifecycle test passed"
