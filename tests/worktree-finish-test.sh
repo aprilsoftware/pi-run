@@ -98,9 +98,9 @@ setup_case() {
     REPOSITORY_ID="$(register_worktree_repository_fixture "${ROOT}" "${HOME_DIR}" "${REPOSITORY}")"
     MACHINE="${HOME_DIR}/machines/$("${ROOT}/bin/pi-run" machine-id).json"
     REGISTRY="${HOME_DIR}/workspaces/registry.json"
-    WORKTREE="${HOME_DIR}/worktrees/${REPOSITORY_ID}/${WORKSPACE_ID}"
-    BRANCH="pi-run/${TASK_NAME}/${WORKSPACE_ID}"
-    ADMIN="${REPOSITORY}/.git/worktrees/${WORKSPACE_ID}"
+    WORKTREE="${HOME_DIR}/worktrees/${REPOSITORY_ID}/${TASK_NAME}"
+    BRANCH="pi-run/${TASK_NAME}"
+    ADMIN="${REPOSITORY}/.git/worktrees/${TASK_NAME}"
     SESSION_DIR="${HOME_DIR}/profiles/default/sessions/${WORKSPACE_ID}"
     mkdir -p "$(dirname "${WORKTREE}")"
     chmod 0700 "${HOME_DIR}/worktrees" "$(dirname "${WORKTREE}")"
@@ -112,7 +112,7 @@ setup_case() {
             source "${TEST_ROOT}/lib/pi-run/workspaces.sh"
             publish_managed_worktree_metadata \
                 "${TEST_ID}" "${TEST_TASK_NAME}" "${TEST_REPOSITORY}" \
-                "pi-run/${TEST_TASK_NAME}/${TEST_ID}" "${TEST_PATH}" >/dev/null
+                "pi-run/${TEST_TASK_NAME}" "${TEST_PATH}" >/dev/null
         '
     mkdir -p "${SESSION_DIR}"
     printf '{"type":"session","id":"saved","timestamp":"2026-10-20T12:00:00Z","cwd":"/workspace","version":1}\n' \

@@ -70,8 +70,8 @@ case "${1:-}" in
         if [[ -n "${pointer}" ]]; then
             [[ -f "${pointer}" && -n "${common}" ]] || exit 3
             home="${workspace%%/worktrees/*}"
-            id="${workspace##*/}"
-            [[ -f "${home}/worktrees/.launch-locks/${id}/owner.json" ]] || exit 4
+            lock="$(find "${home}/worktrees/.launch-locks" -mindepth 2 -maxdepth 2 -name owner.json -print -quit)"
+            [[ -f "${lock}" ]] || exit 4
         fi
         {
             printf 'workspace=%s\ncommon=%s\npointer=%s\n' "${workspace}" "${common}" "${pointer}"
@@ -144,7 +144,7 @@ run_pi worktree start first-task "${REPOSITORY}" -- --version \
     >/dev/null 2>"${TMP}/first-task.err"
 REPOSITORY_ID="$(jq -r '.repositories[0].id' "${MACHINE}")"
 MANAGED_ID="$(jq -r '.repositories[0].tasks[0].workspaceId' "${MACHINE}")"
-MANAGED_PATH="${HOME_DIR}/worktrees/${REPOSITORY_ID}/${MANAGED_ID}"
+MANAGED_PATH="${HOME_DIR}/worktrees/${REPOSITORY_ID}/first-task"
 grep -F "workspace=${MANAGED_PATH}" "${CAPTURE_PREFIX}.4" >/dev/null \
     || fail "worktree start did not create a managed task workspace"
 grep -F 'profile=default task=first-task' "${TMP}/first-task.err" >/dev/null \

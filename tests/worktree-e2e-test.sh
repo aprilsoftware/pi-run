@@ -64,7 +64,7 @@ REPOSITORY_ID="$(jq -r '.repositories[0].id' "${MACHINE}")"
 [[ "${REPOSITORY_ID}" =~ ^[0-9a-f-]{36}$ ]] \
     || fail "repository metadata does not contain a UUID"
 ID_A="$(jq -r '.repositories[0].tasks[] | select(.name == "task-a") | .workspaceId' "${MACHINE}")"
-PATH_A="${HOME_DIR}/worktrees/${REPOSITORY_ID}/${ID_A}"
+PATH_A="${HOME_DIR}/worktrees/${REPOSITORY_ID}/task-a"
 [[ -d "${PATH_A}" ]] || fail "first default launch did not create its worktree"
 [[ -s "${TMP}/first.out" ]] \
     || fail "first real runtime launch produced no Pi version output"
@@ -83,7 +83,7 @@ fi
 [[ "$(jq -r '.repositories[0].tasks | length' "${MACHINE}")" == 2 ]] \
     || fail "second named task was not created"
 ID_B="$(jq -r '.repositories[0].tasks[] | select(.name == "task-b") | .workspaceId' "${MACHINE}")"
-PATH_B="${HOME_DIR}/worktrees/${REPOSITORY_ID}/${ID_B}"
+PATH_B="${HOME_DIR}/worktrees/${REPOSITORY_ID}/task-b"
 [[ "${ID_A}" != "${ID_B}" && -d "${PATH_B}" ]] \
     || fail "managed launches did not receive distinct identities and paths"
 [[ "$(< "${TMP}/second.out")" == "${PI_VERSION}" ]] \
@@ -100,7 +100,7 @@ for entry in "task-a:${ID_A}:${PATH_A}" "task-b:${ID_B}:${PATH_B}"; do
     remainder="${entry#*:}"
     workspace_id="${remainder%%:*}"
     workspace_path="${remainder#*:}"
-    [[ "$(git -C "${workspace_path}" branch --show-current)" == "pi-run/${task_name}/${workspace_id}" ]] \
+    [[ "$(git -C "${workspace_path}" branch --show-current)" == "pi-run/${task_name}" ]] \
         || fail "managed worktree has the wrong branch: ${workspace_id}"
     [[ "$(git -C "${workspace_path}" rev-parse HEAD)" == "${BASE}" ]] \
         || fail "managed worktree has the wrong base: ${workspace_id}"
@@ -109,7 +109,7 @@ for entry in "task-a:${ID_A}:${PATH_A}" "task-b:${ID_B}:${PATH_B}"; do
         || fail "managed worktree inherited uncommitted primary state: ${workspace_id}"
     [[ -d "${HOME_DIR}/profiles/default/sessions/${workspace_id}" ]] \
         || fail "managed workspace has no profile session directory: ${workspace_id}"
-    grep -Fx "gitdir: ${REPOSITORY}/.git/worktrees/${workspace_id}" \
+    grep -Fx "gitdir: ${REPOSITORY}/.git/worktrees/${task_name}" \
         "${workspace_path}/.git" >/dev/null \
         || fail "managed worktree did not retain its host Git pointer: ${workspace_id}"
 done
@@ -148,7 +148,7 @@ git -C "${PATH_B}" add workspace-b.txt
     || fail "managed worktree files or indexes crossed workspace boundaries"
 
 jq -e --arg a "${ID_A}" --arg b "${ID_B}" '
-    .schemaVersion == 3 and
+    .schemaVersion == 4 and
     ([.repositories[0].tasks[].workspaceId] | sort) == ([$a, $b] | sort) and
     ([.repositories[0].tasks[].name] | sort) == ["task-a","task-b"] and
     ([.workspacePaths[].workspaceId | select(. == $a or . == $b)] | length) == 2
@@ -220,12 +220,12 @@ grep -F 'Integrated into: main' "${TMP}/finish.out" >/dev/null \
 if grep -F "${ID_A}" "${TMP}/finish.out" >/dev/null; then
     fail "successful task finish exposed its internal workspace identity"
 fi
-[[ ! -e "${PATH_A}" && ! -e "${REPOSITORY}/.git/worktrees/${ID_A}" ]] \
+[[ ! -e "${PATH_A}" && ! -e "${REPOSITORY}/.git/worktrees/task-a" ]] \
     || fail "task-a checkout or Git administration remains after finish"
 [[ "$(git -C "${REPOSITORY}" rev-parse HEAD)" == "${task_a_head}" &&
    "$(< "${REPOSITORY}/task-a-result.txt")" == 'completed task A' ]] \
     || fail "task-a was not integrated into main"
-if git -C "${REPOSITORY}" show-ref --verify --quiet "refs/heads/pi-run/task-a/${ID_A}"; then
+if git -C "${REPOSITORY}" show-ref --verify --quiet "refs/heads/pi-run/task-a"; then
     fail "task-a branch remains after finish"
 fi
 [[ "$(sha256sum "${REGISTRY}")" == "${registry_before_finish}" &&

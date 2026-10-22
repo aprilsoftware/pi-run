@@ -47,18 +47,18 @@ chmod 0700 "${HOME_DIR}/worktrees" "${ALPHA_ROOT}"
 path_for() {
     printf '%s/%s\n' "${ALPHA_ROOT}" "$1"
 }
-PATH_AVAILABLE="$(path_for "${ID_AVAILABLE}")"
-PATH_MISSING="$(path_for "${ID_MISSING}")"
-PATH_PENDING="$(path_for "${ID_PENDING}")"
-PATH_GIT="$(path_for "${ID_GIT}")"
-PATH_UNSAFE="$(path_for "${ID_UNSAFE}")"
+PATH_AVAILABLE="$(path_for available)"
+PATH_MISSING="$(path_for missing)"
+PATH_PENDING="$(path_for pending)"
+PATH_GIT="$(path_for git-conflict)"
+PATH_UNSAFE="$(path_for unsafe)"
 PATH_CONFLICT="${TMP}/conflicting path"
 UNSAFE_TARGET="${TMP}/unsafe-target"
 
-git -C "${ALPHA}" worktree add -q -b "pi-run/available/${ID_AVAILABLE}" "${PATH_AVAILABLE}" main
-git -C "${ALPHA}" worktree add -q -b "pi-run/pending/${ID_PENDING}" "${PATH_PENDING}" main
-git -C "${ALPHA}" worktree add -q -b "other/${ID_GIT}" "${PATH_GIT}" main
-git -C "${ALPHA}" worktree add -q -b "pi-run/unsafe/${ID_UNSAFE}" "${UNSAFE_TARGET}" main
+git -C "${ALPHA}" worktree add -q -b 'pi-run/available' "${PATH_AVAILABLE}" main
+git -C "${ALPHA}" worktree add -q -b 'pi-run/pending' "${PATH_PENDING}" main
+git -C "${ALPHA}" worktree add -q -b 'other/git-conflict' "${PATH_GIT}" main
+git -C "${ALPHA}" worktree add -q -b 'pi-run/unsafe' "${UNSAFE_TARGET}" main
 ln -s "${UNSAFE_TARGET}" "${PATH_UNSAFE}"
 
 jq --arg repository "${ALPHA_REPOSITORY_ID}" \
@@ -78,13 +78,13 @@ jq --arg repository "${ALPHA_REPOSITORY_ID}" \
         {workspaceId:$unsafe,path:$unsafePath}
     ] |
     (.repositories[] | select(.id == $repository) | .tasks) += [
-        {name:"unsafe",workspaceId:$unsafe,branch:("pi-run/unsafe/" + $unsafe),state:"active",createdAt:"2026-10-20T12:00:06Z",finishedAt:null},
-        {name:"git-conflict",workspaceId:$git,branch:("pi-run/git-conflict/" + $git),state:"active",createdAt:"2026-10-20T12:00:05Z",finishedAt:null},
-        {name:"path-conflict",workspaceId:$conflict,branch:("pi-run/path-conflict/" + $conflict),state:"active",createdAt:"2026-10-20T12:00:04Z",finishedAt:null},
-        {name:"pending",workspaceId:$pending,branch:("pi-run/pending/" + $pending),state:"active",createdAt:"2026-10-20T12:00:03Z",finishedAt:null},
-        {name:"missing",workspaceId:$missing,branch:("pi-run/missing/" + $missing),state:"finishing",createdAt:"2026-10-20T12:00:02Z",finishedAt:null},
-        {name:"available",workspaceId:$available,branch:("pi-run/available/" + $available),state:"active",createdAt:"2026-10-20T12:00:01Z",finishedAt:null},
-        {name:"finished",workspaceId:$finished,branch:("pi-run/finished/" + $finished),state:"finished",createdAt:"2026-10-20T12:00:07Z",finishedAt:"2026-10-20T13:00:00Z"}
+        {name:"unsafe",workspaceId:$unsafe,branch:"pi-run/unsafe",state:"active",createdAt:"2026-10-20T12:00:06Z",finishedAt:null},
+        {name:"git-conflict",workspaceId:$git,branch:"pi-run/git-conflict",state:"active",createdAt:"2026-10-20T12:00:05Z",finishedAt:null},
+        {name:"path-conflict",workspaceId:$conflict,branch:"pi-run/path-conflict",state:"active",createdAt:"2026-10-20T12:00:04Z",finishedAt:null},
+        {name:"pending",workspaceId:$pending,branch:"pi-run/pending",state:"active",createdAt:"2026-10-20T12:00:03Z",finishedAt:null},
+        {name:"missing",workspaceId:$missing,branch:"pi-run/missing",state:"finishing",createdAt:"2026-10-20T12:00:02Z",finishedAt:null},
+        {name:"available",workspaceId:$available,branch:"pi-run/available",state:"active",createdAt:"2026-10-20T12:00:01Z",finishedAt:null},
+        {name:"finished",workspaceId:$finished,branch:"pi-run/finished",state:"finished",createdAt:"2026-10-20T12:00:07Z",finishedAt:"2026-10-20T13:00:00Z"}
     ]
 ' "${MACHINE}" > "${MACHINE}.tmp"
 mv "${MACHINE}.tmp" "${MACHINE}"
@@ -135,7 +135,7 @@ printf -v expected_header '  %-13s  %-10s  %-13s  %s' TASK STATE STATUS CREATED
 grep -Fx "${expected_header}" <<< "${output}" >/dev/null \
     || fail "worktree list columns were not dynamically aligned"
 for internal in "${ALPHA_REPOSITORY_ID}" "${ID_AVAILABLE}" "${ID_MISSING}" "${ID_PENDING}" \
-    "${ID_PATH}" "${ID_GIT}" "${ID_UNSAFE}" "${ID_FINISHED}" "${ALPHA_ROOT}" 'pi-run/available/'; do
+    "${ID_PATH}" "${ID_GIT}" "${ID_UNSAFE}" "${ID_FINISHED}" "${ALPHA_ROOT}" 'pi-run/available'; do
     if grep -F "${internal}" <<< "${output_all}" >/dev/null; then
         fail "worktree list exposed internal identity: ${internal}"
     fi

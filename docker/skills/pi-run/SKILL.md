@@ -148,14 +148,18 @@ pi-run worktree list --all
 `worktree start` requires a relative or absolute repository path; use `.` for
 the current repository. It creates one explicitly named task, while ordinary
 launches use the selected checkout directly. A managed task begins at
-the selected checkout's exact committed `HEAD` on
-`pi-run/<task-name>/<workspace-uuid>`. Dirty source-checkout changes are reported
-but not copied. Ordinary launch and exit do not stash, commit, clean, reset,
-merge, rebase, push, remove worktrees, or delete branches. Managed checkouts live under:
+the selected checkout's exact committed `HEAD` on `pi-run/<task-name>`. Its
+checkout and Git administration directory both use the task name:
 
 ```text
-<Pi-Run home>/worktrees/<repository-id>/<workspace-id>/
+<Pi-Run home>/worktrees/<repository-id>/<task-name>/
+<repository>/.git/worktrees/<task-name>/
 ```
+
+Dirty source-checkout changes are reported but not copied. Ordinary launch and
+exit do not stash, commit, clean, reset, merge, rebase, push, remove worktrees,
+or delete branches. Repository and workspace UUIDs remain internal identity
+keys.
 
 `worktree open` requires the same explicit repository-path form and reuses
 exactly the named task without creating another checkout. Without a selector it

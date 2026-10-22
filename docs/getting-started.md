@@ -97,10 +97,11 @@ pi-run worktree start api-refactor .
 ```
 
 The repository argument is required; use `.` for the current repository or pass
-another relative or absolute repository path. Pi-Run creates a host-visible
-branch named `pi-run/api-refactor/<workspace-uuid>` under
-`<Pi-Run home>/worktrees/`, starts it at the selected checkout's committed
-`HEAD`, and mounts only that checkout at `/workspace`. Uncommitted and untracked
+another relative or absolute repository path. Pi-Run creates the host-visible
+branch `pi-run/api-refactor` and checkout
+`<Pi-Run home>/worktrees/<repository-id>/api-refactor/`, starts them at the
+selected checkout's committed `HEAD`, and mounts only that checkout at
+`/workspace`. Uncommitted and untracked
 source-checkout changes are reported but are not copied. Pi-Run never stashes,
 commits, resets, or discards them.
 

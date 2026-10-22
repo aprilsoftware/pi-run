@@ -59,8 +59,7 @@ for argument in "$@"; do
 done
 [[ -n "${workspace}" && -n "${common}" && -f "${pointer}" ]] || exit 3
 home="${workspace%%/worktrees/*}"
-workspace_id="${workspace##*/}"
-lock="${home}/worktrees/.launch-locks/${workspace_id}/owner.json"
+lock="$(find "${home}/worktrees/.launch-locks" -mindepth 2 -maxdepth 2 -name owner.json -print -quit)"
 [[ -f "${lock}" ]] || exit 4
 count=0
 [[ ! -f "${COUNT_FILE:?}" ]] || count="$(< "${COUNT_FILE}")"
@@ -86,8 +85,8 @@ HEAD_COMMIT="$(git -C "${REPOSITORY}" rev-parse HEAD)"
 REPOSITORY_ID="$(register_worktree_repository_fixture "${ROOT}" "${HOME_DIR}" "${REPOSITORY}")"
 MACHINE="${HOME_DIR}/machines/$("${ROOT}/bin/pi-run" machine-id).json"
 REGISTRY="${HOME_DIR}/workspaces/registry.json"
-WORKTREE="${HOME_DIR}/worktrees/${REPOSITORY_ID}/${WORKSPACE_ID}"
-BRANCH="pi-run/${TASK_NAME}/${WORKSPACE_ID}"
+WORKTREE="${HOME_DIR}/worktrees/${REPOSITORY_ID}/${TASK_NAME}"
+BRANCH="pi-run/${TASK_NAME}"
 mkdir -p "$(dirname "${WORKTREE}")"
 chmod 0700 "${HOME_DIR}/worktrees" "$(dirname "${WORKTREE}")"
 git -C "${REPOSITORY}" worktree add -q -b "${BRANCH}" "${WORKTREE}" main
@@ -98,7 +97,7 @@ TEST_ROOT="${ROOT}" TEST_HOME="${HOME_DIR}" TEST_REPOSITORY="${REPOSITORY_ID}" \
         source "${TEST_ROOT}/lib/pi-run/workspaces.sh"
         publish_managed_worktree_metadata \
             "${TEST_ID}" "${TEST_TASK_NAME}" "${TEST_REPOSITORY}" \
-            "pi-run/${TEST_TASK_NAME}/${TEST_ID}" "${TEST_PATH}" >/dev/null
+            "pi-run/${TEST_TASK_NAME}" "${TEST_PATH}" >/dev/null
     '
 SESSION_DIR="${HOME_DIR}/profiles/default/sessions/${WORKSPACE_ID}"
 mkdir -p "${SESSION_DIR}"

@@ -46,11 +46,14 @@ concrete paths remain in `workspacePaths`.
 Managed checkout content lives at:
 
 ```text
-<Pi-Run home>/worktrees/<repository-id>/<workspace-id>/
+<Pi-Run home>/worktrees/<repository-id>/<task-name>/
 ```
 
-Git's linked-worktree administration remains under the repository's common Git
-directory. Machine repository associations, managed paths, and checkout content
+Its branch is `pi-run/<task-name>` and Git's linked-worktree administration uses
+the task name under the repository's common Git directory. Repository and
+workspace UUIDs remain internal identity keys.
+
+Machine repository associations, managed paths, and checkout content
 are excluded from snapshots. The portable registry contains no remote URL,
 source content, or reconstruction instructions.
 
@@ -115,8 +118,9 @@ before creation and reports dirty source state as excluded. It allocates one UUI
 and strictly preflights the branch, worktree path, Git administration path, and
 metadata. Collisions fail instead of selecting another identity.
 
-The branch is `pi-run/<task-name>/<workspace-uuid>`. Pi-Run first runs `git
-worktree add --no-checkout` on the host, then materializes the recorded commit in
+The branch is `pi-run/<task-name>`, and both the checkout and linked-worktree
+administration directory use `<task-name>` as their final component. Pi-Run first
+runs `git worktree add --no-checkout` on the host, then materializes the recorded commit in
 a temporary version-matched runtime container. Materialization uses `--pull never`, network
 none, the host UID/GID, a read-only root, dropped capabilities,
 no-new-privileges, checkout hooks disabled, and no profile, credential, shared,
@@ -151,9 +155,9 @@ printing each compact row.
 Metadata-level contradictions that cannot be represented safely fail the whole
 command rather than being reduced to a row status. Schema-version-1 machine
 metadata is listed as having no managed repositories without migration. Task
-creation migrates valid public schema-version-1 metadata atomically to version 3.
-Withdrawn v0.8 schema-version-2 metadata is never migrated and reports that
-one-time cleanup is required.
+creation migrates valid public schema-version-1 metadata atomically to version 4.
+Withdrawn schema-version-2 metadata and v0.8.3 schema-version-3 task metadata are
+never migrated and report that one-time cleanup is required.
 
 ## Managed continuation and locking
 

@@ -60,15 +60,16 @@ is neither a repository default nor an automatic consequence of starting Pi.
 Existing direct sessions remain direct, and ordinary launches never migrate
 between direct and managed source contexts.
 
-Startup and listing report editor-neutral facts only: task name, full workspace
-UUID, branch, generic host path, and relevant state. Pi-Run does not launch,
-configure, or print commands for a particular editor.
+Startup and listing report editor-neutral, task-oriented facts without exposing
+repository or workspace UUIDs. Pi-Run does not launch, configure, or print
+commands for a particular editor.
 
 ## Identity model
 
-The current workspace UUID remains the identity of one concrete writable
-directory. Every task receives one workspace UUID, one worktree, one branch, and
-one profile-scoped session directory per profile.
+The task name is the persistent human identity of one managed worktree and
+branch. Every task also receives one internal workspace UUID for portable
+conversation/session identity and one profile-scoped session directory per
+profile.
 
 ```text
 repository identity
@@ -112,12 +113,12 @@ Starting a named task must:
    the recoverable metadata transaction; and
 7. launch a fresh Pi conversation with that task mounted at `/workspace`.
 
-New branches use a meaningful validated form such as
-`pi-run/<task-name>/<workspace-uuid>`. Managed checkout storage remains
-`<Pi-Run home>/worktrees/<repository-id>/<workspace-id>/`. The UUID is generated
-once. Any collision involving the task name, UUID, branch, checkout path, Git
-administration path, registry, or machine metadata fails without silently
-selecting another identity.
+New branches use the validated form `pi-run/<task-name>`. Managed checkout
+storage is `<Pi-Run home>/worktrees/<repository-id>/<task-name>/`, and Git's
+administration directory is `<common-git-dir>/worktrees/<task-name>/`. The
+workspace UUID is generated once but remains internal. Any collision involving
+the task name, UUID, branch, checkout path, Git administration path, registry,
+or machine metadata fails without silently selecting another identity.
 
 `open` resolves exactly one active task by name in the current repository. It
 never creates a branch or checkout. Without a selector it starts another Pi
@@ -263,11 +264,12 @@ future work.
 Managed worktree checkouts live under a private machine-local root:
 
 ```text
-<Pi-Run home>/worktrees/<repository-id>/<workspace-id>/
+<Pi-Run home>/worktrees/<repository-id>/<task-name>/
 ```
 
-Repository and workspace IDs are complete lowercase UUIDs. The root and its
-managed descendants must be ordinary non-symlink directories owned by the host
+Repository IDs are complete lowercase UUIDs; validated task names form the
+human-readable checkout component. The root and its managed descendants must be
+ordinary non-symlink directories owned by the host
 user. Creation uses private permissions and refuses existing, linked, special,
 or ambiguously mapped paths. The location remains inspectable from the host and
 supports ordinary Git commands; worktree content is not container-only or
@@ -291,11 +293,11 @@ from restored names, remotes, or paths.
 
 ## Machine-local metadata
 
-The task-oriented machine file uses schema version 3:
+The task-oriented machine file uses schema version 4:
 
 ```json
 {
-  "schemaVersion": 3,
+  "schemaVersion": 4,
   "machineId": "<machine-id>",
   "snapshotAuto": {"onSessionExit": true},
   "workspacePaths": [
@@ -312,7 +314,7 @@ The task-oriented machine file uses schema version 3:
         {
           "name": "<task-name>",
           "workspaceId": "<workspace-uuid>",
-          "branch": "pi-run/<task-name>/<workspace-uuid>",
+          "branch": "pi-run/<task-name>",
           "state": "active",
           "createdAt": "<UTC-timestamp>",
           "finishedAt": null
@@ -331,8 +333,9 @@ exact path mapping and a null `finishedAt`; `finished` tasks require a timestamp
 and no path mapping. No source content, remote URL, credential, commit contents,
 Git configuration, or editor state enters the machine file.
 
-Repository IDs, workspace IDs, branches, canonical common Git directories, and
-task names within each repository are unique. Task names and branch names are
+Repository IDs, workspace IDs, and canonical common Git directories are unique
+machine-wide. Task and branch names are unique within each repository. Task
+names and branch names are
 validated before use; display text is sanitized; paths are canonical absolute
 host paths and are never interpreted as authorization to mount an unrelated
 target.
@@ -340,22 +343,18 @@ target.
 When task creation first needs a schema-version-1 machine file, Pi-Run performs
 a locked atomic migration that preserves `machineId`, `workspacePaths`, and
 optional `snapshotAuto`, adds an empty `repositories` array, writes schema
-version 3, and publishes the replacement only after complete validation.
+version 4, and publishes the replacement only after complete validation.
 Invalid, linked, hard-linked, unexpectedly permissive, or unsupported machine
 files fail without partial migration.
 
-The task-oriented replacement does not migrate this prerelease schema. v0.8.0
-and v0.8.1 are unsupported prototype upgrade sources, and their prerelease
-artifacts are to be withdrawn. Before installing the replacement, the operator
-performs a one-time inspected cleanup: remove clean linked worktrees through Git,
-optionally delete their branches, remove their registry and profile-session
-records, then remove the prototype machine file and managed-worktree root. Exact
-commands must be derived from the machine's validated metadata so direct
-workspaces, sessions, and unrelated repositories are not selected accidentally.
-
-The replacement initializes its task metadata from clean state. Encountering
-prototype metadata fails closed with a cleanup-required error; Pi-Run does not
-ship permanent compatibility or schema-migration code for withdrawn prereleases.
+The name-based layout does not migrate older managed-task schemas. Withdrawn
+schema version 2 and v0.8.3 schema version 3 both fail closed with an explicit
+cleanup-required error. Ordinary direct workspace inspection remains available
+when it can be separated safely. Before using name-based tasks, the operator
+performs a one-time inspected cleanup derived from validated local metadata so
+direct workspaces, sessions, and unrelated repositories are not selected
+accidentally. Pi-Run does not ship permanent branch/path compatibility or
+automatic rename logic.
 
 Machine files and the managed worktree root remain excluded from portable
 snapshots. The portable workspace registry schema does not need to change for
@@ -460,7 +459,7 @@ unavailable, not recreated from guesses.
 ## Task-oriented implementation status
 
 The replacement now provides unconditional direct ordinary launches, explicit
-`worktree start <task-name> <repository>`, schema-v3 named task lifecycle records,
+`worktree start <task-name> <repository>`, schema-v4 named task lifecycle records,
 collision-safe isolated materialization, recoverable machine-first publication,
 name-first task reporting, compact repository-grouped listing, one-active-launch
 locking, and association-driven global resume. Prototype repository preferences,

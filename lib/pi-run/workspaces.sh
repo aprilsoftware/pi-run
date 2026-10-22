@@ -57,39 +57,48 @@ validate_workspace_metadata() {
         def snapshot_auto:
             type == "object" and
             ((.onSessionExit // false) | type == "boolean");
-        def task:
-            (keys | sort == ["branch", "createdAt", "finishedAt", "name", "state", "workspaceId"]) and
-            (.name | task_name) and (.workspaceId | uuid) and
-            .branch == ("pi-run/" + .name + "/" + .workspaceId) and
+        def task_lifecycle:
             (.createdAt | timestamp) and
             ((.state == "active" and .finishedAt == null) or
              (.state == "finishing" and .finishedAt == null) or
              (.state == "finished" and (.finishedAt | timestamp)));
-        def repository:
+        def task_v3:
+            (keys | sort == ["branch", "createdAt", "finishedAt", "name", "state", "workspaceId"]) and
+            (.name | task_name) and (.workspaceId | uuid) and
+            .branch == ("pi-run/" + .name + "/" + .workspaceId) and task_lifecycle;
+        def task_v4:
+            (keys | sort == ["branch", "createdAt", "finishedAt", "name", "state", "workspaceId"]) and
+            (.name | task_name) and (.workspaceId | uuid) and
+            .branch == ("pi-run/" + .name) and task_lifecycle;
+        def repository_common:
             (keys | sort == ["commonGitDir", "createdAt", "id", "name", "primaryPath", "tasks"]) and
             (.id | uuid) and
             (.name | type == "string" and length > 0 and length <= 255 and test("^[^\\x00-\\x1f\\x7f]+$")) and
             (.commonGitDir | host_path) and (.primaryPath | host_path) and (.createdAt | timestamp) and
-            (.tasks | type == "array") and all(.tasks[]; task) and
-            ([.tasks[].name] | length == (unique | length));
+            (.tasks | type == "array") and
+            ([.tasks[].name] | length == (unique | length)) and
+            ([.tasks[].branch] | length == (unique | length));
+        def repository_v3: repository_common and all(.tasks[]; task_v3);
+        def repository_v4: repository_common and all(.tasks[]; task_v4);
         if .schemaVersion == 1 then
             (.machineId | type == "string") and
             (.workspacePaths | type == "array") and
             all(.workspacePaths[];
                 (.workspaceId | type == "string") and (.path | type == "string"))
         else
-            .schemaVersion == 3 and
+            (.schemaVersion == 3 or .schemaVersion == 4) and
             ((keys - ["snapshotAuto"]) | sort == ["machineId", "repositories", "schemaVersion", "workspacePaths"]) and
             ((.snapshotAuto // {}) | snapshot_auto) and
             (.machineId | type == "string" and test("^[0-9a-f]{16}$")) and
             (.workspacePaths | type == "array") and all(.workspacePaths[]; workspace_path) and
             ([.workspacePaths[].workspaceId] | length == (unique | length)) and
             ([.workspacePaths[].path] | length == (unique | length)) and
-            (.repositories | type == "array") and all(.repositories[]; repository) and
+            (.repositories | type == "array") and
+            (if .schemaVersion == 3 then all(.repositories[]; repository_v3)
+             else all(.repositories[]; repository_v4) end) and
             ([.repositories[].id] | length == (unique | length)) and
             ([.repositories[].commonGitDir] | length == (unique | length)) and
             ([.repositories[].tasks[].workspaceId] | length == (unique | length)) and
-            ([.repositories[].tasks[].branch] | length == (unique | length)) and
             ([.workspacePaths[].workspaceId] as $mapped |
                 all(.repositories[].tasks[];
                     .workspaceId as $id |
@@ -148,12 +157,14 @@ ensure_worktree_machine_metadata() {
     schema="$(jq -r '.schemaVersion' "${machine}")"
     if [[ "${schema}" == 1 ]]; then
         validate_worktree_machine_v1_migration "${machine}"
-        update_json "${machine}" '.schemaVersion = 3 | .repositories = []'
+        update_json "${machine}" '.schemaVersion = 4 | .repositories = []'
         validate_worktree_machine_file "${machine}"
         validate_workspace_metadata "${machine}"
     elif [[ "${schema}" == 2 ]]; then
         fail "withdrawn v0.8 worktree metadata requires cleanup before using this release"
-    elif [[ "${schema}" != 3 ]]; then
+    elif [[ "${schema}" == 3 ]]; then
+        fail "v0.8.3 worktree metadata requires cleanup before using name-based tasks"
+    elif [[ "${schema}" != 4 ]]; then
         fail "unsupported worktree machine metadata schema: ${machine}"
     fi
     release_workspace_lock
@@ -231,7 +242,10 @@ list_managed_worktrees() {
     if [[ "${schema}" == 1 ]]; then
         printf 'No managed repositories registered.\n'
         return 0
+    elif [[ "${schema}" == 3 ]]; then
+        fail "v0.8.3 worktree metadata requires cleanup before using name-based tasks"
     fi
+    [[ "${schema}" == 4 ]] || fail "unsupported worktree machine metadata schema: ${machine}"
 
     acquire_workspace_lock
     validate_worktree_machine_file "${machine}"
@@ -282,7 +296,7 @@ list_managed_worktrees() {
             created="$(jq -r '.createdAt' <<< "${task}")"
             path="$(jq -r --arg id "${workspace_id}" \
                 '[.workspacePaths[] | select(.workspaceId == $id)] | .[0].path // "-"' "${machine}")"
-            expected_path="${repository_root}/${workspace_id}"
+            expected_path="${repository_root}/${task_name}"
             registry_count="$(jq -r --arg id "${workspace_id}" \
                 '[.workspaces[] | select(.id == $id)] | length' "${registry}")"
             status=available
@@ -313,7 +327,7 @@ list_managed_worktrees() {
                 if [[ "${path_safe}" == false ]]; then
                     status=unsafe
                 else
-                    admin_dir="${common}/worktrees/${workspace_id}"
+                    admin_dir="${common}/worktrees/${task_name}"
                     if [[ ! -d "${admin_dir}" || -L "${admin_dir}" ||
                           "$(stat -c %u "${admin_dir}" 2>/dev/null)" != "$(id -u)" ||
                           ! -f "${path}/.git" || -L "${path}/.git" ||
@@ -465,18 +479,22 @@ release_managed_launch_lock() {
 }
 
 managed_workspace_association_exists() {
-    local workspace_id="$1" machine count
+    local workspace_id="$1" machine schema count
     machine="$(machine_file)"
     [[ -f "${machine}" ]] || return 1
     acquire_workspace_lock
     validate_worktree_machine_file "${machine}"
     validate_workspace_metadata "${machine}"
-    if [[ "$(jq -r '.schemaVersion' "${machine}")" != 3 ]]; then
+    schema="$(jq -r '.schemaVersion' "${machine}")"
+    count="$(jq -r --arg id "${workspace_id}" \
+        '[.repositories[]?.tasks[]? | select(.workspaceId == $id)] | length' "${machine}")"
+    if [[ "${schema}" == 3 && "${count}" != 0 ]]; then
+        release_workspace_lock
+        fail "v0.8.3 worktree metadata requires cleanup before using name-based tasks"
+    elif [[ "${schema}" != 4 ]]; then
         release_workspace_lock
         return 1
     fi
-    count="$(jq -r --arg id "${workspace_id}" \
-        '[.repositories[].tasks[] | select(.workspaceId == $id)] | length' "${machine}")"
     release_workspace_lock
     [[ "${count}" == 0 ]] && return 1
     [[ "${count}" == 1 ]] || fail "managed workspace association is ambiguous: ${workspace_id}"
@@ -523,7 +541,9 @@ resolve_named_managed_task() (
     validate_worktree_machine_file "${machine}"
     validate_workspace_metadata "${machine}"
     schema="$(jq -r '.schemaVersion' "${machine}")"
-    [[ "${schema}" == 3 ]] \
+    [[ "${schema}" != 3 ]] \
+        || fail "v0.8.3 worktree metadata requires cleanup before using name-based tasks"
+    [[ "${schema}" == 4 ]] \
         || fail "no named worktree tasks are registered for this repository"
     repository_count="$(jq -r --arg common "${WORKTREE_REPOSITORY_COMMON_DIR}" \
         '[.repositories[] | select(.commonGitDir == $common)] | length' "${machine}")"
@@ -560,7 +580,9 @@ resolve_managed_task_for_finish() (
     validate_worktree_machine_file "${machine}"
     validate_workspace_metadata "${machine}"
     schema="$(jq -r '.schemaVersion' "${machine}")"
-    [[ "${schema}" == 3 ]] || fail "no named worktree tasks are registered for this repository"
+    [[ "${schema}" != 3 ]] \
+        || fail "v0.8.3 worktree metadata requires cleanup before using name-based tasks"
+    [[ "${schema}" == 4 ]] || fail "no named worktree tasks are registered for this repository"
     repository_count="$(jq -r --arg common "${WORKTREE_REPOSITORY_COMMON_DIR}" \
         '[.repositories[] | select(.commonGitDir == $common)] | length' "${machine}")"
     [[ "${repository_count}" == 1 ]] \
@@ -593,7 +615,7 @@ resolve_managed_task_for_finish() (
         || fail "worktree task has unsupported lifecycle state: ${task_name}"
     root="${PI_RUN_HOME_RESOLVED}/worktrees"
     repository_root="${root}/${repository_id}"
-    expected_path="${repository_root}/${workspace_id}"
+    expected_path="${repository_root}/${task_name}"
     [[ -d "${root}" && ! -L "${root}" && "$(realpath "${root}")" == "${root}" &&
        "$(stat -c %u "${root}")" == "$(id -u)" && "$(stat -c %a "${root}")" == 700 &&
        -d "${repository_root}" && ! -L "${repository_root}" &&
@@ -633,7 +655,7 @@ resolve_managed_task_for_finish() (
             || fail "managed finish target Git administration is unsafe"
     fi
 
-    admin_dir="${common}/worktrees/${workspace_id}"
+    admin_dir="${common}/worktrees/${task_name}"
     if [[ ! -e "${path}" && ! -L "${path}" && ! -e "${admin_dir}" && ! -L "${admin_dir}" ]]; then
         [[ "${task_state}" == finishing ]] \
             || fail "managed finish checkout is missing: ${path}"
@@ -663,14 +685,14 @@ resolve_managed_task_for_finish() (
 )
 
 inspect_managed_task_finish_clean() (
-    local workspace_id="$1" path="$2" common="$3" image pointer output status
+    local workspace_id="$1" path="$2" common="$3" task_name="$4" image pointer output status
     command -v docker >/dev/null 2>&1 || fail "docker is required for managed worktree finish inspection"
     image="${PI_RUN_IMAGE:-${DEFAULT_IMAGE}}"
     docker image inspect "${image}" >/dev/null 2>&1 \
         || fail "runtime image is unavailable locally: ${image}"
     pointer="$(mktemp "${PI_RUN_HOME_RESOLVED}/worktrees/.finish-git-${workspace_id}.XXXXXX")"
     trap 'rm -f "${pointer}"' EXIT
-    printf 'gitdir: /run/pi-run-git/common/worktrees/%s\n' "${workspace_id}" > "${pointer}"
+    printf 'gitdir: /run/pi-run-git/common/worktrees/%s\n' "${task_name}" > "${pointer}"
     chmod 0600 "${pointer}"
     set +e
     output="$(docker run --rm --pull never --network none --cap-drop ALL \
@@ -880,7 +902,7 @@ finish_managed_worktree_task() (
        "${source_head}" == "${current_source_head}" ]] \
         || fail "managed task or target changed while acquiring its finish lock: ${task_name}"
     task_state="${current_state}"
-    admin_dir="${common}/worktrees/${workspace_id}"
+    admin_dir="${common}/worktrees/${task_name}"
     if [[ -n "${source_head}" ]]; then
         commits="$(git -C "${target}" rev-list --count "${target_head}..${source_head}")" \
             || fail "could not compare task and target history"
@@ -897,7 +919,7 @@ finish_managed_worktree_task() (
     fi
 
     if [[ -e "${path}" || -L "${path}" ]]; then
-        inspect_managed_task_finish_clean "${workspace_id}" "${path}" "${common}"
+        inspect_managed_task_finish_clean "${workspace_id}" "${path}" "${common}" "${task_name}"
         inspect_managed_finish_target_clean \
             "${target}" "${common}" "${target_git_dir}" "${target_branch}" "${target_head}"
         if (( commits > 0 )); then
@@ -912,7 +934,7 @@ finish_managed_worktree_task() (
                 "${branch}" "${source_head}" "${user_name}" "${user_email}" "${task_name}"
             target_head="$(git -C "${target}" rev-parse --verify 'HEAD^{commit}')"
         fi
-        inspect_managed_task_finish_clean "${workspace_id}" "${path}" "${common}"
+        inspect_managed_task_finish_clean "${workspace_id}" "${path}" "${common}" "${task_name}"
         inspect_managed_finish_target_clean \
             "${target}" "${common}" "${target_git_dir}" "${target_branch}" "${target_head}"
         git -C "${target}" merge-base --is-ancestor "${source_head}" "${target_head}" \
@@ -950,7 +972,7 @@ RESOLVED_MANAGED_COMMON_DIR=""
 RESOLVED_MANAGED_HEAD=""
 
 resolve_managed_workspace_launch() {
-    local workspace_id="$1" worktree="$2" machine registry association_count repository_id task_name task_state branch mapped_path
+    local workspace_id="$1" worktree="$2" machine registry schema association_count repository_id task_name task_state branch mapped_path
     local common primary expected_path admin_dir registry_count actual_common actual_git_dir actual_branch
     RESOLVED_MANAGED_TASK_NAME=""
     RESOLVED_MANAGED_BRANCH=""
@@ -963,12 +985,16 @@ resolve_managed_workspace_launch() {
     acquire_workspace_lock
     validate_worktree_machine_file "${machine}"
     validate_workspace_metadata "${machine}"
-    if [[ "$(jq -r '.schemaVersion' "${machine}")" != 3 ]]; then
+    schema="$(jq -r '.schemaVersion' "${machine}")"
+    association_count="$(jq -r --arg id "${workspace_id}" \
+        '[.repositories[]?.tasks[]? | select(.workspaceId == $id)] | length' "${machine}")"
+    if [[ "${schema}" == 3 && "${association_count}" != 0 ]]; then
+        release_workspace_lock
+        fail "v0.8.3 worktree metadata requires cleanup before using name-based tasks"
+    elif [[ "${schema}" != 4 ]]; then
         release_workspace_lock
         return 1
     fi
-    association_count="$(jq -r --arg id "${workspace_id}" \
-        '[.repositories[].tasks[] | select(.workspaceId == $id)] | length' "${machine}")"
     if [[ "${association_count}" == 0 ]]; then
         release_workspace_lock
         return 1
@@ -996,9 +1022,9 @@ resolve_managed_workspace_launch() {
     validate_worktree_task_name "${task_name}"
     [[ "${task_state}" == active ]] \
         || fail "managed worktree task is not active: ${task_name}"
-    [[ "${branch}" == "pi-run/${task_name}/${workspace_id}" ]] \
+    [[ "${branch}" == "pi-run/${task_name}" ]] \
         || fail "managed resume branch metadata conflicts with its task identity: ${workspace_id}"
-    expected_path="${PI_RUN_HOME_RESOLVED}/worktrees/${repository_id}/${workspace_id}"
+    expected_path="${PI_RUN_HOME_RESOLVED}/worktrees/${repository_id}/${task_name}"
     [[ "${mapped_path}" == "${expected_path}" && "${worktree}" == "${expected_path}" ]] \
         || fail "managed resume path conflicts with its workspace identity: ${workspace_id}"
     [[ "${registry_count}" == 1 &&
@@ -1012,7 +1038,7 @@ resolve_managed_workspace_launch() {
        "${common}" == "${primary}/.git" && "$(stat -c %u "${common}")" == "$(id -u)" &&
        "$(stat -c %u "${primary}")" == "$(id -u)" ]] \
         || fail "managed resume repository paths are missing or unsafe"
-    admin_dir="${common}/worktrees/${workspace_id}"
+    admin_dir="${common}/worktrees/${task_name}"
     [[ -d "${admin_dir}" && ! -L "${admin_dir}" && -f "${worktree}/.git" && ! -L "${worktree}/.git" ]] \
         || fail "managed resume Git administration is missing or unsafe: ${worktree}"
     actual_common="$(git -C "${worktree}" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
@@ -1115,7 +1141,7 @@ create_managed_worktree_checkout() (
         '[.workspaces[] | select(.id == $id)] | length' "${registry}")" == 0 ]] \
         || fail "managed workspace UUID already exists in the workspace registry: ${workspace_id}"
 
-    branch="pi-run/${task_name}/${workspace_id}"
+    branch="pi-run/${task_name}"
     git check-ref-format --branch "${branch}" >/dev/null 2>&1 \
         || fail "invalid managed worktree branch: ${branch}"
     if git -C "${WORKTREE_REPOSITORY_SELECTED_PATH}" show-ref --verify --quiet "refs/heads/${branch}"; then
@@ -1123,8 +1149,8 @@ create_managed_worktree_checkout() (
     fi
     root="${PI_RUN_HOME_RESOLVED}/worktrees"
     repository_root="${root}/${repository_id}"
-    worktree="${repository_root}/${workspace_id}"
-    admin_dir="${WORKTREE_REPOSITORY_COMMON_DIR}/worktrees/${workspace_id}"
+    worktree="${repository_root}/${task_name}"
+    admin_dir="${WORKTREE_REPOSITORY_COMMON_DIR}/worktrees/${task_name}"
     for output in "${root}" "${repository_root}" "${worktree}" "${WORKTREE_REPOSITORY_COMMON_DIR}"; do
         [[ "${output}" != *,* ]] || fail "managed worktree paths containing commas are not supported: ${output}"
     done
@@ -1168,7 +1194,7 @@ create_managed_worktree_checkout() (
         || fail "created managed worktree has unexpected Git administration"
 
     pointer="$(mktemp "${root}/.git-pointer-${workspace_id}.XXXXXX")"
-    printf 'gitdir: /run/pi-run-git/common/worktrees/%s\n' "${workspace_id}" > "${pointer}"
+    printf 'gitdir: /run/pi-run-git/common/worktrees/%s\n' "${task_name}" > "${pointer}"
     chmod 0600 "${pointer}"
     set +e
     docker run --rm --pull never --network none --cap-drop ALL \
@@ -1220,9 +1246,9 @@ publish_managed_worktree_metadata() (
     [[ "${repository_id}" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] \
         || fail "invalid managed repository UUID: ${repository_id}"
     validate_worktree_task_name "${task_name}"
-    [[ "${branch}" == "pi-run/${task_name}/${workspace_id}" ]] \
+    [[ "${branch}" == "pi-run/${task_name}" ]] \
         || fail "managed worktree branch does not match its task identity: ${branch}"
-    expected_path="${PI_RUN_HOME_RESOLVED}/worktrees/${repository_id}/${workspace_id}"
+    expected_path="${PI_RUN_HOME_RESOLVED}/worktrees/${repository_id}/${task_name}"
     [[ "${worktree}" == "${expected_path}" ]] \
         || fail "managed worktree path does not match its workspace identity: ${worktree}"
 
@@ -1238,7 +1264,7 @@ publish_managed_worktree_metadata() (
     primary="$(jq -r --arg id "${repository_id}" '.repositories[] | select(.id == $id) | .primaryPath' "${machine}")"
     repository_name="$(jq -r --arg id "${repository_id}" '.repositories[] | select(.id == $id) | .name' "${machine}")"
     display_name="${repository_name}: ${task_name}"
-    admin_dir="${common}/worktrees/${workspace_id}"
+    admin_dir="${common}/worktrees/${task_name}"
 
     [[ -d "${worktree}" && ! -L "${worktree}" && "$(realpath "${worktree}")" == "${worktree}" &&
        "$(stat -c %u "${worktree}")" == "$(id -u)" ]] \

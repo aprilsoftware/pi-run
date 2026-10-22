@@ -84,10 +84,15 @@ letters, digits, `.`, `_`, or
 `-`, are at most 63 characters, and are unique within the repository. Separate
 clones remain separate repository identities even when their remotes match.
 
-A task start records the selected checkout's exact committed `HEAD` and creates
-one isolated internal branch and checkout associated with the task name. Their
-machine identifiers and storage paths are implementation details and are not
-shown by normal startup or task-list output.
+A task start records the selected checkout's exact committed `HEAD`, creates the
+branch `pi-run/<task-name>`, and places the checkout at:
+
+```text
+<Pi-Run home>/worktrees/<repository-id>/<task-name>/
+```
+
+The task name is the persistent worktree identity. Repository and workspace UUIDs
+remain internal and are not shown by normal startup or task-list output.
 
 Attached and detached committed `HEAD` are accepted; an unborn repository is
 not. Dirty source state is allowed, but staged, modified, untracked, and other
@@ -107,7 +112,7 @@ The required repository path may be supplied from inside or outside the
 repository. Without a selector, `open` starts a fresh Pi conversation in the
 existing task. `-c` continues that task's newest conversation for the selected profile, and
 `-r` opens Pi's selector for that task. Open never creates another branch,
-worktree, UUID, or metadata record. Global `pi-run resume` also follows a
+worktree, workspace identity, or metadata record. Global `pi-run resume` also follows a
 selected task's immutable machine association and never reconnects it as an
 ordinary checkout.
 

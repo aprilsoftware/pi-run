@@ -35,7 +35,7 @@ mkdir -p "${WORKTREE_ROOT}"
 chmod 0700 "${HOME_DIR}/worktrees" "${WORKTREE_ROOT}"
 
 worktree_path() {
-    printf '%s/%s\n' "${WORKTREE_ROOT}" "$1"
+    printf '%s/%s\n' "${WORKTREE_ROOT}" "$(task_name_for_id "$1")"
 }
 
 task_name_for_id() {
@@ -43,7 +43,7 @@ task_name_for_id() {
 }
 
 branch_for_id() {
-    printf 'pi-run/%s/%s\n' "$(task_name_for_id "$1")" "$1"
+    printf 'pi-run/%s\n' "$(task_name_for_id "$1")"
 }
 
 create_worktree() {

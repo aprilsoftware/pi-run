@@ -743,7 +743,7 @@ if [[ "${USE_MANAGED_WORKTREE}" == true ]]; then
     IFS=$'\t' read -r CREATED_ID CREATED_REPOSITORY_ID MANAGED_WORKTREE_BRANCH WORKSPACE MANAGED_WORKTREE_BASE \
         <<< "${CREATED_WORKTREE}"
     [[ "${CREATED_ID}" == "${WORKSPACE_ID}" && "${CREATED_REPOSITORY_ID}" == "${REPOSITORY_ID}" &&
-       "${WORKSPACE}" == "${PI_RUN_HOME_RESOLVED}/worktrees/${REPOSITORY_ID}/${WORKSPACE_ID}" ]] \
+       "${WORKSPACE}" == "${PI_RUN_HOME_RESOLVED}/worktrees/${REPOSITORY_ID}/${MANAGED_WORKTREE_TASK_NAME}" ]] \
         || fail "managed worktree creation returned inconsistent identity metadata"
     publish_managed_worktree_metadata \
         "${WORKSPACE_ID}" "${MANAGED_WORKTREE_TASK_NAME}" "${REPOSITORY_ID}" \
@@ -949,7 +949,7 @@ if [[ "${MANAGED_WORKTREE}" == true ]]; then
         || fail "managed worktree common Git paths containing commas are not supported"
     MANAGED_GIT_STAGING_DIR="$(mktemp -d /tmp/pi-run-managed-git.XXXXXX)"
     chmod 0700 "${MANAGED_GIT_STAGING_DIR}"
-    printf 'gitdir: /run/pi-run-git/common/worktrees/%s\n' "${WORKSPACE_ID}" \
+    printf 'gitdir: /run/pi-run-git/common/worktrees/%s\n' "${MANAGED_WORKTREE_TASK_NAME}" \
         > "${MANAGED_GIT_STAGING_DIR}/dot-git"
     chmod 0600 "${MANAGED_GIT_STAGING_DIR}/dot-git"
 fi

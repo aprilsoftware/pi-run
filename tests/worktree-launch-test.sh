@@ -71,8 +71,7 @@ case "${1:-}" in
         lock=
         if [[ "${workspace}" == */worktrees/*/* ]]; then
             home="${workspace%%/worktrees/*}"
-            workspace_id="${workspace##*/}"
-            lock="${home}/worktrees/.launch-locks/${workspace_id}/owner.json"
+            lock="$(find "${home}/worktrees/.launch-locks" -mindepth 2 -maxdepth 2 -name owner.json -print -quit)"
             [[ -f "${lock}" ]] || exit 3
         fi
         {
@@ -117,8 +116,8 @@ run_pi worktree start launch-task "${REPOSITORY}" -- --version \
 MACHINE="${HOME_DIR}/machines/$("${ROOT}/bin/pi-run" machine-id).json"
 REPOSITORY_ID="$(jq -r '.repositories[0].id' "${MACHINE}")"
 WORKSPACE_ID="$(jq -r '.repositories[0].tasks[0].workspaceId' "${MACHINE}")"
-BRANCH="pi-run/launch-task/${WORKSPACE_ID}"
-WORKTREE="${HOME_DIR}/worktrees/${REPOSITORY_ID}/${WORKSPACE_ID}"
+BRANCH="pi-run/launch-task"
+WORKTREE="${HOME_DIR}/worktrees/${REPOSITORY_ID}/launch-task"
 [[ "${WORKSPACE_ID}" =~ ^[0-9a-f-]{36}$ && -d "${WORKTREE}" ]] \
     || fail "explicit launch did not create a managed workspace"
 [[ "$(cat "${WORKTREE}/base.txt")" == base && ! -e "${WORKTREE}/dirty-untracked" ]] \
@@ -129,7 +128,7 @@ WORKTREE="${HOME_DIR}/worktrees/${REPOSITORY_ID}/${WORKSPACE_ID}"
    "$(git -C "${WORKTREE}" rev-parse HEAD)" == "${BASE}" ]] \
     || fail "managed launch used the wrong branch or base"
 jq -e --arg repository "${REPOSITORY_ID}" --arg workspace "${WORKSPACE_ID}" --arg path "${WORKTREE}" '
-    .schemaVersion == 3 and .repositories[0].id == $repository and
+    .schemaVersion == 4 and .repositories[0].id == $repository and
     .repositories[0].tasks[0].name == "launch-task" and
     .repositories[0].tasks[0].workspaceId == $workspace and
     .repositories[0].tasks[0].state == "active" and
@@ -161,7 +160,7 @@ if [[ "${LIVE_DOCKER}" != 1 ]]; then
     COMMON="${REPOSITORY}/.git"
     grep -F "common=${COMMON}" "${CAPTURE}" >/dev/null \
         || fail "common Git metadata was not mounted"
-    grep -F "pointer-content=gitdir: /run/pi-run-git/common/worktrees/${WORKSPACE_ID}" "${CAPTURE}" >/dev/null \
+    grep -F 'pointer-content=gitdir: /run/pi-run-git/common/worktrees/launch-task' "${CAPTURE}" >/dev/null \
         || fail "generated container .git pointer was incorrect"
     POINTER="$(grep '^pointer=' "${CAPTURE}" | cut -d= -f2-)"
     [[ -n "${POINTER}" && ! -e "${POINTER}" && ! -e "$(dirname "${POINTER}")" ]] \

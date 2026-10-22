@@ -97,7 +97,11 @@ task_name_for_id() {
 }
 
 branch_for_id() {
-    printf 'pi-run/%s/%s\n' "$(task_name_for_id "$1")" "$1"
+    printf 'pi-run/%s\n' "$(task_name_for_id "$1")"
+}
+
+path_for_id() {
+    printf '%s/worktrees/%s/%s\n' "${HOME_DIR}" "${REPOSITORY_ID}" "$(task_name_for_id "$1")"
 }
 
 run_create() {
@@ -118,7 +122,7 @@ run_create() {
 
 cleanup_worktree() {
     local id="$1" path
-    path="${HOME_DIR}/worktrees/${REPOSITORY_ID}/${id}"
+    path="$(path_for_id "${id}")"
     git -C "${REPOSITORY}" worktree remove --force "${path}" >/dev/null 2>&1 || true
     git -C "${REPOSITORY}" branch -D "$(branch_for_id "${id}")" >/dev/null 2>&1 || true
 }
@@ -129,7 +133,7 @@ IFS=$'\t' read -r workspace_id repository_id branch path base <<< "${result}"
 [[ "${workspace_id}" == "${ID_A}" && "${repository_id}" == "${REPOSITORY_ID}" &&
    "${branch}" == "$(branch_for_id "${ID_A}")" && "${base}" == "${BASE}" ]] \
     || fail "creation returned unexpected identities"
-[[ "${path}" == "${HOME_DIR}/worktrees/${REPOSITORY_ID}/${ID_A}" &&
+[[ "${path}" == "$(path_for_id "${ID_A}")" &&
    "$(cat "${path}/base.txt")" == base ]] || fail "managed checkout was not materialized"
 [[ ! -e "${HOOK_MARKER}" ]] || fail "managed checkout executed post-checkout on the host"
 grep -F 'has uncommitted changes' "${TMP}/attached.err" >/dev/null \
@@ -171,24 +175,24 @@ if run_create "${REPOSITORY}" "${ID_COLLISION}" >/dev/null 2>"${TMP}/branch.err"
 fi
 git -C "${REPOSITORY}" branch -D "$(branch_for_id "${ID_COLLISION}")" >/dev/null
 
-mkdir -p "${HOME_DIR}/worktrees/${REPOSITORY_ID}/${ID_PATH}"
+mkdir -p "$(path_for_id "${ID_PATH}")"
 chmod 0700 "${HOME_DIR}/worktrees" "${HOME_DIR}/worktrees/${REPOSITORY_ID}"
 if run_create "${REPOSITORY}" "${ID_PATH}" >/dev/null 2>"${TMP}/path.err"; then
     fail "checkout path collision was accepted"
 fi
-rm -rf "${HOME_DIR}/worktrees/${REPOSITORY_ID:?}/${ID_PATH}"
+rm -rf "$(path_for_id "${ID_PATH}")"
 
-mkdir -p "${REPOSITORY}/.git/worktrees/${ID_ADMIN}"
+mkdir -p "${REPOSITORY}/.git/worktrees/$(task_name_for_id "${ID_ADMIN}")"
 if run_create "${REPOSITORY}" "${ID_ADMIN}" >/dev/null 2>"${TMP}/admin.err"; then
     fail "Git administration collision was accepted"
 fi
-rm -rf "${REPOSITORY}/.git/worktrees/${ID_ADMIN}"
+rm -rf "${REPOSITORY}/.git/worktrees/$(task_name_for_id "${ID_ADMIN}")"
 
 if run_create "${REPOSITORY}" "${ID_EMPTY}" empty-fail >/dev/null 2>"${TMP}/empty.err"; then
     fail "empty materialization failure was accepted"
 fi
-[[ ! -e "${HOME_DIR}/worktrees/${REPOSITORY_ID}/${ID_EMPTY}" &&
-   ! -e "${REPOSITORY}/.git/worktrees/${ID_EMPTY}" ]] \
+[[ ! -e "$(path_for_id "${ID_EMPTY}")" &&
+   ! -e "${REPOSITORY}/.git/worktrees/$(task_name_for_id "${ID_EMPTY}")" ]] \
     || fail "empty failed worktree was not rolled back"
 if git -C "${REPOSITORY}" show-ref --verify --quiet "refs/heads/$(branch_for_id "${ID_EMPTY}")"; then
     fail "empty failed branch was not rolled back"
@@ -199,8 +203,9 @@ grep -F 'empty state was rolled back' "${TMP}/empty.err" >/dev/null \
 if run_create "${REPOSITORY}" "${ID_PARTIAL}" partial-fail >/dev/null 2>"${TMP}/partial.err"; then
     fail "partial materialization failure was accepted"
 fi
-PARTIAL_PATH="${HOME_DIR}/worktrees/${REPOSITORY_ID}/${ID_PARTIAL}"
-[[ -f "${PARTIAL_PATH}/partial.txt" && -d "${REPOSITORY}/.git/worktrees/${ID_PARTIAL}" ]] \
+PARTIAL_PATH="$(path_for_id "${ID_PARTIAL}")"
+[[ -f "${PARTIAL_PATH}/partial.txt" &&
+   -d "${REPOSITORY}/.git/worktrees/$(task_name_for_id "${ID_PARTIAL}")" ]] \
     || fail "ambiguous partial worktree was not preserved"
 git -C "${REPOSITORY}" show-ref --verify --quiet "refs/heads/$(branch_for_id "${ID_PARTIAL}")" \
     || fail "ambiguous partial branch was not preserved"
