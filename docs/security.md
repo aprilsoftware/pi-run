@@ -153,7 +153,9 @@ Worktrees also do not isolate credentials, shared build caches, dependency
 caches, databases, service ports, network routes, remote repositories, or files
 reachable through separately selected mounts. A branch and path being available
 does not authorize commits, merges, rebases, pushes, branch deletion,
-publication, or external operations.
+publication, or external operations. The exception is the exact local merge and
+cleanup plan displayed by `worktree finish`, authorized only when the user types
+the complete task name at its interactive confirmation.
 
 Fresh managed materialization is narrower than a normal session. Pi-Run creates
 the host worktree with `--no-checkout`, disables checkout hooks, and materializes
@@ -164,8 +166,12 @@ instead of host execution. These bootstrap restrictions do not remain an
 independent security boundary after Pi starts.
 
 Managed source trees and machine associations are host-visible persistent state
-and are excluded from encrypted snapshots. Pi-Run does not automatically stash,
-commit, reset, clean, merge, rebase, push, remove a worktree, or delete a branch.
+and are excluded from encrypted snapshots. Ordinary launch and exit do not
+stash, commit, reset, clean, merge, rebase, push, remove a worktree, or delete a
+branch. Explicit `worktree finish` is different: after showing its local plan and
+receiving task-name confirmation, it integrates clean committed work in an
+offline restricted runtime, then removes the checkout and integrated local task
+branch without force. It never fetches, pushes, or deletes a remote branch.
 Stopping a run or finding no transcript is not evidence that the checkout can
 be discarded.
 

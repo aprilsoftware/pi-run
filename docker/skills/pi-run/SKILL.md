@@ -150,8 +150,8 @@ the current repository. It creates one explicitly named task, while ordinary
 launches use the selected checkout directly. A managed task begins at
 the selected checkout's exact committed `HEAD` on
 `pi-run/<task-name>/<workspace-uuid>`. Dirty source-checkout changes are reported
-but not copied. Pi-Run does not automatically stash, commit, clean, reset, merge, rebase,
-push, remove worktrees, or delete branches. Managed checkouts live under:
+but not copied. Ordinary launch and exit do not stash, commit, clean, reset,
+merge, rebase, push, remove worktrees, or delete branches. Managed checkouts live under:
 
 ```text
 <Pi-Run home>/worktrees/<repository-id>/<workspace-id>/
@@ -168,12 +168,18 @@ use a particular managed task at a time, while distinct tasks may run concurrent
 and `available`, `missing`, `pending`, `path-conflict`, `git-conflict`, or
 `unsafe` status. `--all` also shows `finished`/`archived` history.
 
-`worktree finish` is the only supported managed-checkout removal path. Run it
-from the primary or another checkout. It requires interactive confirmation and
-refuses active use, dirty or ignored content, submodules, missing active tasks,
-and unsafe or conflicting state.
-It preserves the task branch, commits, workspace identity, and conversations.
-Never interpret exit or an inactive or missing session as permission to finish.
+`worktree finish` is the explicit integration and cleanup workflow. Run it from
+the clean checkout whose attached branch should receive the task. It shows the
+task name, target branch, and commit count without exposing internal workspace
+identifiers, then proposes a local merge, managed-checkout removal, and local
+task-branch deletion. It requires interactive confirmation and refuses active
+use, dirty or ignored content, submodules, missing active tasks, and unsafe or
+conflicting state. Merge and inspection run offline in the restricted runtime
+with Git hooks disabled. Conflicts are aborted and the target is verified
+restored; only successful integration permits non-force checkout and local
+branch removal. Conversations and portable history remain. Finish never fetches,
+pushes, force-deletes, or deletes a remote branch. Never interpret exit or an
+inactive or missing session as permission to finish.
 
 A worktree separates branches, indexes, and working files; it is not a sandbox.
 The selected checkout is mounted at `/workspace`, but the writable common Git

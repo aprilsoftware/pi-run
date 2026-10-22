@@ -180,22 +180,37 @@ grep -F 'refuses staged, modified, untracked, ignored, or nested-repository cont
 [[ -d "${PATH_A}" && "$(jq -r '.repositories[0].tasks[] | select(.name == "task-a") | .state' \
     "${MACHINE}")" == active ]] || fail "dirty finish changed task-a"
 
-# Return only task-a to its committed state; task-b must remain isolated and dirty.
+# Prepare a committed task result and clean integration checkout; task-b remains isolated and dirty.
 git -C "${PATH_A}" reset --hard -q "${BASE}"
-[[ -z "$(git -C "${PATH_A}" status --porcelain=v1 --ignored=matching)" ]] \
-    || fail "task-a could not be prepared as a clean finish fixture"
+printf 'completed task A\n' > "${PATH_A}/task-a-result.txt"
+git -C "${PATH_A}" add task-a-result.txt
+git -C "${PATH_A}" commit -qm 'complete task A'
+task_a_head="$(git -C "${PATH_A}" rev-parse HEAD)"
+git -C "${REPOSITORY}" checkout -q -- tracked.txt
+rm "${REPOSITORY}/primary-untracked.txt"
+[[ -z "$(git -C "${PATH_A}" status --porcelain=v1 --ignored=matching)" &&
+   -z "$(git -C "${REPOSITORY}" status --porcelain=v1 --ignored=matching)" ]] \
+    || fail "task-a and its integration checkout could not be prepared for finish"
 [[ "$(git -C "${PATH_B}" diff --cached --name-only)" == workspace-b.txt ]] \
-    || fail "cleaning task-a changed task-b"
+    || fail "preparing task-a changed task-b"
 registry_before_finish="$(sha256sum "${REGISTRY}")"
 session_before_finish="$(sha256sum "${HOME_DIR}/profiles/default/sessions/${ID_A}/lifecycle.jsonl")"
-branch_a_before_finish="$(git -C "${REPOSITORY}" rev-parse "pi-run/task-a/${ID_A}")"
 run_confirmed_finish task-a >"${TMP}/finish.out" 2>&1
-grep -F 'Finished worktree task: task-a' "${TMP}/finish.out" >/dev/null \
+grep -F 'Finished task: task-a' "${TMP}/finish.out" >/dev/null \
     || fail "successful task finish was not reported"
+grep -F 'Integrated into: main' "${TMP}/finish.out" >/dev/null \
+    || fail "successful task finish did not report its integration target"
+if grep -F "${ID_A}" "${TMP}/finish.out" >/dev/null; then
+    fail "successful task finish exposed its internal workspace identity"
+fi
 [[ ! -e "${PATH_A}" && ! -e "${REPOSITORY}/.git/worktrees/${ID_A}" ]] \
     || fail "task-a checkout or Git administration remains after finish"
-[[ "$(git -C "${REPOSITORY}" rev-parse "pi-run/task-a/${ID_A}")" == "${branch_a_before_finish}" ]] \
-    || fail "task-a branch was changed or deleted by finish"
+[[ "$(git -C "${REPOSITORY}" rev-parse HEAD)" == "${task_a_head}" &&
+   "$(< "${REPOSITORY}/task-a-result.txt")" == 'completed task A' ]] \
+    || fail "task-a was not integrated into main"
+if git -C "${REPOSITORY}" show-ref --verify --quiet "refs/heads/pi-run/task-a/${ID_A}"; then
+    fail "task-a branch remains after finish"
+fi
 [[ "$(sha256sum "${REGISTRY}")" == "${registry_before_finish}" &&
    "$(sha256sum "${HOME_DIR}/profiles/default/sessions/${ID_A}/lifecycle.jsonl")" == \
        "${session_before_finish}" ]] \

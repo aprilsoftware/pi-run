@@ -183,30 +183,40 @@ Different managed task workspace UUIDs can run concurrently.
 
 ## Managed task finish
 
-`worktree finish <task-name>` must run from the primary or another checkout in
-the same repository, not from the target task itself. It acquires the task's
-launch lock, revalidates its complete identity, displays the task, branch,
-workspace UUID, path, and state, and requires typing the complete task name on an
-interactive terminal.
+`worktree finish <task-name>` must run from the checkout whose attached branch
+should receive the task, not from the task checkout itself. It acquires the
+task's launch lock and revalidates both checkouts. Its confirmation displays only
+the task name, human-readable target branch, and commit count; internal workspace
+identifiers and storage paths are not part of the normal finish interface.
 
-Before removal, Pi-Run inspects the checkout twice in a version-matched runtime
-container with network none, a read-only root, read-only worktree and common-Git
-mounts, no capabilities, no-new-privileges, checkout hooks disabled, filesystem
-monitoring disabled, and no profiles or credentials. It refuses submodules and
-any staged, modified, untracked, ignored, or nested-repository content. The host
-then runs non-force `git worktree remove`; no checkout or repository code is run
-on the host merely to decide whether content is disposable.
+Before integration, Pi-Run inspects both checkouts in a version-matched runtime
+container with network none, a read-only root, read-only source and common-Git
+mounts, no capabilities, no-new-privileges, Git hooks and filesystem monitoring
+disabled, and no profiles or credentials. It refuses submodules and any staged,
+modified, untracked, ignored, or nested-repository content in the task, and
+requires the target checkout to be equally clean.
 
-Finish transitions `active` to `finishing` before removal. Once the checkout and
-its Git administration are absent, it removes the machine path mapping and marks
-the task `finished` with a timestamp. A retry may continue an exact `finishing`
-record, including when Git removal succeeded before final metadata publication.
-Partial, missing-active, or conflicting state fails closed.
+After the user types the complete task name, Pi-Run merges the local task branch
+into the target in the same restricted environment. It fast-forwards when
+possible and otherwise creates a normal unsigned merge commit using the user's
+resolved Git identity. Merge failure or conflicts trigger `git merge --abort`;
+Pi-Run verifies the original target commit and clean status before reporting that
+the task remains active. An unverifiable rollback fails closed for manual target
+inspection.
 
-The task branch, commits, portable workspace registry entry, and every profile's
-conversation files remain unchanged. Finished tasks cannot be opened or resumed
-as live workspaces. Ordinary launch and exit never finish, prune, merge, rebase,
-push, reset, remove a worktree, or delete a branch.
+After successful integration, finish transitions `active` to `finishing`, runs
+its clean inspections again, removes the checkout with non-force `git worktree
+remove`, and deletes the integrated local task branch with non-force `git branch
+-d`. Once checkout and branch cleanup are complete, it removes the machine path
+mapping and marks the task `finished` with a timestamp. A retry may continue an
+exact `finishing` record after partial cleanup. Missing-active or conflicting
+state fails closed.
+
+The portable workspace registry entry and every profile's conversation files
+remain unchanged as historical records. Finish never fetches, pushes,
+force-deletes, or deletes a remote branch. Finished tasks cannot be opened or
+resumed as live workspaces. Ordinary launch and exit never imply finish or
+integration.
 
 ## Resume across workspaces
 

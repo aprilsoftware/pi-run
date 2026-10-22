@@ -178,34 +178,45 @@ selected checkout.
 
 Normal Pi exit suspends a task; it does not mean the work is complete. A task
 remains open across terminal closure, failed runs, snapshot restarts, and any
-number of Pi conversations until the user explicitly runs:
+number of Pi conversations until the user explicitly runs from the intended
+integration checkout:
 
 ```bash
 pi-run worktree finish <task-name>
 ```
 
-`finish` shows the task name, branch, workspace UUID, and generic host path and
-requires interactive confirmation. It refuses an active or ambiguous launch
-lock, unsafe or conflicting metadata, a missing checkout, Git administration
-mismatch, submodule ambiguity, or any tracked, staged, untracked, or ignored
-working-tree content that would be lost. Inspection must not run repository code
-on the host merely to decide whether deletion is safe.
+`finish` presents the task name, attached target branch, and number of task
+commits not yet in that target. It deliberately omits internal workspace IDs and
+storage paths. The confirmation proposes one understandable outcome: integrate
+the task, remove its managed checkout, and delete its local task branch. Typing
+the complete task name authorizes that bounded local workflow.
 
-A successful finish removes the linked checkout and its concrete path mapping,
-then marks the task `finished`. It preserves the Git branch, commits, portable
-workspace identity, and every profile's conversation history. Finished task
-conversations are historical records and are not silently attached to the
-primary checkout. Normal `worktree list` shows open tasks; `worktree list --all`
-also shows finished task metadata without claiming that a checkout exists.
+The task and target checkouts must both be clean, including ignored and nested
+content. Pi-Run refuses active or ambiguous launch locks, unsafe or conflicting
+metadata, a missing active checkout, Git administration mismatch, submodules,
+or a detached target. Inspection and merge run in a version-matched offline,
+capability-free runtime without profiles or credentials and with Git hooks
+disabled, so repository code is not executed on the host merely to decide or
+perform integration.
 
-Finish is a recoverable state transition rather than an uncoordinated sequence
-of Git and JSON deletions. An interruption leaves an explicit `finishing` state
-that only a validated retry may complete. It must never infer completion from
-`/quit`, absence of a transcript, a clean status, a merge, or an inactive lock.
+Finish uses fast-forward integration when possible and a normal unsigned merge
+commit for non-conflicting divergence. On conflict or merge failure, it aborts
+the merge and verifies the target's original commit and clean status. Verified
+rollback leaves the task active; unverifiable target state fails closed for
+manual inspection. Pi-Run does not fetch or push.
 
-Pi-Run never deletes the task branch, merges, rebases, pushes, resets, discards
-source changes, or runs broad pruning as part of finish. Optional branch deletion
-or task reopening requires a separately designed explicit operation.
+Only successful integration transitions the task to `finishing`. Pi-Run then
+removes the linked checkout, non-force deletes the integrated local task branch,
+removes the concrete path mapping, and marks the task `finished`. Portable
+workspace identity and every profile's conversation history remain as historical
+records. Normal `worktree list` shows open tasks; `worktree list --all` also
+shows finished task metadata without claiming that a checkout exists.
+
+Finish remains a recoverable state transition rather than an uncoordinated
+sequence of Git and JSON changes. An interruption leaves an explicit `finishing`
+state that a validated retry may complete. It never force-deletes, deletes a
+remote branch, rebases, resets, discards source changes, or infers completion
+from `/quit`, transcript absence, cleanliness, or an inactive lock.
 
 ## Source checkout and base revision
 
@@ -435,8 +446,10 @@ primary checkout and sibling worktree files should not be mounted merely for
 convenience. The Docker socket remains unavailable.
 
 Repository, workspace, branch, and path availability are capabilities rather
-than user authorization to merge, push, delete, or publish work. Existing
-Guardian and human-approval semantics remain unchanged.
+than user authorization to merge, push, delete, or publish work. Only the
+interactive, task-name confirmation in `worktree finish` authorizes its displayed
+local merge and cleanup plan. Existing Guardian and human-approval semantics
+remain unchanged elsewhere.
 
 Session snapshots can preserve portable metadata and conversations but not
 source content, commits absent from a durable remote, untracked worktree files,
@@ -454,16 +467,18 @@ workspaces, and cross-worktree transcript routing have been removed.
 
 Named `worktree open <task-name> <repository>` supports fresh, `-c`, and `-r`
 task-local conversations without creating another checkout. Recoverable
-`finish` preserves branches, commits, identities, and conversations and is never inferred from
-ordinary exit or Git state.
+`finish` explicitly integrates committed work, removes the checkout and local
+task branch, and preserves portable identity and conversations. It is never
+inferred from ordinary exit or Git state.
 
 ## Deferred decisions and exclusions
 
 The selected replacement still excludes:
 
-- automatic worktree creation, task completion, branch deletion, or source-state
+- automatic worktree creation, inferred task completion, or source-state
   migration;
-- automatic merge, rebase, push, reset, pruning, or repository maintenance;
+- unconfirmed merge or branch deletion, rebase, push, reset, pruning, or
+  repository maintenance;
 - implicit cleanup based on exit, transcript absence, Git cleanliness, or merge
   detection;
 - recovery after users move a primary checkout or manually remove or relocate a

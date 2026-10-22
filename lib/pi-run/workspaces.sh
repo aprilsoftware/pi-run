@@ -477,15 +477,29 @@ managed_workspace_association_exists() {
 }
 
 confirm_managed_task_finish() {
-    local task_name="$1" response
+    local task_name="$1" target_branch="$2" commits="$3" branch_present="$4" response
     [[ -t 0 && -t 2 && -r /dev/tty && -w /dev/tty ]] \
         || fail "worktree finish requires confirmation from an interactive terminal"
-    cat > /dev/tty <<EOF
-Finishing removes only the managed checkout. The task branch, commits, workspace
-identity, and conversations remain. Pi-Run will not merge, push, or delete the
-branch.
-Type the complete task name to continue: ${task_name}
-EOF
+    {
+        printf 'Task: %s\nTarget branch: %s\n' \
+            "$(sanitize_display "${task_name}")" "$(sanitize_display "${target_branch}")"
+        if [[ "${branch_present}" == true ]]; then
+            printf 'Commits to merge: %s\n\n' "${commits}"
+            if (( commits > 0 )); then
+                printf 'Finish will merge the task into %s, remove its managed checkout,\n' \
+                    "$(sanitize_display "${target_branch}")"
+            else
+                printf 'The task is already integrated into %s. Finish will remove its managed\n' \
+                    "$(sanitize_display "${target_branch}")"
+            fi
+            printf 'checkout and delete its local task branch. Conversations remain available as\n'
+            printf 'historical records. Pi-Run will not fetch, push, or delete a remote branch.\n'
+        else
+            printf '\nFinish recovery will publish the already completed local cleanup.\n'
+            printf 'Conversations remain available as historical records.\n'
+        fi
+        printf 'Type the complete task name to continue: %s\n' "$(sanitize_display "${task_name}")"
+    } > /dev/tty
     printf '> ' > /dev/tty
     IFS= read -r response < /dev/tty || response=""
     [[ "${response}" == "${task_name}" ]]
@@ -529,7 +543,7 @@ resolve_named_managed_task() (
 resolve_managed_task_for_finish() (
     local selected="$1" task_name="$2" machine registry schema repository_count repository_id task_count
     local workspace_id branch task_state path common primary root repository_root expected_path admin_dir registry_count
-    local actual_common actual_git_dir actual_branch
+    local actual_common actual_git_dir actual_branch target target_git_dir target_branch target_head source_head
     validate_worktree_task_name "${task_name}"
     resolve_worktree_repository "${selected}"
     machine="$(machine_file)"
@@ -583,8 +597,9 @@ resolve_managed_task_for_finish() (
         || fail "managed finish worktree storage is missing or unsafe"
     [[ "${path}" == "${expected_path}" ]] \
         || fail "managed finish path conflicts with its workspace identity: ${workspace_id}"
-    [[ "${WORKTREE_REPOSITORY_SELECTED_PATH}" != "${path}" ]] \
-        || fail "worktree finish must run from the primary or another checkout, not the target task"
+    target="${WORKTREE_REPOSITORY_SELECTED_PATH}"
+    [[ "${target}" != "${path}" ]] \
+        || fail "worktree finish must run from the integration checkout, not the task checkout"
     [[ "${registry_count}" == 1 &&
        "$(jq -r --arg id "${workspace_id}" '.workspaces[] | select(.id == $id) | .kind' "${registry}")" == git ]] \
         || fail "portable workspace metadata conflicts with managed finish: ${workspace_id}"
@@ -593,8 +608,24 @@ resolve_managed_task_for_finish() (
        "${common}" == "${primary}/.git" && "$(stat -c %u "${common}")" == "$(id -u)" &&
        "$(stat -c %u "${primary}")" == "$(id -u)" ]] \
         || fail "managed finish repository paths are missing or unsafe"
-    [[ "$(git -C "${primary}" rev-parse --verify "refs/heads/${branch}" 2>/dev/null || true)" =~ ^[0-9a-f]{40,64}$ ]] \
-        || fail "managed finish branch is missing or invalid: ${branch}"
+    target_git_dir="$(git -C "${target}" rev-parse --path-format=absolute --git-dir 2>/dev/null || true)"
+    target_branch="$(git -C "${target}" symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
+    target_head="$(git -C "${target}" rev-parse --verify 'HEAD^{commit}' 2>/dev/null || true)"
+    [[ -n "${target_branch}" && "${target_head}" =~ ^[0-9a-f]{40,64}$ ]] \
+        || fail "worktree finish requires an attached target branch"
+    if [[ "${target_git_dir}" == "${common}" ]]; then
+        [[ "${target}" == "${primary}" ]] \
+            || fail "managed finish target Git administration conflicts with the primary checkout"
+    else
+        [[ "${target_git_dir}" == "${common}/worktrees/"* &&
+           "${target_git_dir#"${common}"/worktrees/}" != */* &&
+           -d "${target_git_dir}" && ! -L "${target_git_dir}" &&
+           "$(stat -c %u "${target_git_dir}")" == "$(id -u)" &&
+           -f "${target}/.git" && ! -L "${target}/.git" &&
+           "$(stat -c %u "${target}/.git")" == "$(id -u)" &&
+           "$(stat -c %h "${target}/.git")" == 1 ]] \
+            || fail "managed finish target Git administration is unsafe"
+    fi
 
     admin_dir="${common}/worktrees/${workspace_id}"
     if [[ ! -e "${path}" && ! -L "${path}" && ! -e "${admin_dir}" && ! -L "${admin_dir}" ]]; then
@@ -613,8 +644,16 @@ resolve_managed_task_for_finish() (
            "${actual_branch}" == "refs/heads/${branch}" ]] \
             || fail "managed finish Git state conflicts with metadata: ${workspace_id}"
     fi
-    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-        "${task_state}" "${repository_id}" "${workspace_id}" "${branch}" "${path}" "${common}" "${primary}"
+    source_head="$(git -C "${target}" rev-parse --verify "refs/heads/${branch}^{commit}" 2>/dev/null || true)"
+    if [[ ! "${source_head}" =~ ^[0-9a-f]{40,64}$ ]]; then
+        [[ "${task_state}" == finishing && ! -e "${path}" && ! -L "${path}" &&
+           ! -e "${admin_dir}" && ! -L "${admin_dir}" ]] \
+            || fail "managed finish task branch is missing"
+        source_head=""
+    fi
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "${task_state}" "${repository_id}" "${workspace_id}" "${branch}" "${path}" "${common}" \
+        "${primary}" "${target}" "${target_git_dir}" "${target_branch}" "${target_head}" "${source_head}"
 )
 
 inspect_managed_task_finish_clean() (
@@ -652,6 +691,115 @@ inspect_managed_task_finish_clean() (
     fi
     [[ -z "${output}" ]] \
         || fail "worktree finish refuses staged, modified, untracked, ignored, or nested-repository content"
+)
+
+managed_finish_container_git_dir() {
+    local host_git_dir="$1" common="$2"
+    if [[ "${host_git_dir}" == "${common}" ]]; then
+        printf '/run/pi-run-git/common\n'
+    else
+        printf '/run/pi-run-git/common/worktrees/%s\n' "${host_git_dir#"${common}"/worktrees/}"
+    fi
+}
+
+inspect_managed_finish_target_clean() (
+    local target="$1" common="$2" target_git_dir="$3" target_branch="$4" target_head="$5"
+    local image container_git_dir output status
+    command -v docker >/dev/null 2>&1 || fail "docker is required for managed worktree finish inspection"
+    image="${PI_RUN_IMAGE:-${DEFAULT_IMAGE}}"
+    docker image inspect "${image}" >/dev/null 2>&1 \
+        || fail "runtime image is unavailable locally: ${image}"
+    container_git_dir="$(managed_finish_container_git_dir "${target_git_dir}" "${common}")"
+    set +e
+    output="$(docker run --rm --pull never --network none --cap-drop ALL \
+        --security-opt no-new-privileges=true --read-only \
+        --tmpfs "/tmp:rw,nosuid,nodev,noexec" --user "$(id -u):$(id -g)" \
+        --env HOME=/tmp --env GIT_CONFIG_NOSYSTEM=1 --env GIT_OPTIONAL_LOCKS=0 \
+        --env PI_RUN_FINISH_ACTION=inspect-target \
+        --env "PI_RUN_TARGET_GIT_DIR=${container_git_dir}" \
+        --env "PI_RUN_TARGET_BRANCH=${target_branch}" --env "PI_RUN_TARGET_HEAD=${target_head}" \
+        --workdir /workspace --entrypoint bash \
+        --mount "type=bind,src=${target},dst=/workspace,readonly" \
+        --mount "type=bind,src=${common},dst=/run/pi-run-git/common,readonly" \
+        "${image}" -ceu '
+            git_target() {
+                git --git-dir="${PI_RUN_TARGET_GIT_DIR}" --work-tree=/workspace \
+                    -c core.hooksPath=/dev/null -c core.fsmonitor=false -c core.untrackedCache=false "$@"
+            }
+            test "$(git_target symbolic-ref --quiet --short HEAD)" = "${PI_RUN_TARGET_BRANCH}"
+            test "$(git_target rev-parse --verify HEAD^{commit})" = "${PI_RUN_TARGET_HEAD}"
+            git_target status --porcelain=v1 --untracked-files=all --ignored=matching
+        ' 2>/dev/null)"
+    status=$?
+    set -e
+    (( status == 0 )) || fail "restricted target-checkout inspection failed"
+    [[ -z "${output}" ]] \
+        || fail "worktree finish requires a clean target checkout, including ignored and nested-repository content"
+)
+
+merge_managed_task_into_target() (
+    local target="$1" common="$2" target_git_dir="$3" target_branch="$4" target_head="$5"
+    local branch="$6" source_head="$7" user_name="$8" user_email="$9" task_name="${10}"
+    local image container_git_dir status
+    command -v docker >/dev/null 2>&1 || fail "docker is required for managed worktree finish merge"
+    image="${PI_RUN_IMAGE:-${DEFAULT_IMAGE}}"
+    docker image inspect "${image}" >/dev/null 2>&1 \
+        || fail "runtime image is unavailable locally: ${image}"
+    container_git_dir="$(managed_finish_container_git_dir "${target_git_dir}" "${common}")"
+    set +e
+    docker run --rm --pull never --network none --cap-drop ALL \
+        --security-opt no-new-privileges=true --read-only \
+        --tmpfs "/tmp:rw,nosuid,nodev,noexec" --user "$(id -u):$(id -g)" \
+        --env HOME=/tmp --env GIT_CONFIG_NOSYSTEM=1 \
+        --env PI_RUN_FINISH_ACTION=merge \
+        --env "PI_RUN_TARGET_GIT_DIR=${container_git_dir}" \
+        --env "PI_RUN_TARGET_BRANCH=${target_branch}" --env "PI_RUN_TARGET_HEAD=${target_head}" \
+        --env "PI_RUN_SOURCE_BRANCH=${branch}" --env "PI_RUN_SOURCE_HEAD=${source_head}" \
+        --env "PI_RUN_GIT_USER_NAME=${user_name}" --env "PI_RUN_GIT_USER_EMAIL=${user_email}" \
+        --env "PI_RUN_TASK_NAME=${task_name}" \
+        --workdir /workspace --entrypoint bash \
+        --mount "type=bind,src=${target},dst=/workspace" \
+        --mount "type=bind,src=${common},dst=/run/pi-run-git/common" \
+        "${image}" -ceu '
+            git_target() {
+                git --git-dir="${PI_RUN_TARGET_GIT_DIR}" --work-tree=/workspace \
+                    -c core.hooksPath=/dev/null -c core.fsmonitor=false -c core.untrackedCache=false \
+                    -c "user.name=${PI_RUN_GIT_USER_NAME}" -c "user.email=${PI_RUN_GIT_USER_EMAIL}" "$@"
+            }
+            target_restored() {
+                test "$(git_target rev-parse --verify HEAD^{commit})" = "${PI_RUN_TARGET_HEAD}" &&
+                    test -z "$(git_target status --porcelain=v1 --untracked-files=all --ignored=matching)"
+            }
+            rollback_on_signal() {
+                if git_target rev-parse --verify -q MERGE_HEAD >/dev/null; then
+                    git_target merge --abort >/dev/null 2>&1 || true
+                fi
+                exit 43
+            }
+            trap rollback_on_signal HUP INT TERM
+            test "$(git_target symbolic-ref --quiet --short HEAD)" = "${PI_RUN_TARGET_BRANCH}"
+            test "$(git_target rev-parse --verify HEAD^{commit})" = "${PI_RUN_TARGET_HEAD}"
+            test "$(git_target rev-parse --verify "refs/heads/${PI_RUN_SOURCE_BRANCH}^{commit}")" = \
+                "${PI_RUN_SOURCE_HEAD}"
+            test -z "$(git_target status --porcelain=v1 --untracked-files=all --ignored=matching)"
+            if ! git_target merge --ff --no-edit --no-gpg-sign \
+                -m "Merge Pi-Run task ${PI_RUN_TASK_NAME}" "refs/heads/${PI_RUN_SOURCE_BRANCH}"; then
+                if git_target rev-parse --verify -q MERGE_HEAD >/dev/null; then
+                    git_target merge --abort >/dev/null 2>&1 || exit 43
+                fi
+                target_restored && exit 42
+                exit 43
+            fi
+            git_target merge-base --is-ancestor "${PI_RUN_SOURCE_HEAD}" HEAD
+            test -z "$(git_target status --porcelain=v1 --untracked-files=all --ignored=matching)"
+        '
+    status=$?
+    set -e
+    case "${status}" in
+        0) return 0 ;;
+        42) fail "task merge did not succeed; the target checkout was restored and the task remains active" ;;
+        *) fail "task merge failed and target recovery could not be verified; inspect the target checkout before retrying" ;;
+    esac
 )
 
 mark_managed_task_finishing() (
@@ -705,26 +853,37 @@ complete_managed_task_finish() (
 
 finish_managed_worktree_task() (
     local selected="$1" task_name="$2" initial current task_state repository_id workspace_id branch path common primary
+    local target target_git_dir target_branch target_head source_head
     local current_state current_repository current_workspace current_branch current_path current_common current_primary
-    local admin_dir
+    local current_target current_target_git_dir current_target_branch current_target_head current_source_head
+    local admin_dir commits branch_present=true user_name="" user_email=""
     initial="$(resolve_managed_task_for_finish "${selected}" "${task_name}")"
-    IFS=$'\t' read -r task_state repository_id workspace_id branch path common primary <<< "${initial}"
+    IFS=$'\t' read -r task_state repository_id workspace_id branch path common primary target target_git_dir \
+        target_branch target_head source_head <<< "${initial}"
     acquire_managed_launch_lock "${workspace_id}"
     trap 'release_managed_launch_lock >/dev/null 2>&1 || true' EXIT
     current="$(resolve_managed_task_for_finish "${selected}" "${task_name}")"
-    IFS=$'\t' read -r current_state current_repository current_workspace current_branch current_path current_common current_primary \
+    IFS=$'\t' read -r current_state current_repository current_workspace current_branch current_path current_common \
+        current_primary current_target current_target_git_dir current_target_branch current_target_head current_source_head \
         <<< "${current}"
     [[ "${repository_id}" == "${current_repository}" && "${workspace_id}" == "${current_workspace}" &&
        "${branch}" == "${current_branch}" && "${path}" == "${current_path}" &&
-       "${common}" == "${current_common}" && "${primary}" == "${current_primary}" ]] \
-        || fail "managed task changed while acquiring its finish lock: ${task_name}"
+       "${common}" == "${current_common}" && "${primary}" == "${current_primary}" &&
+       "${target}" == "${current_target}" && "${target_git_dir}" == "${current_target_git_dir}" &&
+       "${target_branch}" == "${current_target_branch}" && "${target_head}" == "${current_target_head}" &&
+       "${source_head}" == "${current_source_head}" ]] \
+        || fail "managed task or target changed while acquiring its finish lock: ${task_name}"
     task_state="${current_state}"
     admin_dir="${common}/worktrees/${workspace_id}"
+    if [[ -n "${source_head}" ]]; then
+        commits="$(git -C "${target}" rev-list --count "${target_head}..${source_head}")" \
+            || fail "could not compare task and target history"
+    else
+        commits=0
+        branch_present=false
+    fi
 
-    printf 'Task: %s\nWorkspace ID: %s\nBranch: %s\nHost path: %s\nState: %s\n' \
-        "$(sanitize_display "${task_name}")" "${workspace_id}" "$(sanitize_display "${branch}")" \
-        "$(sanitize_display "${path}")" "${task_state}"
-    if ! confirm_managed_task_finish "${task_name}"; then
+    if ! confirm_managed_task_finish "${task_name}" "${target_branch}" "${commits}" "${branch_present}"; then
         printf 'Worktree finish cancelled.\n'
         release_managed_launch_lock || fail "could not release managed finish lock"
         trap - EXIT
@@ -733,9 +892,27 @@ finish_managed_worktree_task() (
 
     if [[ -e "${path}" || -L "${path}" ]]; then
         inspect_managed_task_finish_clean "${workspace_id}" "${path}" "${common}"
+        inspect_managed_finish_target_clean \
+            "${target}" "${common}" "${target_git_dir}" "${target_branch}" "${target_head}"
+        if (( commits > 0 )); then
+            if ! git -C "${target}" merge-base --is-ancestor "${target_head}" "${source_head}"; then
+                user_name="$(git -C "${target}" config user.name || true)"
+                user_email="$(git -C "${target}" config user.email || true)"
+                [[ -n "${user_name}" && -n "${user_email}" ]] \
+                    || fail "a Git user name and email are required to create the task merge commit"
+            fi
+            merge_managed_task_into_target \
+                "${target}" "${common}" "${target_git_dir}" "${target_branch}" "${target_head}" \
+                "${branch}" "${source_head}" "${user_name}" "${user_email}" "${task_name}"
+            target_head="$(git -C "${target}" rev-parse --verify 'HEAD^{commit}')"
+        fi
+        inspect_managed_task_finish_clean "${workspace_id}" "${path}" "${common}"
+        inspect_managed_finish_target_clean \
+            "${target}" "${common}" "${target_git_dir}" "${target_branch}" "${target_head}"
+        git -C "${target}" merge-base --is-ancestor "${source_head}" "${target_head}" \
+            || fail "task branch is not integrated into the target checkout"
         mark_managed_task_finishing \
             "${workspace_id}" "${repository_id}" "${task_name}" "${branch}" "${path}"
-        inspect_managed_task_finish_clean "${workspace_id}" "${path}" "${common}"
         if ! git -c core.hooksPath=/dev/null -c core.fsmonitor=false -C "${primary}" \
             worktree remove "${path}"; then
             fail "Git worktree removal failed; task remains in finishing state for explicit retry"
@@ -744,14 +921,21 @@ finish_managed_worktree_task() (
         [[ "${task_state}" == finishing ]] \
             || fail "managed finish checkout disappeared before removal: ${path}"
     fi
-    [[ "$(git -C "${primary}" rev-parse --verify "refs/heads/${branch}" 2>/dev/null || true)" =~ ^[0-9a-f]{40,64}$ ]] \
-        || fail "managed task branch was not preserved after worktree removal: ${branch}"
+    if [[ -n "${source_head}" ]]; then
+        git -C "${target}" merge-base --is-ancestor "${source_head}" HEAD \
+            || fail "task branch is not integrated into the current target branch"
+        if ! git -C "${target}" branch -d -- "${branch}" >/dev/null 2>&1; then
+            fail "local task branch deletion failed; task remains in finishing state for explicit retry"
+        fi
+        [[ -z "$(git -C "${target}" rev-parse --verify "refs/heads/${branch}" 2>/dev/null || true)" ]] \
+            || fail "local task branch still exists after deletion"
+    fi
     complete_managed_task_finish \
         "${workspace_id}" "${repository_id}" "${task_name}" "${branch}" "${path}" "${admin_dir}"
     release_managed_launch_lock || fail "could not release managed finish lock"
     trap - EXIT
-    printf 'Finished worktree task: %s\nPreserved branch: %s\n' \
-        "$(sanitize_display "${task_name}")" "$(sanitize_display "${branch}")"
+    printf 'Finished task: %s\nIntegrated into: %s\nRemoved managed checkout and local task branch.\n' \
+        "$(sanitize_display "${task_name}")" "$(sanitize_display "${target_branch}")"
 )
 
 RESOLVED_MANAGED_TASK_NAME=""

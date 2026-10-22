@@ -30,11 +30,22 @@ case "${1:-}" in
     run)
         shift
         workspace=
+        action=inspect-task
+        source_branch=
+        task_name=
         previous=
         for argument in "$@"; do
-            if [[ "${previous}" == --mount && "${argument}" == type=bind,src=*,dst=/workspace,readonly ]]; then
+            if [[ "${previous}" == --mount &&
+                  ( "${argument}" == type=bind,src=*,dst=/workspace ||
+                    "${argument}" == type=bind,src=*,dst=/workspace,readonly ) ]]; then
                 workspace="${argument#*src=}"
                 workspace="${workspace%,dst=*}"
+            elif [[ "${previous}" == --env && "${argument}" == PI_RUN_FINISH_ACTION=* ]]; then
+                action="${argument#*=}"
+            elif [[ "${previous}" == --env && "${argument}" == PI_RUN_SOURCE_BRANCH=* ]]; then
+                source_branch="${argument#*=}"
+            elif [[ "${previous}" == --env && "${argument}" == PI_RUN_TASK_NAME=* ]]; then
+                task_name="${argument#*=}"
             fi
             previous="${argument}"
         done
@@ -43,6 +54,19 @@ case "${1:-}" in
         [[ ! -f "${DOCKER_COUNT_FILE:?}" ]] || count="$(< "${DOCKER_COUNT_FILE}")"
         printf '%s\n' "$((count + 1))" > "${DOCKER_COUNT_FILE}"
         [[ "${FAKE_FINISH_MODE:-ok}" != fail ]] || exit 1
+        if [[ "${action}" == merge ]]; then
+            target_before="$(git -C "${workspace}" rev-parse HEAD)"
+            if git -C "${workspace}" -c core.hooksPath=/dev/null \
+                merge --ff --no-edit --no-gpg-sign -m "Merge Pi-Run task ${task_name}" \
+                "refs/heads/${source_branch}"; then
+                exit 0
+            fi
+            git -C "${workspace}" merge --abort >/dev/null 2>&1 || exit 43
+            [[ "$(git -C "${workspace}" rev-parse HEAD)" == "${target_before}" &&
+               -z "$(git -C "${workspace}" status --porcelain=v1 --untracked-files=all --ignored=matching)" ]] \
+                && exit 42
+            exit 43
+        fi
         if git -C "${workspace}" ls-files --stage |
             awk '$1 == "160000" { found=1 } END { exit(found ? 0 : 1) }'; then
             exit 42
@@ -150,7 +174,7 @@ if (cd "${WORKTREE}" && PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" worktree 
     >/dev/null 2>"${TMP}/target-cwd.err"; then
     fail "finish from inside the target worktree was accepted"
 fi
-grep -F 'must run from the primary or another checkout' "${TMP}/target-cwd.err" >/dev/null \
+grep -F 'must run from the integration checkout, not the task checkout' "${TMP}/target-cwd.err" >/dev/null \
     || fail "target-current-directory diagnostic was unclear"
 
 assert_dirty_refused() {
@@ -223,14 +247,19 @@ wait "${ACTIVE_PID}" 2>/dev/null || true
 ACTIVE_PID=""
 
 # The now-stale lock must be recovered by the successful finish.
-branch_head="$(git -C "${REPOSITORY}" rev-parse "${BRANCH}")"
 run_confirmed_finish "${TASK_NAME}" "${TMP}/success.out"
-grep -F "Finished worktree task: ${TASK_NAME}" "${TMP}/success.out" >/dev/null \
+grep -F "Finished task: ${TASK_NAME}" "${TMP}/success.out" >/dev/null \
     || fail "successful finish was not reported"
+grep -F 'Integrated into: main' "${TMP}/success.out" >/dev/null \
+    || fail "successful finish did not report its target branch"
+if grep -F "${WORKSPACE_ID}" "${TMP}/success.out" >/dev/null; then
+    fail "successful finish exposed its internal workspace identity"
+fi
 [[ ! -e "${WORKTREE}" && ! -e "${ADMIN}" && ! -e "${LOCK_DIR}" ]] \
     || fail "successful finish left checkout administration or locks"
-[[ "$(git -C "${REPOSITORY}" rev-parse "${BRANCH}")" == "${branch_head}" ]] \
-    || fail "finish changed or deleted the task branch"
+if git -C "${REPOSITORY}" show-ref --verify --quiet "refs/heads/${BRANCH}"; then
+    fail "finish retained the local task branch"
+fi
 jq -e --arg id "${WORKSPACE_ID}" '
     ([.workspacePaths[] | select(.workspaceId == $id)] | length) == 0 and
     ([.repositories[].tasks[] | select(.workspaceId == $id and .state == "finished" and
@@ -258,6 +287,70 @@ if PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" resume default "${WORKSPACE_ID
 fi
 grep -F 'managed worktree is unavailable' "${TMP}/finished-resume.err" >/dev/null \
     || fail "finished-task resume diagnostic was unclear"
+
+setup_case target-dirty 55555555-5555-4555-8555-555555555555
+printf 'target dirty\n' > "${REPOSITORY}/target-dirty.txt"
+if run_confirmed_finish "${TASK_NAME}" "${TMP}/target-dirty.out"; then
+    fail "dirty target checkout was accepted for finish"
+fi
+grep -F 'requires a clean target checkout' "${TMP}/target-dirty.out" >/dev/null \
+    || fail "dirty-target refusal was unclear"
+[[ -d "${WORKTREE}" && "$(jq -r '.repositories[0].tasks[0].state' "${MACHINE}")" == active ]] \
+    || fail "dirty-target refusal changed task state"
+rm "${REPOSITORY}/target-dirty.txt"
+
+setup_case fast-forward 66666666-6666-4666-8666-666666666666
+printf 'task result\n' > "${WORKTREE}/task-result.txt"
+git -C "${WORKTREE}" add task-result.txt
+git -C "${WORKTREE}" commit -qm 'task result'
+task_head="$(git -C "${WORKTREE}" rev-parse HEAD)"
+run_confirmed_finish "${TASK_NAME}" "${TMP}/fast-forward.out"
+[[ "$(git -C "${REPOSITORY}" rev-parse HEAD)" == "${task_head}" &&
+   "$(< "${REPOSITORY}/task-result.txt")" == 'task result' ]] \
+    || fail "finish did not fast-forward the target branch"
+if git -C "${REPOSITORY}" show-ref --verify --quiet "refs/heads/${BRANCH}"; then
+    fail "fast-forward finish retained the task branch"
+fi
+
+setup_case merge-commit 77777777-7777-4777-8777-777777777777
+printf 'task result\n' > "${WORKTREE}/task-result.txt"
+git -C "${WORKTREE}" add task-result.txt
+git -C "${WORKTREE}" commit -qm 'task result'
+task_head="$(git -C "${WORKTREE}" rev-parse HEAD)"
+printf 'target result\n' > "${REPOSITORY}/target-result.txt"
+git -C "${REPOSITORY}" add target-result.txt
+git -C "${REPOSITORY}" commit -qm 'target result'
+target_head="$(git -C "${REPOSITORY}" rev-parse HEAD)"
+run_confirmed_finish "${TASK_NAME}" "${TMP}/merge-commit.out"
+merge_head="$(git -C "${REPOSITORY}" rev-parse HEAD)"
+[[ "$(git -C "${REPOSITORY}" rev-list --parents -n 1 "${merge_head}")" == \
+   "${merge_head} ${target_head} ${task_head}" &&
+   "$(git -C "${REPOSITORY}" log -1 --format=%s)" == "Merge Pi-Run task ${TASK_NAME}" &&
+   "$(< "${REPOSITORY}/task-result.txt")" == 'task result' &&
+   "$(< "${REPOSITORY}/target-result.txt")" == 'target result' ]] \
+    || fail "finish did not create the expected merge commit"
+if git -C "${REPOSITORY}" show-ref --verify --quiet "refs/heads/${BRANCH}"; then
+    fail "merge-commit finish retained the task branch"
+fi
+
+setup_case conflict 88888888-8888-4888-8888-888888888888
+printf 'task version\n' > "${WORKTREE}/base.txt"
+git -C "${WORKTREE}" add base.txt
+git -C "${WORKTREE}" commit -qm 'task conflict'
+printf 'target version\n' > "${REPOSITORY}/base.txt"
+git -C "${REPOSITORY}" add base.txt
+git -C "${REPOSITORY}" commit -qm 'target conflict'
+target_head="$(git -C "${REPOSITORY}" rev-parse HEAD)"
+if run_confirmed_finish "${TASK_NAME}" "${TMP}/conflict.out"; then
+    fail "conflicting task merge was accepted"
+fi
+grep -F 'target checkout was restored and the task remains active' "${TMP}/conflict.out" >/dev/null \
+    || fail "merge-conflict rollback diagnostic was unclear"
+[[ "$(git -C "${REPOSITORY}" rev-parse HEAD)" == "${target_head}" &&
+   -z "$(git -C "${REPOSITORY}" status --porcelain=v1 --untracked-files=all --ignored=matching)" &&
+   ! -e "${REPOSITORY}/.git/MERGE_HEAD" && -d "${WORKTREE}" &&
+   "$(jq -r '.repositories[0].tasks[0].state' "${MACHINE}")" == active ]] \
+    || fail "merge conflict did not restore the target and preserve the active task"
 
 setup_case missing 22222222-2222-4222-8222-222222222222
 git -C "${REPOSITORY}" worktree remove "${WORKTREE}"

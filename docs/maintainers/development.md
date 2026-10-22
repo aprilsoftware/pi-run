@@ -138,11 +138,12 @@ tests/worktree-e2e-test.sh
 ```
 
 The test uses only a temporary Pi-Run home and repository. It validates named
-task start and open, dirty-finish refusal, clean recoverable finish, preserved
-branches/identities/sessions, sibling isolation, historical listing, and lock
-cleanup. Without `PI_RUN_TEST_IMAGE`, it expects the version-matched release
-runtime image to exist locally. A skipped invocation is not a successful
-real-Docker validation and must be reported as skipped.
+task start and open, dirty-finish refusal, restricted local integration, clean
+recoverable finish, local task-branch removal, preserved identities/sessions,
+sibling isolation, historical listing, and lock cleanup. Without
+`PI_RUN_TEST_IMAGE`, it expects the version-matched release runtime image to
+exist locally. A skipped invocation is not a successful real-Docker validation
+and must be reported as skipped.
 
 ## Build application release artifacts
 

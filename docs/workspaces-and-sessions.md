@@ -140,20 +140,33 @@ Statuses mean:
 | `unsafe` | Ownership, links, or filesystem structure are unsafe to trust. |
 | `archived` | A finished task is historical and has no managed checkout path. |
 
-Finish a clean task from the primary or another checkout in the same repository:
+Finish a task from the checkout whose current branch should receive its work:
 
 ```bash
 pi-run worktree finish api-refactor
 ```
 
-Finish displays the task identity and requires typing its complete name in an
-interactive terminal. It refuses active use, unsafe or conflicting metadata,
-submodules, and staged, modified, untracked, ignored, or nested-repository
-content. Inspection runs in an offline restricted runtime container. A successful
-finish removes only the linked checkout and path mapping; it preserves the task
-branch, commits, portable workspace identity, and every profile's conversations.
-An interrupted `finishing` task is shown by normal listing and can be retried.
-Pi-Run never infers finish from exit, session activity, or Git merge state.
+Finish shows the task name, target branch, and number of commits to integrate;
+internal workspace identifiers and storage paths are omitted. It proposes a
+local merge, managed-checkout removal, and local task-branch deletion, then
+requires typing the complete task name. Both checkouts must be clean, including
+ignored and nested-repository content, and the target must have an attached
+branch. Pi-Run also refuses active use, unsafe or conflicting metadata, and
+submodules.
+
+Inspection and merge run in an offline restricted runtime container without
+profile credentials and with Git hooks disabled. A task that is ahead of the
+target is fast-forwarded when possible; diverged non-conflicting work creates a
+normal merge commit. A conflicting or failed merge is aborted and the target is
+verified restored before Pi-Run reports a recoverable refusal. Only after
+successful integration does Pi-Run remove the linked checkout and delete its
+local branch without force. It never fetches, pushes, or deletes a remote
+branch.
+
+Portable workspace identity and every profile's conversations remain as
+historical records. An interrupted `finishing` cleanup is shown by normal
+listing and can be retried. Pi-Run never infers finish from exit or session
+activity.
 
 Managed source trees and machine associations are excluded from encrypted
 snapshots. Portable identities and sessions can be restored, but Pi-Run does not
