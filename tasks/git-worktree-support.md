@@ -293,11 +293,11 @@ from restored names, remotes, or paths.
 
 ## Machine-local metadata
 
-The task-oriented machine file uses schema version 4:
+The task-oriented machine file extends schema version 1:
 
 ```json
 {
-  "schemaVersion": 4,
+  "schemaVersion": 1,
   "machineId": "<machine-id>",
   "snapshotAuto": {"onSessionExit": true},
   "workspacePaths": [
@@ -340,21 +340,18 @@ validated before use; display text is sanitized; paths are canonical absolute
 host paths and are never interpreted as authorization to mount an unrelated
 target.
 
-When task creation first needs a schema-version-1 machine file, Pi-Run performs
-a locked atomic migration that preserves `machineId`, `workspacePaths`, and
-optional `snapshotAuto`, adds an empty `repositories` array, writes schema
-version 4, and publishes the replacement only after complete validation.
-Invalid, linked, hard-linked, unexpectedly permissive, or unsupported machine
-files fail without partial migration.
+A v0.7 machine file has the same schema version without `repositories`. The
+first task operation adds an empty `repositories` array with a locked atomic
+replacement while preserving `machineId`, `workspacePaths`, and optional
+`snapshotAuto`. The workspace registry, profiles, sessions, credentials, and
+other Pi-Run home state are not rewritten. Invalid, linked, hard-linked,
+unexpectedly permissive, or unsupported machine files fail without partial
+initialization.
 
-The name-based layout does not migrate older managed-task schemas. Withdrawn
-schema version 2 and v0.8.3 schema version 3 both fail closed with an explicit
-cleanup-required error. Ordinary direct workspace inspection remains available
-when it can be separated safely. Before using name-based tasks, the operator
-performs a one-time inspected cleanup derived from validated local metadata so
-direct workspaces, sessions, and unrelated repositories are not selected
-accidentally. Pi-Run does not ship permanent branch/path compatibility or
-automatic rename logic.
+Managed-task metadata created only by prerelease development is not part of the
+stable upgrade contract. It is removed from development machines before the
+final task-oriented release rather than represented by permanent migration,
+branch/path compatibility, or format-specific refusal logic.
 
 Machine files and the managed worktree root remain excluded from portable
 snapshots. The portable workspace registry schema does not need to change for
@@ -459,7 +456,7 @@ unavailable, not recreated from guesses.
 ## Task-oriented implementation status
 
 The replacement now provides unconditional direct ordinary launches, explicit
-`worktree start <task-name> <repository>`, schema-v4 named task lifecycle records,
+`worktree start <task-name> <repository>`, schema-v1 named task lifecycle records,
 collision-safe isolated materialization, recoverable machine-first publication,
 name-first task reporting, compact repository-grouped listing, one-active-launch
 locking, and association-driven global resume. Prototype repository preferences,

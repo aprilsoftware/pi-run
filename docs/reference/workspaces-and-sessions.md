@@ -153,11 +153,11 @@ hidden path, identity, Git administration, and branch relationships before
 printing each compact row.
 
 Metadata-level contradictions that cannot be represented safely fail the whole
-command rather than being reduced to a row status. Schema-version-1 machine
-metadata is listed as having no managed repositories without migration. Task
-creation migrates valid public schema-version-1 metadata atomically to version 4.
-Withdrawn schema-version-2 metadata and v0.8.3 schema-version-3 task metadata are
-never migrated and report that one-time cleanup is required.
+command rather than being reduced to a row status. Existing schema-version-1
+machine metadata is listed as having no managed repositories without mutation.
+The first task creation adds an empty `repositories` array atomically while
+retaining schema version 1 and preserving existing machine settings and direct
+workspace mappings.
 
 ## Managed continuation and locking
 

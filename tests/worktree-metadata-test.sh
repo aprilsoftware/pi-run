@@ -34,10 +34,10 @@ expect_unchanged_failure() {
     set -e
     [[ ${status} -ne 0 ]] || fail "unsafe machine metadata was accepted: ${home}"
     [[ "$(sha256sum "${machine}")" == "${before}" ]] \
-        || fail "failed migration changed machine metadata: ${home}"
+        || fail "failed initialization changed machine metadata: ${home}"
 }
 
-prepare_v1_home() {
+prepare_v07_home() {
     local name="$1" machine_name machine_id_value
     CASE_HOME="${TMP}/${name}/Pi Run"
     PI_RUN_HOME="${CASE_HOME}" "${ROOT}/bin/pi-run" init >/dev/null
@@ -50,128 +50,102 @@ prepare_v1_home() {
     machine_name="${CASE_MACHINE##*/}"
     machine_id_value="${machine_name%.json}"
     jq -n --arg machine "${machine_id_value}" --arg id "${WORKSPACE_ID}" \
-        '{schemaVersion:1,machineId:$machine,workspacePaths:[{workspaceId:$id,path:"/tmp/worktree metadata fixture"}]}' \
+        '{schemaVersion:1,machineId:$machine,workspacePaths:[{workspaceId:$id,path:"/tmp/worktree metadata fixture ü"}]}' \
         > "${CASE_MACHINE}"
     chmod 0600 "${CASE_MACHINE}"
 }
 
-prepare_v1_home migration
+prepare_v07_home initialization
+jq '.snapshotAuto={onSessionExit:true}' "${CASE_MACHINE}" > "${CASE_MACHINE}.tmp"
+mv "${CASE_MACHINE}.tmp" "${CASE_MACHINE}"
+chmod 0600 "${CASE_MACHINE}"
+session_dir="${CASE_HOME}/profiles/default/sessions/${WORKSPACE_ID}"
+mkdir -p "${session_dir}"
+printf '{"type":"session","id":"preserved"}\n' > "${session_dir}/preserved.jsonl"
+registry_before="$(sha256sum "${CASE_HOME}/workspaces/registry.json")"
+profile_before="$(sha256sum "${CASE_HOME}/profiles/default/profile.json")"
+session_before="$(sha256sum "${session_dir}/preserved.jsonl")"
 mapping_before="$(jq -c '.workspacePaths' "${CASE_MACHINE}")"
 inode_before="$(stat -c %i "${CASE_MACHINE}")"
 PI_RUN_HOME="${CASE_HOME}" "${ROOT}/bin/pi-run" workspace list >/dev/null
-[[ "$(jq -r '.schemaVersion' "${CASE_MACHINE}")" == 1 ]] \
-    || fail "ordinary workspace command migrated machine metadata"
+[[ "$(jq -r 'has("repositories")' "${CASE_MACHINE}")" == false ]] \
+    || fail "ordinary workspace command initialized managed metadata"
 [[ "$(run_ensure "${CASE_HOME}")" == "${CASE_MACHINE}" ]] \
-    || fail "migration returned the wrong machine file"
+    || fail "initialization returned the wrong machine file"
 [[ "$(stat -c %i "${CASE_MACHINE}")" != "${inode_before}" ]] \
-    || fail "migration did not atomically replace the machine file"
+    || fail "initialization did not atomically replace the machine file"
 jq -e --argjson paths "${mapping_before}" '
-    .schemaVersion == 4 and .workspacePaths == $paths and .repositories == [] and
-    (keys | sort == ["machineId","repositories","schemaVersion","workspacePaths"])
-' "${CASE_MACHINE}" >/dev/null || fail "v1 migration did not preserve the selected state"
-[[ "$(stat -c %a "${CASE_MACHINE}")" == 600 ]] || fail "migration published unsafe permissions"
+    .schemaVersion == 1 and .workspacePaths == $paths and .repositories == [] and
+    .snapshotAuto.onSessionExit == true and
+    (keys | sort == ["machineId","repositories","schemaVersion","snapshotAuto","workspacePaths"])
+' "${CASE_MACHINE}" >/dev/null \
+    || fail "v0.7 metadata initialization did not preserve machine state"
+[[ "$(sha256sum "${CASE_HOME}/workspaces/registry.json")" == "${registry_before}" ]] \
+    || fail "managed metadata initialization changed the v0.7 workspace registry"
+[[ "$(sha256sum "${CASE_HOME}/profiles/default/profile.json")" == "${profile_before}" ]] \
+    || fail "managed metadata initialization changed the v0.7 profile"
+[[ "$(sha256sum "${session_dir}/preserved.jsonl")" == "${session_before}" ]] \
+    || fail "managed metadata initialization changed the v0.7 session"
+[[ "$(stat -c %a "${CASE_MACHINE}")" == 600 ]] \
+    || fail "initialization published unsafe permissions"
+[[ "$(PI_RUN_HOME="${CASE_HOME}" "${ROOT}/bin/pi-run" snapshot auto status)" == \
+   'Automatic snapshots on successful Pi exit: enabled' ]] \
+    || fail "automatic snapshot status failed after managed metadata initialization"
 PI_RUN_HOME="${CASE_HOME}" "${ROOT}/bin/pi-run" workspace list >/dev/null
 inode_before="$(stat -c %i "${CASE_MACHINE}")"
 run_ensure "${CASE_HOME}" >/dev/null
 [[ "$(stat -c %i "${CASE_MACHINE}")" == "${inode_before}" ]] \
-    || fail "valid v4 metadata was rewritten"
+    || fail "valid schema-v1 metadata was rewritten"
 
-prepare_v1_home snapshot-auto
-jq '.snapshotAuto={onSessionExit:true}' "${CASE_MACHINE}" > "${CASE_MACHINE}.tmp"
-mv "${CASE_MACHINE}.tmp" "${CASE_MACHINE}"
-chmod 0600 "${CASE_MACHINE}"
-run_ensure "${CASE_HOME}" >/dev/null
-jq -e '
-    .schemaVersion == 4 and .snapshotAuto.onSessionExit == true and
-    .repositories == [] and
-    (keys | sort == ["machineId","repositories","schemaVersion","snapshotAuto","workspacePaths"])
-' "${CASE_MACHINE}" >/dev/null \
-    || fail "v1 migration did not preserve automatic snapshot configuration"
-[[ "$(PI_RUN_HOME="${CASE_HOME}" "${ROOT}/bin/pi-run" snapshot auto status)" == \
-   'Automatic snapshots on successful Pi exit: enabled' ]] \
-    || fail "automatic snapshot status failed after worktree metadata migration"
-
-prepare_v1_home invalid-snapshot-auto
+prepare_v07_home invalid-snapshot-auto
 jq '.snapshotAuto={onSessionExit:"yes"}' "${CASE_MACHINE}" > "${CASE_MACHINE}.tmp"
 mv "${CASE_MACHINE}.tmp" "${CASE_MACHINE}"
 chmod 0600 "${CASE_MACHINE}"
 expect_unchanged_failure "${CASE_HOME}" "${CASE_MACHINE}"
 
-prepare_v1_home unsafe-mode
+prepare_v07_home unsafe-mode
 chmod 0644 "${CASE_MACHINE}"
 expect_unchanged_failure "${CASE_HOME}" "${CASE_MACHINE}"
 
-prepare_v1_home hard-link
+prepare_v07_home hard-link
 ln "${CASE_MACHINE}" "${CASE_MACHINE}.other"
 expect_unchanged_failure "${CASE_HOME}" "${CASE_MACHINE}"
 
-prepare_v1_home wrong-machine
+prepare_v07_home wrong-machine
 jq '.machineId="0000000000000000"' "${CASE_MACHINE}" > "${CASE_MACHINE}.tmp"
 mv "${CASE_MACHINE}.tmp" "${CASE_MACHINE}"
 chmod 0600 "${CASE_MACHINE}"
 expect_unchanged_failure "${CASE_HOME}" "${CASE_MACHINE}"
 
-prepare_v1_home extra-key
+prepare_v07_home extra-key
 jq '.unexpected=true' "${CASE_MACHINE}" > "${CASE_MACHINE}.tmp"
 mv "${CASE_MACHINE}.tmp" "${CASE_MACHINE}"
 chmod 0600 "${CASE_MACHINE}"
 expect_unchanged_failure "${CASE_HOME}" "${CASE_MACHINE}"
 
-prepare_v1_home symlink
+prepare_v07_home symlink
 outside="${TMP}/outside-machine.json"
 mv "${CASE_MACHINE}" "${outside}"
 ln -s "${outside}" "${CASE_MACHINE}"
 expect_unchanged_failure "${CASE_HOME}" "${CASE_MACHINE}"
 
-prepare_v1_home withdrawn-v2
-jq '.schemaVersion=2 | .repositories=[]' "${CASE_MACHINE}" > "${CASE_MACHINE}.tmp"
+prepare_v07_home unsupported-schema
+jq '.schemaVersion=99' "${CASE_MACHINE}" > "${CASE_MACHINE}.tmp"
 mv "${CASE_MACHINE}.tmp" "${CASE_MACHINE}"
 chmod 0600 "${CASE_MACHINE}"
-before="$(sha256sum "${CASE_MACHINE}")"
-if run_ensure "${CASE_HOME}" >/dev/null 2>"${TMP}/withdrawn-v2.err"; then
-    fail "withdrawn schema-v2 metadata was accepted"
-fi
-grep -F 'withdrawn v0.8 worktree metadata requires cleanup' "${TMP}/withdrawn-v2.err" >/dev/null \
-    || fail "withdrawn schema-v2 metadata did not report cleanup requirement"
-[[ "$(sha256sum "${CASE_MACHINE}")" == "${before}" ]] \
-    || fail "withdrawn schema-v2 refusal changed machine metadata"
+expect_unchanged_failure "${CASE_HOME}" "${CASE_MACHINE}"
 
-prepare_v1_home incompatible-v3
-jq --arg repository "${REPOSITORY_ID}" --arg workspace "${WORKSPACE_ID}" '
-    .schemaVersion=3 | .repositories=[{
-        id:$repository,name:"fixture",commonGitDir:"/tmp/repository/.git",
-        primaryPath:"/tmp/repository",createdAt:"2026-10-20T12:00:00Z",
-        tasks:[{name:"fixture",workspaceId:$workspace,
-            branch:("pi-run/fixture/" + $workspace),state:"active",
-            createdAt:"2026-10-20T12:01:00Z",finishedAt:null}]
-    }]
-' "${CASE_MACHINE}" > "${CASE_MACHINE}.tmp"
+prepare_v07_home null-repositories
+jq '.repositories=null' "${CASE_MACHINE}" > "${CASE_MACHINE}.tmp"
 mv "${CASE_MACHINE}.tmp" "${CASE_MACHINE}"
 chmod 0600 "${CASE_MACHINE}"
-before="$(sha256sum "${CASE_MACHINE}")"
-PI_RUN_HOME="${CASE_HOME}" "${ROOT}/bin/pi-run" workspace list >/dev/null \
-    || fail "schema-v3 metadata blocked ordinary workspace inspection"
-if PI_RUN_HOME="${CASE_HOME}" "${ROOT}/bin/pi-run" worktree list \
-    >/dev/null 2>"${TMP}/schema-v3-list.err"; then
-    fail "worktree list accepted v0.8.3 metadata"
-fi
-grep -F 'v0.8.3 worktree metadata requires cleanup before using name-based tasks' \
-    "${TMP}/schema-v3-list.err" >/dev/null \
-    || fail "worktree list schema-v3 refusal did not explain the required cleanup"
-if run_ensure "${CASE_HOME}" >/dev/null 2>"${TMP}/schema-v3.err"; then
-    fail "v0.8.3 worktree metadata was accepted"
-fi
-grep -F 'v0.8.3 worktree metadata requires cleanup before using name-based tasks' \
-    "${TMP}/schema-v3.err" >/dev/null \
-    || fail "schema-v3 refusal did not explain the required cleanup"
-[[ "$(sha256sum "${CASE_MACHINE}")" == "${before}" ]] \
-    || fail "schema-v3 refusal changed machine metadata"
+expect_unchanged_failure "${CASE_HOME}" "${CASE_MACHINE}"
 
 write_valid_lifecycle_case() {
     local name="$1" mutation="$2"
-    prepare_v1_home "${name}"
+    prepare_v07_home "${name}"
     jq --arg repository "${REPOSITORY_ID}" --arg workspace "${WORKSPACE_ID}" '
-        .schemaVersion=4 | .repositories=[{
+        .repositories=[{
             id:$repository,name:"fixture",commonGitDir:"/tmp/repository/.git",
             primaryPath:"/tmp/repository",createdAt:"2026-10-20T12:00:00Z",
             tasks:[{name:"fixture",workspaceId:$workspace,
@@ -191,10 +165,9 @@ write_valid_lifecycle_case valid-finished '
     .workspacePaths=[]
 '
 
-prepare_v1_home same-name-separate-repositories
+prepare_v07_home same-name-separate-repositories
 jq --arg repositoryA "${REPOSITORY_ID}" --arg repositoryB "${REPOSITORY_ID_B}" \
     --arg workspaceA "${WORKSPACE_ID}" --arg workspaceB "${WORKSPACE_ID_B}" '
-    .schemaVersion=4 |
     .workspacePaths += [{workspaceId:$workspaceB,path:"/tmp/other-task"}] |
     .repositories=[
         {id:$repositoryA,name:"one",commonGitDir:"/tmp/one/.git",primaryPath:"/tmp/one",
@@ -210,11 +183,11 @@ chmod 0600 "${CASE_MACHINE}"
 run_ensure "${CASE_HOME}" >/dev/null \
     || fail "same task name in separate repositories was rejected"
 
-write_v4_case() {
+write_task_case() {
     local name="$1" mutation="$2"
-    prepare_v1_home "${name}"
+    prepare_v07_home "${name}"
     jq --arg repository "${REPOSITORY_ID}" --arg workspace "${WORKSPACE_ID}" '
-        .schemaVersion=4 | .repositories=[{
+        .repositories=[{
             id:$repository,name:"fixture",commonGitDir:"/tmp/repository/.git",
             primaryPath:"/tmp/repository",createdAt:"2026-10-20T12:00:00Z",
             tasks:[{name:"fixture",workspaceId:$workspace,
@@ -227,21 +200,21 @@ write_v4_case() {
     expect_unchanged_failure "${CASE_HOME}" "${CASE_MACHINE}"
 }
 
-write_v4_case duplicate-repository-id \
+write_task_case duplicate-repository-id \
     '.repositories += [(.repositories[0] | .commonGitDir="/tmp/other/.git" | .primaryPath="/tmp/other" | .tasks=[])]'
 # shellcheck disable=SC2016 # $repositoryB is a jq variable.
-write_v4_case duplicate-common-directory \
+write_task_case duplicate-common-directory \
     '.repositories += [(.repositories[0] | .id=$repositoryB | .primaryPath="/tmp/other" | .tasks=[])]'
 # shellcheck disable=SC2016 # $repositoryB is a jq variable.
-write_v4_case duplicate-task-workspace \
+write_task_case duplicate-task-workspace \
     '.repositories += [(.repositories[0] | .id=$repositoryB | .commonGitDir="/tmp/other/.git" | .primaryPath="/tmp/other")]'
-write_v4_case duplicate-task-name \
+write_task_case duplicate-task-name \
     '.repositories[0].tasks += [(.repositories[0].tasks[0] | .workspaceId="44444444-4444-4444-8444-444444444444")]'
-write_v4_case active-without-path '.workspacePaths=[]'
-write_v4_case finishing-without-path '.repositories[0].tasks[0].state="finishing" | .workspacePaths=[]'
-write_v4_case finished-with-path \
+write_task_case active-without-path '.workspacePaths=[]'
+write_task_case finishing-without-path '.repositories[0].tasks[0].state="finishing" | .workspacePaths=[]'
+write_task_case finished-with-path \
     '.repositories[0].tasks[0].state="finished" | .repositories[0].tasks[0].finishedAt="2026-10-20T13:00:00Z"'
-write_v4_case finished-without-timestamp \
+write_task_case finished-without-timestamp \
     '.repositories[0].tasks[0].state="finished" | .workspacePaths=[]'
 
 echo "Worktree metadata tests passed"

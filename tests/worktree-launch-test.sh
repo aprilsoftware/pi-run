@@ -128,7 +128,7 @@ WORKTREE="${HOME_DIR}/worktrees/${REPOSITORY_ID}/launch-task"
    "$(git -C "${WORKTREE}" rev-parse HEAD)" == "${BASE}" ]] \
     || fail "managed launch used the wrong branch or base"
 jq -e --arg repository "${REPOSITORY_ID}" --arg workspace "${WORKSPACE_ID}" --arg path "${WORKTREE}" '
-    .schemaVersion == 4 and .repositories[0].id == $repository and
+    .schemaVersion == 1 and .repositories[0].id == $repository and
     .repositories[0].tasks[0].name == "launch-task" and
     .repositories[0].tasks[0].workspaceId == $workspace and
     .repositories[0].tasks[0].state == "active" and

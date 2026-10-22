@@ -148,7 +148,7 @@ git -C "${PATH_B}" add workspace-b.txt
     || fail "managed worktree files or indexes crossed workspace boundaries"
 
 jq -e --arg a "${ID_A}" --arg b "${ID_B}" '
-    .schemaVersion == 4 and
+    .schemaVersion == 1 and
     ([.repositories[0].tasks[].workspaceId] | sort) == ([$a, $b] | sort) and
     ([.repositories[0].tasks[].name] | sort) == ["task-a","task-b"] and
     ([.workspacePaths[].workspaceId | select(. == $a or . == $b)] | length) == 2
