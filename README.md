@@ -74,7 +74,7 @@ resources, and other infrastructure need their own recovery mechanisms.
 - **Guardian command review:** an optional, session-scoped evidence-aware
   reviewer checks acting-agent `bash` and `run` calls. Supported actions proceed;
   disputed invocations are cancelled and left for human direction. Guardian
-  starts Off and is not a sandbox.
+  starts Off.
 - **Continuity:** stable workspace identities and saved sessions let you leave,
   resume, move a checkout, or reconnect work after recovery.
 - **Parallel repository work:** persistent managed Git worktrees give concurrent
