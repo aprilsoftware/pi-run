@@ -2,9 +2,9 @@
 
 Pi-Run turns [Pi](https://pi.dev/) into a durable, containerized work environment
 for software development and system administration. It combines a capable,
-versioned toolchain with profiles, sessions, review, and recovery while limiting
-host filesystem exposure to the workspace, profile, and narrowly defined runtime
-resources.
+versioned toolchain with profiles, sessions, Guardian command review, and
+recovery while limiting host filesystem exposure to the workspace, profile, and
+narrowly defined runtime resources.
 
 ## Why Pi-Run exists
 
@@ -71,14 +71,18 @@ resources, and other infrastructure need their own recovery mechanisms.
 - **Purpose-specific exposure:** only the selected profile is mounted, providing
   its instructions, provider access, credentials, settings, skills, Guardian
   policy, and conversations while leaving other profiles out of view.
+- **Guardian command review:** an optional, session-scoped evidence-aware
+  reviewer checks acting-agent `bash` and `run` calls. Supported actions proceed;
+  disputed invocations are cancelled and left for human direction. Guardian
+  starts Off and is not a sandbox.
 - **Continuity:** stable workspace identities and saved sessions let you leave,
   resume, move a checkout, or reconnect work after recovery.
 - **Parallel repository work:** persistent managed Git worktrees give concurrent
   sessions separate branches, indexes, and working files while keeping their
   host paths, shared Git authority, and lifecycle visible.
 - **Layered control:** profile selection limits the identity and private context
-  presented to the run; configurable instructions set the working contract;
-  Guardian can review covered commands; external systems retain final authority.
+  presented to the run; configurable instructions and human checkpoints set the
+  working contract; external systems retain final authority.
 - **Deliberate remote access:** use profile-specific SSH keys without mounting
   the host's complete `.ssh` folder.
 - **Encrypted state recovery:** manual or optional successful-exit snapshots
