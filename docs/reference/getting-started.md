@@ -33,8 +33,8 @@ pi-run --home /private/pi-run --profile operations /srv/runbooks -r
 ```
 
 Network selection belongs to `profile.json`. `host` maps to Docker host
-networking, `offline` maps to Docker network-none, and experimental `restricted`
-resolves model-provider TCP/443 endpoints plus the profile's typed manual rules.
+networking, `offline` maps to Docker network-none, and `restricted` resolves
+model-provider TCP/443 endpoints plus the profile's typed manual rules.
 The removed prerelease `--network` and `--allow-host` launch options are not
 competing policy sources.
 
@@ -142,9 +142,9 @@ the host CA bundle, skills, and session paths. On launch it reports:
 pi-run: home=<resolved-data-home>
 pi-run: profile=<profile> workspace=<resolved-workspace>
 pi-run: network=<docker-host|docker-offline|docker-restricted>
-pi-run: model-tcp=<provider-host>:443[...]                 # restricted only
-pi-run: ssh-tcp=<count> managed targets on port 22          # restricted only
-pi-run: manual-tcp=<selector>=<destination>:<ports>[...]   # restricted only
+pi-run: model-tcp=<count> provider targets on port 443      # restricted only
+pi-run: ssh-tcp=<count> managed targets on port 22           # restricted only
+pi-run: manual-tcp=<selector>=<destination>:<ports>[...]    # restricted only
 pi-run: Guardian loaded; review mode starts Off
 ```
 

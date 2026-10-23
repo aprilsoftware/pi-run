@@ -40,7 +40,7 @@ Networking is selected by the profile, not by normal launch arguments:
 | --- | --- |
 | `host` | Docker host networking, including Docker-host loopback and surrounding routes |
 | `offline` | Docker network-none; loopback remains but there is no external interface |
-| `restricted` | Experimental default-deny namespace with a version-matched egress sidecar |
+| `restricted` | Default-deny namespace with a version-matched egress sidecar |
 
 A missing `network` object preserves host networking for profiles created by
 stable v0.6 releases. New profiles explicitly contain `"mode": "host"`. A
@@ -96,11 +96,12 @@ design.
 
 The launcher freezes normalized rules in private temporary state mounted only
 into the sidecar. Pi receives no `NET_ADMIN` and cannot read or alter that active
-policy. Startup reports `model-tcp`, `manual-tcp`, and the `ssh-tcp` target
-count and port. It does not print the inferred SSH target inventory; request that
-explicitly with `pi-run ssh-key list`. Stop if the reported authority differs
-from your intent. The managed SSH credential directory is separately
-over-mounted read-only in normal sessions. Changes made through SSH management
+policy. Startup reports the `model-tcp` and `ssh-tcp` target counts and fixed
+ports plus exact explicitly configured `manual-tcp` rules. It does not print the
+automatically inferred model or SSH target inventories; request the SSH
+inventory explicitly with `pi-run ssh-key list`. Stop if the reported counts or
+manual authority differ from your intent. The managed SSH credential directory
+is separately over-mounted read-only in normal sessions. Changes made through SSH management
 or to `profile.json`, `auth.json`, `models.json`, or `settings.json` can affect
 the next launch but not a running sidecar.
 
@@ -152,7 +153,9 @@ Worktrees also do not isolate credentials, shared build caches, dependency
 caches, databases, service ports, network routes, remote repositories, or files
 reachable through separately selected mounts. A branch and path being available
 does not authorize commits, merges, rebases, pushes, branch deletion,
-publication, or external operations.
+publication, or external operations. The exception is the exact local merge and
+cleanup plan displayed by `worktree finish`, authorized only when the user types
+the complete task name at its interactive confirmation.
 
 Fresh managed materialization is narrower than a normal session. Pi-Run creates
 the host worktree with `--no-checkout`, disables checkout hooks, and materializes
@@ -163,10 +166,14 @@ instead of host execution. These bootstrap restrictions do not remain an
 independent security boundary after Pi starts.
 
 Managed source trees and machine associations are host-visible persistent state
-and are excluded from encrypted snapshots. Pi-Run does not automatically stash,
-commit, reset, clean, merge, rebase, push, remove a worktree, or delete a branch.
-Stopping a run, disabling the repository preference, or finding no transcript is
-not evidence that the checkout can be discarded.
+and are excluded from encrypted snapshots. Ordinary launch and exit do not
+stash, commit, reset, clean, merge, rebase, push, remove a worktree, or delete a
+branch. Explicit `worktree finish` is different: after showing its local plan and
+receiving task-name confirmation, it integrates clean committed work in an
+offline restricted runtime, then removes the checkout and integrated local task
+branch without force. It never fetches, pushes, or deletes a remote branch.
+Stopping a run or finding no transcript is not evidence that the checkout can
+be discarded.
 
 Use `pi-run worktree list` to inspect recorded state and stop if it reports
 `pending`, `missing`, `path-conflict`, `git-conflict`, or `unsafe`. See the

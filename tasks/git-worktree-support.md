@@ -1,86 +1,92 @@
-# Managed Git worktrees for parallel Pi-Run sessions
+# Managed Git worktrees for explicit parallel tasks
 
 ## Status and purpose
 
-The v0.8 managed-worktree scope described here is implemented and validated.
-This document preserves the design constraints, selected semantics, and deferred
-work behind that implementation. The separately reviewed cleanup/removal
-operation remains intentionally unimplemented.
+The first v0.8 prerelease prototype is implemented and validated, but user
+validation rejected its automatic repository mode. It incorrectly treated a
+fresh Pi conversation as a request for a fresh worktree and branch. This record
+defines the task-oriented replacement. Named task start, open, finish, and
+historical listing are now implemented.
 
-Pi-Run can run several sessions against one Git repository without sharing one
-writable checkout. Each active task receives a separate host-visible Git
-worktree while normal Pi-Run launch, profile, session, network, Guardian, and
-snapshot behavior remains recognizable.
+A worktree is the filesystem and branch context for one explicitly named
+parallel task. It may contain many Pi conversations over its lifetime. Ordinary
+Pi-Run launches remain attached to the checkout the user selected and never
+create a worktree implicitly.
 
-Git worktrees provide change isolation, not a security boundary. They share Git
-objects, refs, configuration, hooks, remotes, and external systems.
+Git worktrees provide change isolation, not a security boundary. They cannot
+safely provide independent working files while several worktrees update the same
+checked-out branch. Tasks therefore use separate branches and share Git objects,
+refs, configuration, hooks, remotes, credentials, and external systems.
 
 ## Selected user model
 
-Worktree behavior can be selected as a persistent repository preference or as an
-override when creating a managed workspace.
-
-Persistent commands:
+Ordinary direct-checkout behavior remains familiar:
 
 ```bash
-pi-run worktree enable
-pi-run worktree disable
-pi-run worktree status
+pi-run .
+pi-run . -c
+pi-run . -r
+```
+
+The selected complete workflow uses explicit named tasks:
+
+```bash
+pi-run worktree start <task-name> <repository>
+pi-run worktree open <task-name> <repository>
+pi-run worktree open <task-name> <repository> -c
+pi-run worktree open <task-name> <repository> -r
 pi-run worktree list
+pi-run worktree list --all
+pi-run worktree finish <task-name>
 ```
 
-Per-launch overrides:
+`start`, `open`, `finish`, bare `list`, and historical `list --all` are
+implemented. `start` and `open` require a relative or absolute repository path;
+`.` selects the current directory. `finish` resolves the repository containing
+the current host directory. Task names are unique within that machine-local
+repository and use a short validated command-line spelling rather than exposing
+UUIDs as the normal user interface. Profiles continue to select credentials,
+instructions, skills, settings, and conversations; they do not create or
+identify source worktrees.
 
-```bash
-pi-run --worktree .
-pi-run --no-worktree .
-```
+`start` is the only ordinary operation that creates a worktree. `open` always
+uses the named existing task and starts a fresh Pi conversation unless `-c` or
+`-r` is supplied. Any number of profile-scoped Pi conversations can therefore
+belong to one task without allocating more branches or checkouts.
 
-The persistent setting applies to the repository on the current machine. It is
-not committed to the repository and does not belong to a profile. Profiles
-continue to select credentials, instructions, skills, settings, and sessions;
-they do not decide where source worktrees live.
+The replacement removes repository `enable`, `disable`, and `status` preferences
+and removes the `--worktree` and `--no-worktree` launch overrides. Worktree use
+is neither a repository default nor an automatic consequence of starting Pi.
+Existing direct sessions remain direct, and ordinary launches never migrate
+between direct and managed source contexts.
 
-For a new managed workspace, command-line intent takes precedence:
-
-| Repository preference | Launch | New workspace behavior |
-| --- | --- | --- |
-| Disabled | `pi-run .` | Use the selected checkout directly. |
-| Disabled | `pi-run --worktree .` | Create a managed worktree. |
-| Enabled | `pi-run .` | Create a managed worktree. |
-| Enabled | `pi-run --no-worktree .` | Use the selected checkout directly. |
-
-Worktree selection becomes immutable once a workspace/session group exists.
-Continuing or resuming always reopens its recorded directory. A later flag must
-not silently move an existing conversation between the primary checkout and a
-managed worktree.
+Startup and listing report editor-neutral, task-oriented facts without exposing
+repository or workspace UUIDs. Pi-Run does not launch, configure, or print
+commands for a particular editor.
 
 ## Identity model
 
-The current workspace UUID remains the identity of one concrete writable
-directory. Every managed worktree receives its own workspace UUID and its own
-profile-scoped session directory.
-
-A new repository-level association groups the primary checkout and its managed
-workspaces for discovery:
+The task name is the persistent human identity of one managed worktree and
+branch. Every task also receives one internal workspace UUID for portable
+conversation/session identity and one profile-scoped session directory per
+profile.
 
 ```text
 repository identity
-├── primary workspace identity
-├── managed workspace identity A
-│   └── profile session groups
-└── managed workspace identity B
-    └── profile session groups
+├── primary direct workspace identity
+├── named task A → managed workspace identity A
+│   ├── profile session group
+│   └── multiple Pi conversations
+└── named task B → managed workspace identity B
+    ├── profile session group
+    └── multiple Pi conversations
 ```
 
-The repository association must not collapse child worktrees into the primary
-workspace UUID. Doing so could resume a conversation against the wrong branch
-or filesystem state.
-
-Pi owns individual conversation IDs and conversation branches inside a
-workspace's session directory. The durable Pi-Run association is therefore one
-managed worktree to one workspace UUID to one or more related Pi session files,
-not necessarily one worktree for every JSONL file.
+The repository association must not collapse tasks into the primary workspace
+UUID or allocate a task for each JSONL file. Pi owns individual conversation IDs
+and conversation branches inside the task workspace's session directory. The
+durable association is one named task to one worktree and workspace UUID to many
+related Pi conversations.
 
 Each repository receives a random UUID on the current machine. Its canonical,
 validated Git common directory is the local uniqueness key. A remote URL is not
@@ -92,64 +98,58 @@ existing portable workspace registry continues to identify workspace identities
 and session groups without claiming that a source repository or its worktrees
 can be reconstructed on another machine.
 
-## Launch and resume behavior
+## Task start, open, and resume behavior
 
-Starting a new managed session should:
+Starting a named task must:
 
-1. validate that the selected path belongs to a supported non-bare Git
-   repository;
-2. resolve and validate the repository's Git directory and common Git directory;
+1. validate the task name and reject an active or finishing duplicate in the
+   selected repository;
+2. validate a supported non-bare Git repository and its common Git directory;
 3. resolve the selected checkout's `HEAD` to one exact commit and inspect its
    working state;
-4. allocate one workspace UUID and preflight its branch, checkout path, Git
-   administration path, and metadata associations;
-5. create the dedicated branch and host-visible worktree at the recorded commit;
-6. publish the workspace registration, path mapping, and repository association
-   atomically; and
-7. launch Pi with the managed worktree mounted at `/workspace`.
+4. allocate one workspace UUID for a new task or reuse the exact workspace UUID
+   of one finished task with that name;
+5. preflight the branch, checkout path, Git administration path, registry, and
+   machine associations;
+6. create the dedicated branch and host-visible worktree at the recorded commit;
+7. publish a new association or atomically reactivate the finished association;
+   and
+8. launch a fresh Pi conversation by default.
 
-The branch is `pi-run/<complete-workspace-uuid>`, and the final checkout path is
-`<Pi-Run home>/worktrees/<repository-id>/<workspace-id>/`. The UUID is generated
-once for the operation. Any collision involving the UUID, branch, checkout path,
-Git administration path, workspace registry, or machine metadata fails without
-silently choosing another identity.
+New branches use the validated form `pi-run/<task-name>`. Managed checkout
+storage is `<Pi-Run home>/worktrees/<repository-id>/<task-name>/`, and Git's
+administration directory is `<common-git-dir>/worktrees/<task-name>/`. The
+workspace UUID is generated once but remains internal. Any collision involving
+the task name, UUID, branch, checkout path, Git administration path, registry,
+or machine metadata fails without silently selecting another identity.
 
-The launch must report that a managed worktree is active, including the full
-workspace identity, sanitized branch and host path, and recorded base commit.
-Transparent invocation must not make source location or branch state invisible.
+Starting a finished task recreates its branch and checkout from the selected
+checkout's current committed `HEAD`, transitions its existing record back to
+`active`, and retains its profile conversations. Direct trailing Pi arguments do
+not require a `--` separator, though the separator remains accepted. With no
+selector the restarted task opens a new conversation; `-c` continues its newest
+conversation and `-r` delegates selection to Pi. Continuation selectors remain
+invalid for a new task with no prior conversations. Any recreation failure before
+publication leaves the task finished and archived.
 
-For associated managed workspaces:
+`open` resolves exactly one active task by name in the current repository. It
+never creates a branch or checkout. Without a selector it starts another Pi
+conversation in the same task workspace; `-c` continues the newest conversation
+for the selected profile, and `-r` delegates selection among that task's
+conversations to Pi. Missing, finished, active elsewhere, or ambiguous task state
+fails before Docker starts.
 
-```bash
-pi-run --worktree . -c
-pi-run --worktree . -r
-```
+Every managed launch reports the selected profile, task name, and current task
+revision. Workspace UUIDs, internal branches, and managed storage paths remain
+validation details and are not part of normal startup output. No automatic
+selection by newest transcript occurs across tasks because the user has already
+named the source context.
 
-select only among managed workspaces associated with that exact machine-local
-repository. A candidate must have complete portable and machine metadata, an
-available canonical worktree with the expected Git relationship, and at least
-one valid session transcript under the selected profile. Profile selection
-therefore participates directly in routing.
-
-Pi-Run selects the workspace whose valid session transcripts have the newest
-filesystem modification time. `-c` then asks Pi to continue within that
-workspace, while `-r` delegates individual transcript selection to Pi within the
-same workspace. Modification time is routing convenience, not authorization or
-trusted provenance. If there is no candidate, Pi-Run fails without creating a
-worktree. If multiple workspaces tie for newest activity, it fails as ambiguous
-rather than choosing by UUID or branch name.
-
-An older specific workspace remains selectable with
-`pi-run resume <profile> <workspace-id>`. Interactive global resume continues to
-present session groups for human selection. Both explicit and interactive
-global resume must recognize a selected managed association, reopen its recorded
-child path, acquire its launch lock, and use the managed common-Git and generated
-`.git` mounts rather than treating the path as an ordinary checkout.
-
-An existing direct-checkout session must not migrate automatically when invoked
-with `--worktree`. Migration would require explicit policy for dirty files,
-base revisions, workspace identity, and historical filesystem assumptions and
-is outside the initial implementation.
+Interactive and explicit global `pi-run resume` remain association-driven. A
+selected active task reopens its exact worktree and acquires its launch lock. A
+finished task cannot be resumed while its checkout is absent; explicit
+`worktree start` must first recreate and reactivate it. Direct sessions remain
+direct and are never migrated automatically.
 
 ## Concurrency
 
@@ -189,27 +189,60 @@ Worktrees do not isolate shared build caches, databases, service ports,
 credentials, network authority, remote repositories, or files outside the
 selected checkout.
 
-## Disable and cleanup behavior
+## Task finish behavior
 
-`pi-run worktree disable` changes only the repository preference for future new
-workspaces. It must not:
+Normal Pi exit suspends a task; it does not mean the work is complete. A task
+remains open across terminal closure, failed runs, snapshot restarts, and any
+number of Pi conversations until the user explicitly runs from the intended
+integration checkout:
 
-- remove an existing worktree;
-- delete a branch;
-- discard tracked or untracked changes;
-- move commits;
-- merge, rebase, push, or reset;
-- invalidate workspace identities or saved sessions; or
-- prevent an existing managed session from being resumed.
+```bash
+pi-run worktree finish <task-name>
+```
 
-Cleanup must be a separate explicit operation. Its initial command shape is
-open. Any removal operation should refuse an active, dirty, locked, missing, or
-ambiguous worktree by default. Branch deletion, if ever offered, must remain a
-separate deliberate choice and must not be implied by worktree removal.
+`finish` presents the task name, attached target branch, and number of task
+commits not yet in that target. It deliberately omits internal workspace IDs and
+storage paths. The confirmation proposes one understandable outcome: integrate
+the task, remove its managed checkout, and delete its local task branch. Typing
+the complete task name authorizes that bounded local workflow.
 
-Automatic removal of apparently empty worktrees is excluded initially. A run
-can exit before writing a transcript while still leaving meaningful source or
-Git state.
+Finish inspects and displays tracked and non-ignored untracked task changes that
+will become one `Complete task <task-name>` commit, plus ignored task paths that
+will be discarded with the checkout. Typing the complete task name authorizes
+that commit, the displayed ignored-content removal, integration, and cleanup.
+The state is revalidated before mutation. Submodules and nested repositories are
+not inferred as task content and remain refusals.
+
+When commits need integration, the target must have no tracked modifications.
+Pi-Run compares task-changed paths with actual untracked and ignored target paths
+and refuses exact or parent/child overlap while preserving unrelated
+machine-local content. An already-integrated task skips target
+working-content inspection because no merge occurs. Pi-Run also refuses active
+or ambiguous launch locks, unsafe or conflicting metadata, a missing active
+checkout, Git administration mismatch, or a detached target. Inspection, commit,
+and merge run in a version-matched offline, capability-free runtime without
+profiles or credentials and with Git hooks disabled, so repository code is not
+executed on the host merely to decide or perform integration.
+
+Finish uses fast-forward integration when possible and a normal unsigned merge
+commit for non-conflicting divergence. On conflict or merge failure, it aborts
+the merge and verifies the target's original commit and tracked working state.
+Verified rollback leaves the task active; unverifiable target state fails closed for
+manual inspection. Pi-Run does not fetch or push.
+
+Only successful integration transitions the task to `finishing`. Pi-Run then
+removes the linked checkout, non-force deletes the integrated local task branch,
+removes the concrete path mapping, and marks the task `finished`. Portable
+workspace identity and every profile's conversation history remain as historical
+records. Normal `worktree list` shows open tasks; `worktree list --all` also
+shows finished task metadata without claiming that a checkout exists.
+
+Finish remains a recoverable state transition rather than an uncoordinated
+sequence of Git and JSON changes. An interruption leaves an explicit `finishing`
+state that a validated retry may complete. It never force-deletes, deletes a
+remote branch, rebases, resets, silently discards task content outside the
+confirmed ignored paths, or infers completion from `/quit`, transcript absence,
+cleanliness, or an inactive lock.
 
 ## Source checkout and base revision
 
@@ -255,11 +288,12 @@ future work.
 Managed worktree checkouts live under a private machine-local root:
 
 ```text
-<Pi-Run home>/worktrees/<repository-id>/<workspace-id>/
+<Pi-Run home>/worktrees/<repository-id>/<task-name>/
 ```
 
-Repository and workspace IDs are complete lowercase UUIDs. The root and its
-managed descendants must be ordinary non-symlink directories owned by the host
+Repository IDs are complete lowercase UUIDs; validated task names form the
+human-readable checkout component. The root and its managed descendants must be
+ordinary non-symlink directories owned by the host
 user. Creation uses private permissions and refuses existing, linked, special,
 or ambiguously mapped paths. The location remains inspectable from the host and
 supports ordinary Git commands; worktree content is not container-only or
@@ -283,13 +317,13 @@ from restored names, remotes, or paths.
 
 ## Machine-local metadata
 
-The existing machine file advances from schema version 1 to schema version 2.
-Its selected shape is:
+The task-oriented machine file extends schema version 1:
 
 ```json
 {
-  "schemaVersion": 2,
+  "schemaVersion": 1,
   "machineId": "<machine-id>",
+  "snapshotAuto": {"onSessionExit": true},
   "workspacePaths": [
     {"workspaceId": "<workspace-uuid>", "path": "<canonical-host-path>"}
   ],
@@ -299,13 +333,15 @@ Its selected shape is:
       "name": "<display-name>",
       "commonGitDir": "<canonical-host-path>",
       "primaryPath": "<canonical-host-path>",
-      "enabled": true,
       "createdAt": "<UTC-timestamp>",
-      "managedWorkspaces": [
+      "tasks": [
         {
+          "name": "<task-name>",
           "workspaceId": "<workspace-uuid>",
-          "branch": "<branch-name>",
-          "createdAt": "<UTC-timestamp>"
+          "branch": "pi-run/<task-name>",
+          "state": "active",
+          "createdAt": "<UTC-timestamp>",
+          "finishedAt": null
         }
       ]
     }
@@ -313,25 +349,33 @@ Its selected shape is:
 }
 ```
 
-`workspacePaths` remains authoritative for the concrete path of every primary,
-ordinary, or managed workspace. A managed-workspace record relates that
-workspace to a repository and branch without duplicating its path. No source
-content, remote URL, credential, commit contents, or Git configuration enters
-the machine file.
+`snapshotAuto` is optional and retains the existing machine-local
+successful-exit snapshot preference. `workspacePaths` remains authoritative for
+concrete active or finishing paths; task records relate names, workspaces, and
+branches without duplicating paths. `active` and `finishing` tasks require an
+exact path mapping and a null `finishedAt`; `finished` tasks require a timestamp
+and no path mapping. No source content, remote URL, credential, commit contents,
+Git configuration, or editor state enters the machine file.
 
-Repository IDs and workspace IDs must be unique. Canonical common Git
-directories must be unique across repository records, and a workspace may
-belong to at most one managed-workspace record. Display names and branch names
-are validated and sanitized before display; paths are canonical absolute host
-paths and are never interpreted as authorization to mount an unrelated target.
+Repository IDs, workspace IDs, and canonical common Git directories are unique
+machine-wide. Task and branch names are unique within each repository. Task
+names and branch names are
+validated before use; display text is sanitized; paths are canonical absolute
+host paths and are never interpreted as authorization to mount an unrelated
+target.
 
-When worktree functionality first needs a schema-version-1 machine file,
-Pi-Run performs a locked atomic migration that preserves `machineId` and
-`workspacePaths`, adds an empty `repositories` array, writes schema version 2,
-and publishes the replacement only after complete validation. Invalid,
-linked, hard-linked, unexpectedly permissive, or unsupported machine files fail
-without partial migration. Ordinary v0.7 launches do not need to rewrite the
-file merely because v0.8 is installed.
+A v0.7 machine file has the same schema version without `repositories`. The
+first task operation adds an empty `repositories` array with a locked atomic
+replacement while preserving `machineId`, `workspacePaths`, and optional
+`snapshotAuto`. The workspace registry, profiles, sessions, credentials, and
+other Pi-Run home state are not rewritten. Invalid, linked, hard-linked,
+unexpectedly permissive, or unsupported machine files fail without partial
+initialization.
+
+Managed-task metadata created only by prerelease development is not part of the
+stable upgrade contract. It is removed from development machines before the
+final task-oriented release rather than represented by permanent migration,
+branch/path compatibility, or format-specific refusal logic.
 
 Machine files and the managed worktree root remain excluded from portable
 snapshots. The portable workspace registry schema does not need to change for
@@ -343,10 +387,10 @@ The portable registry and machine file cannot be replaced atomically together.
 Managed-worktree publication therefore uses a recoverable ordered transaction
 while holding the workspace registry lock. After revalidating the worktree's
 repository, path, Git administration, and branch, Pi-Run atomically adds its
-`workspacePaths` and `managedWorkspaces` records together in the machine file.
-That complete machine association is the durable local publication marker.
-Pi-Run then atomically publishes the portable `kind: "git"` workspace entry with
-the same workspace ID, repository-derived display name, and creation timestamp.
+`workspacePaths` and named `tasks` records together in the machine file. That
+complete machine association is the durable local publication marker. Pi-Run
+then atomically publishes the portable `kind: "git"` workspace entry with the
+same workspace ID, repository-and-task display name, and creation timestamp.
 Pi must not launch until both files validate.
 
 An interruption after machine publication can leave a machine-only pending
@@ -423,48 +467,47 @@ primary checkout and sibling worktree files should not be mounted merely for
 convenience. The Docker socket remains unavailable.
 
 Repository, workspace, branch, and path availability are capabilities rather
-than user authorization to merge, push, delete, or publish work. Existing
-Guardian and human-approval semantics remain unchanged.
+than user authorization to merge, push, delete, or publish work. Only the
+interactive, task-name confirmation in `worktree finish` authorizes its displayed
+local merge and cleanup plan. Existing Guardian and human-approval semantics
+remain unchanged elsewhere.
 
 Session snapshots can preserve portable metadata and conversations but not
 source content, commits absent from a durable remote, untracked worktree files,
 or external side effects. Missing worktrees after restore should be reported as
 unavailable, not recreated from guesses.
 
-## Implementation status
+## Task-oriented implementation status
 
-The separately approved increments completed:
+The replacement now provides unconditional direct ordinary launches, explicit
+`worktree start <task-name> <repository>`, schema-v1 named task lifecycle records,
+collision-safe isolated materialization, recoverable machine-first publication,
+name-first task reporting, compact repository-grouped listing, one-active-launch
+locking, and association-driven global resume. Prototype repository preferences,
+launch flags, unnamed
+workspaces, and cross-worktree transcript routing have been removed.
 
-1. the disposable linked-worktree mount and isolated-materialization probe;
-2. schema-v2 repository and managed-workspace metadata with atomic migration;
-3. repository preferences and per-launch overrides;
-4. collision-safe creation from attached or detached committed `HEAD`;
-5. recoverable machine-first metadata publication;
-6. managed mounting, reporting, and one-active-launch locking;
-7. profile-specific `-c` and `-r` routing plus association-driven global resume;
-8. repository-grouped, non-mutating status inspection;
-9. user, reference, and security documentation; and
-10. isolated tests plus real-Docker materialization, launch, coexistence,
-    continuation, override, listing, and temporary-state cleanup validation.
-
-The implementation keeps direct launches compatible for unregistered or
-disabled repositories and does not migrate existing direct sessions. Every
-managed workspace retains an immutable repository, branch, path, and workspace
-association.
+Named `worktree open <task-name> <repository>` supports fresh, `-c`, and `-r`
+task-local conversations without creating another checkout. Recoverable
+`finish` explicitly integrates committed work, removes the checkout and local
+task branch, and preserves portable identity and conversations. It is never
+inferred from ordinary exit or Git state.
 
 ## Deferred decisions and exclusions
 
-These are future features, not incomplete implicit behavior:
+The selected replacement still excludes:
 
-- an explicit conservative cleanup/removal command and its treatment of active,
-  dirty, locked, missing, conflicting, or session-bearing worktrees;
-- optional branch deletion, which must remain separate from worktree removal;
-- explicit recovery after users move a primary checkout or remove or relocate a
-  managed worktree with ordinary Git;
-- automatic migration of direct sessions or uncommitted source state;
-- automatic merge, rebase, push, reset, pruning, or repository maintenance; and
-- declared support policy for submodules, nested repositories, and Git
-  LFS-specific workflows.
+- automatic worktree creation, inferred task completion, or source-state
+  migration;
+- unconfirmed merge or branch deletion, rebase, push, reset, pruning, or
+  repository maintenance;
+- implicit cleanup based on exit, transcript absence, Git cleanliness, or merge
+  detection;
+- recovery after users move a primary checkout or manually remove or relocate a
+  managed task worktree;
+- task reopening after finish; and
+- declared support for submodules, nested repositories, and Git LFS-specific
+  workflows.
 
 Unsupported, missing, moved, unsafe, or ambiguous state continues to fail closed
 rather than being guessed, repaired, or deleted automatically.

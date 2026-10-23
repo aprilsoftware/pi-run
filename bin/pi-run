@@ -7,7 +7,7 @@ umask 077
 usage() {
     cat >&2 <<EOF
 Usage:
-  pi-run [--home <path>] [--profile <name>] [--worktree|--no-worktree] <workspace> [pi arguments...]
+  pi-run [--home <path>] [--profile <name>] <workspace> [pi arguments...]
   pi-run [--home <path>] init
   pi-run [--home <path>] home
   pi-run version
@@ -26,7 +26,10 @@ Usage:
   pi-run [--home <path>] [--profile <name>] skill list
   pi-run [--home <path>] workspace list
   pi-run [--home <path>] workspace link <workspace-id> <path>
-  pi-run [--home <path>] worktree <status|enable|disable|list>
+  pi-run [--home <path>] [--profile <name>] worktree start <task-name> <repository> [pi arguments...]
+  pi-run [--home <path>] [--profile <name>] worktree open <task-name> <repository> [pi arguments...]
+  pi-run [--home <path>] worktree finish <task-name>
+  pi-run [--home <path>] worktree list [--all]
   pi-run [--home <path>] session list [<workspace-id>]
   pi-run [--home <path>] resume [<profile> <workspace-id>]
   pi-run [--home <path>] [--profile <name>] ssh-key list
@@ -53,7 +56,7 @@ Examples:
   pi-run doctor
   pi-run upgrade
   pi-run upgrade --check
-  pi-run upgrade v0.8.0
+  pi-run upgrade vX.Y.Z
   pi-run snapshot
   pi-run home
 EOF
@@ -144,8 +147,10 @@ source "${PI_RUN_LIB_ROOT}/doctor.sh"
 PROFILE="default"
 PROFILE_EXPLICIT=false
 HOME_OVERRIDE=""
-WORKTREE_REQUESTED=false
-NO_WORKTREE_REQUESTED=false
+WORKTREE_TASK_START=false
+WORKTREE_TASK_OPEN=false
+WORKTREE_TASK_NAME=""
+WORKTREE_REPOSITORY_INPUT=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -159,14 +164,6 @@ while [[ $# -gt 0 ]]; do
             PROFILE="$2"
             PROFILE_EXPLICIT=true
             shift 2
-            ;;
-        --worktree)
-            WORKTREE_REQUESTED=true
-            shift
-            ;;
-        --no-worktree)
-            NO_WORKTREE_REQUESTED=true
-            shift
             ;;
         -h|--help)
             usage 0
@@ -372,17 +369,8 @@ sanitize_display() {
     printf '%s' "${value}"
 }
 
-[[ "${WORKTREE_REQUESTED}" == false || "${NO_WORKTREE_REQUESTED}" == false ]] \
-    || fail "--worktree and --no-worktree cannot be used together"
 RESUME_LAUNCH=false
 COMMAND="${1:-}"
-if [[ "${WORKTREE_REQUESTED}" == true || "${NO_WORKTREE_REQUESTED}" == true ]]; then
-    case "${COMMAND}" in
-        version|machine-id|doctor|upgrade|home|init|profile|network|skill|workspace|worktree|session|resume|ssh-key|snapshot)
-            fail "--worktree and --no-worktree are only valid for a workspace launch"
-            ;;
-    esac
-fi
 if [[ "${COMMAND}" == snapshot && "${2:-}" == restore ]]; then
     HOME_LOCK_MODE=exclusive
 fi
@@ -540,17 +528,42 @@ case "${COMMAND}" in
         exit 0
         ;;
     worktree)
-        initialize_home
-        require_jq
-        [[ $# -eq 2 ]] || usage
-        case "$2" in
-            status) show_worktree_preference ;;
-            enable) set_worktree_preference true ;;
-            disable) set_worktree_preference false ;;
-            list) list_managed_worktrees ;;
+        case "${2:-}" in
+            list)
+                [[ $# -eq 2 || ($# -eq 3 && "${3:-}" == --all) ]] || usage
+                initialize_home
+                require_jq
+                if [[ "${3:-}" == --all ]]; then
+                    list_managed_worktrees true
+                else
+                    list_managed_worktrees false
+                fi
+                exit 0
+                ;;
+            start)
+                [[ $# -ge 4 && "${4:-}" != -* ]] || usage
+                WORKTREE_TASK_START=true
+                WORKTREE_TASK_NAME="${3:-}"
+                WORKTREE_REPOSITORY_INPUT="${4:-}"
+                validate_worktree_task_name "${WORKTREE_TASK_NAME}"
+                ;;
+            open)
+                [[ $# -ge 4 && "${4:-}" != -* ]] || usage
+                WORKTREE_TASK_OPEN=true
+                WORKTREE_TASK_NAME="${3:-}"
+                WORKTREE_REPOSITORY_INPUT="${4:-}"
+                validate_worktree_task_name "${WORKTREE_TASK_NAME}"
+                ;;
+            finish)
+                [[ $# -eq 3 ]] || usage
+                validate_worktree_task_name "${3:-}"
+                initialize_home
+                require_jq
+                finish_managed_worktree_task "$(pwd -P)" "$3"
+                exit 0
+                ;;
             *) usage ;;
         esac
-        exit 0
         ;;
     session)
         [[ "${2:-}" == "list" ]] || usage
@@ -668,6 +681,16 @@ esac
 if [[ "${RESUME_LAUNCH}" == true ]]; then
     WORKSPACE_INPUT="${RESUME_WORKSPACE_PATH}"
     EXTRA_PI_ARGS=(--resume)
+elif [[ "${WORKTREE_TASK_START}" == true ]]; then
+    WORKSPACE_INPUT="${WORKTREE_REPOSITORY_INPUT}"
+    if [[ "${5:-}" == -- ]]; then
+        EXTRA_PI_ARGS=("${@:6}")
+    else
+        EXTRA_PI_ARGS=("${@:5}")
+    fi
+elif [[ "${WORKTREE_TASK_OPEN}" == true ]]; then
+    WORKSPACE_INPUT="${WORKTREE_REPOSITORY_INPUT}"
+    EXTRA_PI_ARGS=("${@:5}")
 else
     WORKSPACE_INPUT="$1"
     shift
@@ -692,56 +715,72 @@ if [[ "${RESUME_LAUNCH}" == false ]]; then
     resolve_configured_profile true
 fi
 USE_MANAGED_WORKTREE=false
-MANAGED_CONTINUATION=false
-if [[ "${RESUME_LAUNCH}" == false ]]; then
-    if [[ "${WORKTREE_REQUESTED}" == true ]]; then
-        USE_MANAGED_WORKTREE=true
-    elif [[ "${NO_WORKTREE_REQUESTED}" == false ]] && worktree_preference_enabled_for_path "${WORKSPACE}"; then
-        USE_MANAGED_WORKTREE=true
-    fi
-    if [[ "${USE_MANAGED_WORKTREE}" == true && "${CONTINUATION_SELECTOR_COUNT}" != 0 ]]; then
-        if (( CONTINUATION_SELECTOR_COUNT != 1 )); then
-            if [[ "${WORKTREE_REQUESTED}" == true ]]; then
-                fail "--worktree accepts exactly one continuation or resume selector"
-            fi
-            fail "managed worktrees accept exactly one continuation or resume selector"
-        fi
-        MANAGED_CONTINUATION=true
-    fi
+if [[ "${WORKTREE_TASK_START}" == true ]]; then
+    (( CONTINUATION_SELECTOR_COUNT <= 1 )) \
+        || fail "worktree start accepts at most one continuation or resume selector"
+    USE_MANAGED_WORKTREE=true
+elif [[ "${WORKTREE_TASK_OPEN}" == true ]]; then
+    (( CONTINUATION_SELECTOR_COUNT <= 1 )) \
+        || fail "worktree open accepts at most one continuation or resume selector"
 fi
 MANAGED_WORKTREE=false
+MANAGED_WORKTREE_TASK_NAME=""
 MANAGED_WORKTREE_BRANCH=""
 MANAGED_WORKTREE_BASE=""
 MANAGED_WORKTREE_COMMON_DIR=""
 MANAGED_WORKTREE_CONTINUATION=false
 if [[ "${USE_MANAGED_WORKTREE}" == true ]]; then
     SOURCE_WORKSPACE="${WORKSPACE}"
-    if [[ "${MANAGED_CONTINUATION}" == true ]]; then
-        SELECTED_WORKTREE="$(select_managed_repository_session_workspace "${SOURCE_WORKSPACE}" "${PROFILE}")"
-        IFS=$'\t' read -r WORKSPACE_ID WORKSPACE MANAGED_WORKTREE_BRANCH \
-            MANAGED_WORKTREE_COMMON_DIR MANAGED_WORKTREE_BASE <<< "${SELECTED_WORKTREE}"
-        MANAGED_WORKTREE_CONTINUATION=true
-    else
-        REPOSITORY_ID="$(ensure_worktree_repository_record "${SOURCE_WORKSPACE}")"
-        WORKSPACE_ID="$(new_workspace_id)"
-        CREATED_WORKTREE="$(create_managed_worktree_checkout "${WORKSPACE_ID}" "${SOURCE_WORKSPACE}")"
-        IFS=$'\t' read -r CREATED_ID CREATED_REPOSITORY_ID MANAGED_WORKTREE_BRANCH WORKSPACE MANAGED_WORKTREE_BASE \
-            <<< "${CREATED_WORKTREE}"
-        [[ "${CREATED_ID}" == "${WORKSPACE_ID}" && "${CREATED_REPOSITORY_ID}" == "${REPOSITORY_ID}" &&
-           "${WORKSPACE}" == "${PI_RUN_HOME_RESOLVED}/worktrees/${REPOSITORY_ID}/${WORKSPACE_ID}" ]] \
-            || fail "managed worktree creation returned inconsistent identity metadata"
-        publish_managed_worktree_metadata \
-            "${WORKSPACE_ID}" "${REPOSITORY_ID}" "${MANAGED_WORKTREE_BRANCH}" "${WORKSPACE}" >/dev/null
-        MACHINE_METADATA="$(machine_file)"
-        MANAGED_WORKTREE_COMMON_DIR="$(jq -r --arg id "${REPOSITORY_ID}" \
-            '.repositories[] | select(.id == $id) | .commonGitDir' "${MACHINE_METADATA}")"
-        [[ "$(git -C "${WORKSPACE}" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" == \
-           "${MANAGED_WORKTREE_COMMON_DIR}" ]] \
-            || fail "published managed worktree no longer matches its common Git directory"
+    MANAGED_WORKTREE_TASK_NAME="${WORKTREE_TASK_NAME}"
+    REPOSITORY_ID="$(ensure_worktree_repository_record "${SOURCE_WORKSPACE}")"
+    TASK_START_LOCK_ID="$(worktree_task_start_lock_id "${REPOSITORY_ID}" "${MANAGED_WORKTREE_TASK_NAME}")"
+    trap 'release_managed_launch_lock || true' EXIT
+    acquire_managed_launch_lock "${TASK_START_LOCK_ID}"
+    START_IDENTITY="$(resolve_managed_task_start_identity \
+        "${REPOSITORY_ID}" "${MANAGED_WORKTREE_TASK_NAME}")"
+    IFS=$'\t' read -r WORKSPACE_ID RESTARTING_FINISHED_TASK <<< "${START_IDENTITY}"
+    if [[ "${RESTARTING_FINISHED_TASK}" == false ]] && (( CONTINUATION_SELECTOR_COUNT > 0 )); then
+        fail "a new worktree task has no previous conversation to continue or resume"
     fi
+    if [[ "${RESTARTING_FINISHED_TASK}" == true ]]; then
+        echo "pi-run: restarting finished task ${MANAGED_WORKTREE_TASK_NAME}" >&2
+    fi
+    CREATED_WORKTREE="$(create_managed_worktree_checkout \
+        "${WORKSPACE_ID}" "${MANAGED_WORKTREE_TASK_NAME}" "${SOURCE_WORKSPACE}")"
+    IFS=$'\t' read -r CREATED_ID CREATED_REPOSITORY_ID MANAGED_WORKTREE_BRANCH WORKSPACE MANAGED_WORKTREE_BASE \
+        <<< "${CREATED_WORKTREE}"
+    [[ "${CREATED_ID}" == "${WORKSPACE_ID}" && "${CREATED_REPOSITORY_ID}" == "${REPOSITORY_ID}" &&
+       "${WORKSPACE}" == "${PI_RUN_HOME_RESOLVED}/worktrees/${REPOSITORY_ID}/${MANAGED_WORKTREE_TASK_NAME}" ]] \
+        || fail "managed worktree creation returned inconsistent identity metadata"
+    publish_managed_worktree_metadata \
+        "${WORKSPACE_ID}" "${MANAGED_WORKTREE_TASK_NAME}" "${REPOSITORY_ID}" \
+        "${MANAGED_WORKTREE_BRANCH}" "${WORKSPACE}" >/dev/null
+    release_managed_launch_lock || fail "could not release task-start lock"
+    trap - EXIT
+    MACHINE_METADATA="$(machine_file)"
+    MANAGED_WORKTREE_COMMON_DIR="$(jq -r --arg id "${REPOSITORY_ID}" \
+        '.repositories[] | select(.id == $id) | .commonGitDir' "${MACHINE_METADATA}")"
+    [[ "$(git -C "${WORKSPACE}" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" == \
+       "${MANAGED_WORKTREE_COMMON_DIR}" ]] \
+        || fail "published managed worktree no longer matches its common Git directory"
+    MANAGED_WORKTREE=true
+elif [[ "${WORKTREE_TASK_OPEN}" == true ]]; then
+    SOURCE_WORKSPACE="${WORKSPACE}"
+    SELECTED_WORKTREE="$(resolve_named_managed_task "${SOURCE_WORKSPACE}" "${WORKTREE_TASK_NAME}")"
+    IFS=$'\t' read -r WORKSPACE_ID WORKSPACE <<< "${SELECTED_WORKTREE}"
+    resolve_managed_workspace_launch "${WORKSPACE_ID}" "${WORKSPACE}" \
+        || fail "named worktree task association changed during open: ${WORKTREE_TASK_NAME}"
+    [[ "${RESOLVED_MANAGED_TASK_NAME}" == "${WORKTREE_TASK_NAME}" ]] \
+        || fail "named worktree task association changed during open: ${WORKTREE_TASK_NAME}"
+    MANAGED_WORKTREE_TASK_NAME="${RESOLVED_MANAGED_TASK_NAME}"
+    MANAGED_WORKTREE_BRANCH="${RESOLVED_MANAGED_BRANCH}"
+    MANAGED_WORKTREE_COMMON_DIR="${RESOLVED_MANAGED_COMMON_DIR}"
+    MANAGED_WORKTREE_BASE="${RESOLVED_MANAGED_HEAD}"
+    MANAGED_WORKTREE_CONTINUATION=true
     MANAGED_WORKTREE=true
 elif [[ "${RESUME_LAUNCH}" == true ]] && resolve_managed_workspace_launch "${RESUME_WORKSPACE_ID}" "${WORKSPACE}"; then
     WORKSPACE_ID="${RESUME_WORKSPACE_ID}"
+    MANAGED_WORKTREE_TASK_NAME="${RESOLVED_MANAGED_TASK_NAME}"
     MANAGED_WORKTREE_BRANCH="${RESOLVED_MANAGED_BRANCH}"
     MANAGED_WORKTREE_COMMON_DIR="${RESOLVED_MANAGED_COMMON_DIR}"
     MANAGED_WORKTREE_BASE="${RESOLVED_MANAGED_HEAD}"
@@ -829,8 +868,9 @@ if [[ "${NETWORK_MODE}" == restricted ]]; then
         rules: ((.modelRules + .sshRules + .manualRules) | unique_by(tojson) | sort_by(tojson))
     }' <<< "${RESOLVED_POLICY}")"
     MODEL_RULES_DISPLAY="$(jq -r '
-        if (.modelRules | length) == 0 then "none" else
-            [.modelRules[] | (.host + ":" + (.tcpPorts | map(tostring) | join("|")))] | join(",")
+        if (.modelRules | length) == 0 then "none"
+        elif (.modelRules | length) == 1 then "1 provider target on port 443"
+        else "\(.modelRules | length) provider targets on port 443"
         end
     ' <<< "${RESOLVED_POLICY}")"
     SSH_RULES_DISPLAY="$(jq -r '
@@ -916,7 +956,7 @@ if [[ "${MANAGED_WORKTREE}" == true ]]; then
         || fail "managed worktree common Git paths containing commas are not supported"
     MANAGED_GIT_STAGING_DIR="$(mktemp -d /tmp/pi-run-managed-git.XXXXXX)"
     chmod 0700 "${MANAGED_GIT_STAGING_DIR}"
-    printf 'gitdir: /run/pi-run-git/common/worktrees/%s\n' "${WORKSPACE_ID}" \
+    printf 'gitdir: /run/pi-run-git/common/worktrees/%s\n' "${MANAGED_WORKTREE_TASK_NAME}" \
         > "${MANAGED_GIT_STAGING_DIR}/dot-git"
     chmod 0600 "${MANAGED_GIT_STAGING_DIR}/dot-git"
 fi
@@ -1023,15 +1063,15 @@ for SKILL in "${GLOBAL_SKILLS[@]}"; do
 done
 
 echo "pi-run: home=${PI_RUN_HOME_RESOLVED}" >&2
-echo "pi-run: profile=${PROFILE} workspace=${WORKSPACE}" >&2
 if [[ "${MANAGED_WORKTREE}" == true ]]; then
-    echo "pi-run: managed-worktree workspace-id=${WORKSPACE_ID}" >&2
+    echo "pi-run: profile=${PROFILE} task=${MANAGED_WORKTREE_TASK_NAME}" >&2
     if [[ "${MANAGED_WORKTREE_CONTINUATION}" == true ]]; then
-        echo "pi-run: managed-worktree branch=${MANAGED_WORKTREE_BRANCH} head=${MANAGED_WORKTREE_BASE}" >&2
+        echo "pi-run: task-head=${MANAGED_WORKTREE_BASE}" >&2
     else
-        echo "pi-run: managed-worktree branch=${MANAGED_WORKTREE_BRANCH} base=${MANAGED_WORKTREE_BASE}" >&2
+        echo "pi-run: task-base=${MANAGED_WORKTREE_BASE}" >&2
     fi
-    echo "pi-run: managed-worktree host=$(sanitize_display "${WORKSPACE}")" >&2
+else
+    echo "pi-run: profile=${PROFILE} workspace=${WORKSPACE}" >&2
 fi
 echo "pi-run: network=${NETWORK_BACKEND}" >&2
 if [[ "${NETWORK_BACKEND}" == docker-restricted ]]; then

@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "${ROOT}/tests/worktree-fixtures.sh"
 TMP="$(mktemp -d)"
 trap 'rm -rf "${TMP}"' EXIT
 HOME_DIR="${TMP}/Pi Run"
@@ -87,49 +88,59 @@ cat > "${REPOSITORY}/.git/hooks/post-checkout" <<EOF
 printf 'host hook ran\n' > '${HOOK_MARKER}'
 EOF
 chmod 0755 "${REPOSITORY}/.git/hooks/post-checkout"
-(
-    cd "${REPOSITORY}"
-    PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" worktree enable >/dev/null
-)
+REPOSITORY_ID="$(register_worktree_repository_fixture "${ROOT}" "${HOME_DIR}" "${REPOSITORY}")"
 MACHINE="${HOME_DIR}/machines/$("${ROOT}/bin/pi-run" machine-id).json"
-REPOSITORY_ID="$(jq -r '.repositories[0].id' "${MACHINE}")"
 BASE="$(git -C "${REPOSITORY}" rev-parse HEAD)"
 
+task_name_for_id() {
+    printf 'task-%s\n' "${1%%-*}"
+}
+
+branch_for_id() {
+    printf 'pi-run/%s\n' "$(task_name_for_id "$1")"
+}
+
+path_for_id() {
+    printf '%s/worktrees/%s/%s\n' "${HOME_DIR}" "${REPOSITORY_ID}" "$(task_name_for_id "$1")"
+}
+
 run_create() {
-    local selected="$1" id="$2" mode="${3:-ok}"
+    local selected="$1" id="$2" mode="${3:-ok}" task_name
+    task_name="$(task_name_for_id "${id}")"
     PATH="${TMP}/fake-bin:${PATH}" DOCKER_LOG="${DOCKER_LOG}" FAKE_DOCKER_MODE="${mode}" \
         TEST_ROOT="${ROOT}" TEST_HOME="${HOME_DIR}" TEST_SELECTED="${selected}" TEST_ID="${id}" \
+        TEST_TASK_NAME="${task_name}" \
         bash -ceu '
             fail() { echo "pi-run: $*" >&2; exit 1; }
             DEFAULT_IMAGE=ghcr.io/aprilsoftware/pi-run:0.0.0-test
             PI_RUN_HOME_RESOLVED="${TEST_HOME}"
             source "${TEST_ROOT}/lib/pi-run/workspaces.sh"
             cd "${TEST_SELECTED}"
-            create_managed_worktree_checkout "${TEST_ID}"
+            create_managed_worktree_checkout "${TEST_ID}" "${TEST_TASK_NAME}"
         '
 }
 
 cleanup_worktree() {
     local id="$1" path
-    path="${HOME_DIR}/worktrees/${REPOSITORY_ID}/${id}"
+    path="$(path_for_id "${id}")"
     git -C "${REPOSITORY}" worktree remove --force "${path}" >/dev/null 2>&1 || true
-    git -C "${REPOSITORY}" branch -D "pi-run/${id}" >/dev/null 2>&1 || true
+    git -C "${REPOSITORY}" branch -D "$(branch_for_id "${id}")" >/dev/null 2>&1 || true
 }
 
 printf 'dirty\n' > "${REPOSITORY}/dirty-untracked"
 result="$(run_create "${REPOSITORY}" "${ID_A}" 2>"${TMP}/attached.err")"
 IFS=$'\t' read -r workspace_id repository_id branch path base <<< "${result}"
 [[ "${workspace_id}" == "${ID_A}" && "${repository_id}" == "${REPOSITORY_ID}" &&
-   "${branch}" == "pi-run/${ID_A}" && "${base}" == "${BASE}" ]] \
+   "${branch}" == "$(branch_for_id "${ID_A}")" && "${base}" == "${BASE}" ]] \
     || fail "creation returned unexpected identities"
-[[ "${path}" == "${HOME_DIR}/worktrees/${REPOSITORY_ID}/${ID_A}" &&
+[[ "${path}" == "$(path_for_id "${ID_A}")" &&
    "$(cat "${path}/base.txt")" == base ]] || fail "managed checkout was not materialized"
 [[ ! -e "${HOOK_MARKER}" ]] || fail "managed checkout executed post-checkout on the host"
 grep -F 'has uncommitted changes' "${TMP}/attached.err" >/dev/null \
     || fail "dirty selected checkout was not reported"
 jq -e --arg id "${ID_A}" '
     ([.workspacePaths[] | select(.workspaceId == $id)] | length) == 0 and
-    ([.repositories[].managedWorkspaces[] | select(.workspaceId == $id)] | length) == 0
+    ([.repositories[].tasks[] | select(.workspaceId == $id)] | length) == 0
 ' "${MACHINE}" >/dev/null || fail "creation primitive published machine metadata"
 jq -e --arg id "${ID_A}" '[.workspaces[] | select(.id == $id)] | length == 0' \
     "${HOME_DIR}/workspaces/registry.json" >/dev/null \
@@ -138,7 +149,7 @@ cleanup_worktree "${ID_A}"
 
 git -C "${REPOSITORY}" checkout --detach -q "${BASE}"
 result="$(run_create "${REPOSITORY}" "${ID_B}" 2>/dev/null)"
-[[ "${result}" == *$'\tpi-run/'"${ID_B}"$'\t'* && "${result}" == *$'\t'"${BASE}" ]] \
+[[ "${result}" == *$'\t'"$(branch_for_id "${ID_B}")"$'\t'* && "${result}" == *$'\t'"${BASE}" ]] \
     || fail "detached HEAD creation used the wrong branch or base"
 cleanup_worktree "${ID_B}"
 git -C "${REPOSITORY}" checkout -q main
@@ -158,32 +169,32 @@ jq --arg id "${ID_COLLISION}" '.workspaces |= map(select(.id != $id))' "${REGIST
 mv "${REGISTRY}.tmp" "${REGISTRY}"
 chmod 0600 "${REGISTRY}"
 
-git -C "${REPOSITORY}" branch "pi-run/${ID_COLLISION}" "${BASE}"
+git -C "${REPOSITORY}" branch "$(branch_for_id "${ID_COLLISION}")" "${BASE}"
 if run_create "${REPOSITORY}" "${ID_COLLISION}" >/dev/null 2>"${TMP}/branch.err"; then
     fail "branch collision was accepted"
 fi
-git -C "${REPOSITORY}" branch -D "pi-run/${ID_COLLISION}" >/dev/null
+git -C "${REPOSITORY}" branch -D "$(branch_for_id "${ID_COLLISION}")" >/dev/null
 
-mkdir -p "${HOME_DIR}/worktrees/${REPOSITORY_ID}/${ID_PATH}"
+mkdir -p "$(path_for_id "${ID_PATH}")"
 chmod 0700 "${HOME_DIR}/worktrees" "${HOME_DIR}/worktrees/${REPOSITORY_ID}"
 if run_create "${REPOSITORY}" "${ID_PATH}" >/dev/null 2>"${TMP}/path.err"; then
     fail "checkout path collision was accepted"
 fi
-rm -rf "${HOME_DIR}/worktrees/${REPOSITORY_ID:?}/${ID_PATH}"
+rm -rf "$(path_for_id "${ID_PATH}")"
 
-mkdir -p "${REPOSITORY}/.git/worktrees/${ID_ADMIN}"
+mkdir -p "${REPOSITORY}/.git/worktrees/$(task_name_for_id "${ID_ADMIN}")"
 if run_create "${REPOSITORY}" "${ID_ADMIN}" >/dev/null 2>"${TMP}/admin.err"; then
     fail "Git administration collision was accepted"
 fi
-rm -rf "${REPOSITORY}/.git/worktrees/${ID_ADMIN}"
+rm -rf "${REPOSITORY}/.git/worktrees/$(task_name_for_id "${ID_ADMIN}")"
 
 if run_create "${REPOSITORY}" "${ID_EMPTY}" empty-fail >/dev/null 2>"${TMP}/empty.err"; then
     fail "empty materialization failure was accepted"
 fi
-[[ ! -e "${HOME_DIR}/worktrees/${REPOSITORY_ID}/${ID_EMPTY}" &&
-   ! -e "${REPOSITORY}/.git/worktrees/${ID_EMPTY}" ]] \
+[[ ! -e "$(path_for_id "${ID_EMPTY}")" &&
+   ! -e "${REPOSITORY}/.git/worktrees/$(task_name_for_id "${ID_EMPTY}")" ]] \
     || fail "empty failed worktree was not rolled back"
-if git -C "${REPOSITORY}" show-ref --verify --quiet "refs/heads/pi-run/${ID_EMPTY}"; then
+if git -C "${REPOSITORY}" show-ref --verify --quiet "refs/heads/$(branch_for_id "${ID_EMPTY}")"; then
     fail "empty failed branch was not rolled back"
 fi
 grep -F 'empty state was rolled back' "${TMP}/empty.err" >/dev/null \
@@ -192,10 +203,11 @@ grep -F 'empty state was rolled back' "${TMP}/empty.err" >/dev/null \
 if run_create "${REPOSITORY}" "${ID_PARTIAL}" partial-fail >/dev/null 2>"${TMP}/partial.err"; then
     fail "partial materialization failure was accepted"
 fi
-PARTIAL_PATH="${HOME_DIR}/worktrees/${REPOSITORY_ID}/${ID_PARTIAL}"
-[[ -f "${PARTIAL_PATH}/partial.txt" && -d "${REPOSITORY}/.git/worktrees/${ID_PARTIAL}" ]] \
+PARTIAL_PATH="$(path_for_id "${ID_PARTIAL}")"
+[[ -f "${PARTIAL_PATH}/partial.txt" &&
+   -d "${REPOSITORY}/.git/worktrees/$(task_name_for_id "${ID_PARTIAL}")" ]] \
     || fail "ambiguous partial worktree was not preserved"
-git -C "${REPOSITORY}" show-ref --verify --quiet "refs/heads/pi-run/${ID_PARTIAL}" \
+git -C "${REPOSITORY}" show-ref --verify --quiet "refs/heads/$(branch_for_id "${ID_PARTIAL}")" \
     || fail "ambiguous partial branch was not preserved"
 grep -F 'partial state was preserved' "${TMP}/partial.err" >/dev/null \
     || fail "partial-state diagnostic was unclear"
@@ -217,10 +229,7 @@ fi
 
 UNBORN="${TMP}/unborn"
 git init -q -b main "${UNBORN}"
-(
-    cd "${UNBORN}"
-    PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" worktree enable >/dev/null
-)
+register_worktree_repository_fixture "${ROOT}" "${HOME_DIR}" "${UNBORN}" >/dev/null
 if run_create "${UNBORN}" 88888888-8888-4888-8888-888888888888 >/dev/null 2>"${TMP}/unborn.err"; then
     fail "unborn repository was accepted"
 fi

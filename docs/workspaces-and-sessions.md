@@ -71,37 +71,38 @@ indexes, and working files from one normal non-bare Git repository. They are
 persistent, host-visible source checkouts—not temporary container state and not
 a security boundary.
 
-Create one managed workspace explicitly:
+Create or restart one explicitly named managed task for a selected repository:
 
 ```bash
-pi-run --worktree .
+pi-run worktree start api-refactor .
+pi-run worktree start api-refactor . -c
+pi-run worktree start api-refactor . -r
 ```
 
-Or control the repository default for future launches:
+The repository argument is required and accepts `.` or another relative or
+absolute repository path. Additional Pi arguments follow it directly; a
+standalone `--` separator remains accepted but is unnecessary. Ordinary launches
+use the selected checkout directly.
+Task names begin with a lowercase letter or digit, contain only lowercase
+letters, digits, `.`, `_`, or
+`-`, are at most 63 characters, and are unique within the repository. Separate
+clones remain separate repository identities even when their remotes match.
 
-```bash
-pi-run worktree status
-pi-run worktree enable
-pi-run worktree disable
-```
-
-Launch selection follows this order:
-
-1. explicit `--worktree`;
-2. explicit `--no-worktree`;
-3. the repository preference; and
-4. direct-checkout behavior when no managed choice applies.
-
-`--worktree` and `--no-worktree` are mutually exclusive. Explicit overrides do
-not alter the saved preference. Separate clones remain separate repository
-identities even when their remotes match.
-
-A fresh managed launch records the selected checkout's exact committed `HEAD`,
-creates `pi-run/<workspace-uuid>`, and places the checkout at:
+A task start records the selected checkout's exact committed `HEAD`, creates the
+branch `pi-run/<task-name>`, and places the checkout at:
 
 ```text
-<Pi-Run home>/worktrees/<repository-id>/<workspace-id>/
+<Pi-Run home>/worktrees/<repository-id>/<task-name>/
 ```
+
+The task name is the persistent worktree identity. Repository and workspace UUIDs
+remain internal and are not shown by normal startup or task-list output. Starting
+a finished task recreates its branch and checkout from the selected checkout's
+current committed `HEAD` and reactivates the same workspace identity. Without a
+selector it starts a new conversation; `-c` continues its newest retained
+conversation and `-r` opens Pi's selector. A failed recreation leaves the task
+finished and archived. An active or finishing task with the same name remains a
+refusal.
 
 Attached and detached committed `HEAD` are accepted; an unborn repository is
 not. Dirty source state is allowed, but staged, modified, untracked, and other
@@ -109,31 +110,40 @@ uncommitted changes are excluded from the new checkout. Pi-Run does not stash,
 copy, commit, clean, reset, merge, rebase, push, remove worktrees, or delete
 branches automatically.
 
-Startup reports the managed workspace UUID, branch, base or current commit, and
-host path. Continue the newest managed session for the selected repository and
-profile with:
+Open an existing task by naming the same repository explicitly:
 
 ```bash
-pi-run --worktree . -c
-pi-run --worktree . -r
+pi-run worktree open api-refactor .
+pi-run worktree open api-refactor . -c
+pi-run worktree open api-refactor . -r
 ```
 
-When the repository default is enabled, the same routing applies without the
-explicit flag. Pi-Run selects the managed workspace whose valid transcript has
-the newest modification time. Equal newest times fail as ambiguous. `-c`
-delegates continue behavior to Pi; `-r` delegates individual transcript
-selection. To choose a specific older group, use `pi-run resume` or
-`pi-run resume <profile> <workspace-id>`.
+The required repository path may be supplied from inside or outside the
+repository. Without a selector, `open` starts a fresh Pi conversation in the
+existing task. `-c` continues that task's newest conversation for the selected profile, and
+`-r` opens Pi's selector for that task. Open never creates another branch,
+worktree, workspace identity, or metadata record. Global `pi-run resume` also follows a
+selected task's immutable machine association and never reconnects it as an
+ordinary checkout.
 
-Only one Pi-Run process may use a managed workspace at a time. A private
-machine-local ownership lock detects active use and safely recovers only
-well-formed stale records. Different managed workspaces may run concurrently.
+Startup reports the selected profile, task name, and current task revision. It
+does not print the internal workspace identity, branch name, or storage path.
 
-Inspect every registered repository and managed checkout from any directory:
+Only one Pi-Run process may use a managed task at a time. A private machine-local
+ownership lock detects active use and safely recovers only well-formed stale
+records. Different tasks may run concurrently.
+
+Inspect registered repositories and unfinished managed tasks from any directory.
+Include finished task history with `--all`:
 
 ```bash
 pi-run worktree list
+pi-run worktree list --all
 ```
+
+The compact, dynamically aligned table reports only `TASK`, `STATE`, `STATUS`,
+and `CREATED`. Repository and workspace UUIDs, internal branches, and managed
+storage paths are intentionally omitted.
 
 Statuses mean:
 
@@ -145,11 +155,42 @@ Statuses mean:
 | `path-conflict` | The mapped path is not the required managed path. |
 | `git-conflict` | The present checkout does not match recorded Git state. |
 | `unsafe` | Ownership, links, or filesystem structure are unsafe to trust. |
+| `archived` | A finished task is historical and has no managed checkout path. |
 
-Listing and disabling are non-destructive. Pi-Run currently provides no
-worktree-removal command. Use ordinary Git and filesystem tools only after
-reviewing sessions, changes, active locks, and branch retention; do not treat a
-missing transcript as proof that a checkout is disposable.
+Finish a task from the checkout whose current branch should receive its work:
+
+```bash
+pi-run worktree finish api-refactor
+```
+
+Finish shows the task name, target branch, existing commits, task working
+content, and ignored task paths; internal workspace identifiers and storage paths
+are omitted. Typing the complete task name authorizes Pi-Run to commit all
+tracked and non-ignored untracked task changes as `Complete task <task-name>`,
+discard the displayed ignored task output, integrate the result, remove the
+managed checkout, and delete its local task branch. Submodules and nested
+repositories remain explicit refusals.
+
+The target must have an attached branch. When commits need integration, it must
+have no tracked changes. Untracked and ignored target content is normal
+machine-local state and remains in place unless a changed task path overlaps it.
+If the task is already integrated, no target working-content inspection or merge
+is needed. Pi-Run also refuses active use and unsafe or conflicting metadata.
+
+Inspection, automatic commit, ignored-output cleanup, and merge run in an
+offline restricted runtime container without profile credentials and with Git
+hooks disabled. A task that is ahead of the
+target is fast-forwarded when possible; diverged non-conflicting work creates a
+normal merge commit. A conflicting or failed merge is aborted and the target is
+verified restored before Pi-Run reports a recoverable refusal. Only after
+successful integration does Pi-Run remove the linked checkout and delete its
+local branch without force. It never fetches, pushes, or deletes a remote
+branch.
+
+Portable workspace identity and every profile's conversations remain as
+historical records. An interrupted `finishing` cleanup is shown by normal
+listing and can be retried. Pi-Run never infers finish from exit or session
+activity.
 
 Managed source trees and machine associations are excluded from encrypted
 snapshots. Portable identities and sessions can be restored, but Pi-Run does not

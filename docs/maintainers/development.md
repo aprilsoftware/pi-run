@@ -42,11 +42,11 @@ docker build -t pi-run-egress:dev -f docker/egress/Dockerfile docker
 ```
 
 The sidecar image contains Squid, iptables, the proven firewall entrypoint, and
-the Pi-Run license. It contains no hostname policy; a future restricted launch
-must mount already-resolved host-owned policy at runtime. Building this image
-does not enable the experimental restricted backend in the launcher. The
-production Dockerfile was build-validated on Debian Trixie with Docker Engine
-26.1.5 during the v0.7 experiment. On the same baseline, Doctor successfully
+the Pi-Run license. It contains no hostname policy; a restricted launch mounts
+already-resolved host-owned policy at runtime. Building this image does not
+select restricted mode; the active profile does. The production Dockerfile was
+build-validated on Debian Trixie with Docker Engine 26.1.5 during v0.7
+validation. On the same baseline, Doctor successfully
 inspected locally built runtime and egress image overrides.
 
 Check which launcher and images are selected without starting Pi:
@@ -125,6 +125,26 @@ For launcher argument changes, place a fake `docker` executable first on
 `PATH`, use a temporary `PI_RUN_HOME`, and assert the complete generated mount,
 environment, privilege, network, extension, and image arguments. Do not start a
 container merely to inspect command construction.
+
+The managed-worktree end-to-end test is deliberately opt-in because it starts
+real containers and creates disposable linked worktrees. Build a local candidate
+runtime image and select it explicitly:
+
+```bash
+docker build -t pi-run:worktree-e2e docker
+PI_RUN_TEST_REAL_DOCKER=1 \
+PI_RUN_TEST_IMAGE=pi-run:worktree-e2e \
+tests/worktree-e2e-test.sh
+```
+
+The test uses only a temporary Pi-Run home and repository. It validates named
+task start and open, finish cancellation, automatic task commit, restricted
+local integration, preservation of unrelated target-local content, managed
+checkout and branch cleanup, preserved identities/sessions, sibling isolation,
+historical listing, and lock cleanup. Without
+`PI_RUN_TEST_IMAGE`, it expects the version-matched release runtime image to
+exist locally. A skipped invocation is not a successful real-Docker validation
+and must be reported as skipped.
 
 ## Build application release artifacts
 

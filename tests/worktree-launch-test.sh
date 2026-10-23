@@ -71,8 +71,7 @@ case "${1:-}" in
         lock=
         if [[ "${workspace}" == */worktrees/*/* ]]; then
             home="${workspace%%/worktrees/*}"
-            workspace_id="${workspace##*/}"
-            lock="${home}/worktrees/.launch-locks/${workspace_id}/owner.json"
+            lock="$(find "${home}/worktrees/.launch-locks" -mindepth 2 -maxdepth 2 -name owner.json -print -quit)"
             [[ -f "${lock}" ]] || exit 3
         fi
         {
@@ -112,15 +111,13 @@ run_pi() {
     fi
 }
 
-(
-    cd "${TMP}"
-    run_pi --worktree "${REPOSITORY}" --version >"${TMP}/launch.out" 2>"${TMP}/launch.err"
-)
+run_pi worktree start launch-task "${REPOSITORY}" -- --version \
+    >"${TMP}/launch.out" 2>"${TMP}/launch.err"
 MACHINE="${HOME_DIR}/machines/$("${ROOT}/bin/pi-run" machine-id).json"
 REPOSITORY_ID="$(jq -r '.repositories[0].id' "${MACHINE}")"
-WORKSPACE_ID="$(jq -r '.repositories[0].managedWorkspaces[0].workspaceId' "${MACHINE}")"
-BRANCH="pi-run/${WORKSPACE_ID}"
-WORKTREE="${HOME_DIR}/worktrees/${REPOSITORY_ID}/${WORKSPACE_ID}"
+WORKSPACE_ID="$(jq -r '.repositories[0].tasks[0].workspaceId' "${MACHINE}")"
+BRANCH="pi-run/launch-task"
+WORKTREE="${HOME_DIR}/worktrees/${REPOSITORY_ID}/launch-task"
 [[ "${WORKSPACE_ID}" =~ ^[0-9a-f-]{36}$ && -d "${WORKTREE}" ]] \
     || fail "explicit launch did not create a managed workspace"
 [[ "$(cat "${WORKTREE}/base.txt")" == base && ! -e "${WORKTREE}/dirty-untracked" ]] \
@@ -131,10 +128,12 @@ WORKTREE="${HOME_DIR}/worktrees/${REPOSITORY_ID}/${WORKSPACE_ID}"
    "$(git -C "${WORKTREE}" rev-parse HEAD)" == "${BASE}" ]] \
     || fail "managed launch used the wrong branch or base"
 jq -e --arg repository "${REPOSITORY_ID}" --arg workspace "${WORKSPACE_ID}" --arg path "${WORKTREE}" '
-    .repositories[0].id == $repository and .repositories[0].enabled == false and
-    .repositories[0].managedWorkspaces[0].workspaceId == $workspace and
+    .schemaVersion == 1 and .repositories[0].id == $repository and
+    .repositories[0].tasks[0].name == "launch-task" and
+    .repositories[0].tasks[0].workspaceId == $workspace and
+    .repositories[0].tasks[0].state == "active" and
     ([.workspacePaths[] | select(.workspaceId == $workspace and .path == $path)] | length) == 1
-' "${MACHINE}" >/dev/null || fail "explicit launch published incorrect machine metadata"
+' "${MACHINE}" >/dev/null || fail "task start published incorrect machine metadata"
 jq -e --arg workspace "${WORKSPACE_ID}" '
     [.workspaces[] | select(.id == $workspace and .kind == "git")] | length == 1
 ' "${HOME_DIR}/workspaces/registry.json" >/dev/null \
@@ -142,17 +141,17 @@ jq -e --arg workspace "${WORKSPACE_ID}" '
 [[ -d "${HOME_DIR}/profiles/default/sessions/${WORKSPACE_ID}" ]] \
     || fail "managed launch did not select its own session directory"
 for report in \
-    "managed-worktree workspace-id=${WORKSPACE_ID}" \
-    "managed-worktree branch=${BRANCH} base=${BASE}" \
-    "managed-worktree host=${WORKTREE}" \
-    'selected checkout has uncommitted changes'; do
+    'profile=default task=launch-task' \
+    "task-base=${BASE}" \
+    'selected checkout has uncommitted changes; task launch-task starts at'; do
     grep -F "${report}" "${TMP}/launch.err" >/dev/null \
         || fail "managed launch omitted startup report: ${report}"
 done
-status_output="$(cd "${REPOSITORY}" && PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" worktree status)"
-[[ "${status_output}" == *'Worktree mode: disabled'* ]] \
-    || fail "explicit launch enabled the repository preference"
-
+for internal in "${WORKSPACE_ID}" "${BRANCH}" "${WORKTREE}"; do
+    if grep -F "${internal}" "${TMP}/launch.err" >/dev/null; then
+        fail "managed launch exposed internal worktree identity: ${internal}"
+    fi
+done
 if [[ "${LIVE_DOCKER}" != 1 ]]; then
     [[ "$(< "${MAIN_COUNT_FILE}")" == 1 ]] || fail "managed launch did not start Pi exactly once"
     CAPTURE="${TMP}/main.1"
@@ -161,7 +160,7 @@ if [[ "${LIVE_DOCKER}" != 1 ]]; then
     COMMON="${REPOSITORY}/.git"
     grep -F "common=${COMMON}" "${CAPTURE}" >/dev/null \
         || fail "common Git metadata was not mounted"
-    grep -F "pointer-content=gitdir: /run/pi-run-git/common/worktrees/${WORKSPACE_ID}" "${CAPTURE}" >/dev/null \
+    grep -F 'pointer-content=gitdir: /run/pi-run-git/common/worktrees/launch-task' "${CAPTURE}" >/dev/null \
         || fail "generated container .git pointer was incorrect"
     POINTER="$(grep '^pointer=' "${CAPTURE}" | cut -d= -f2-)"
     [[ -n "${POINTER}" && ! -e "${POINTER}" && ! -e "$(dirname "${POINTER}")" ]] \
@@ -172,39 +171,26 @@ if [[ "${LIVE_DOCKER}" != 1 ]]; then
     grep -F -- '--version' "${CAPTURE}" >/dev/null \
         || fail "Pi arguments were not preserved"
 
-    managed_count="$(jq -r '.repositories[0].managedWorkspaces | length' "${MACHINE}")"
-    worktree_count="$(git -C "${REPOSITORY}" worktree list --porcelain | grep -c '^worktree ')"
-    docker_before="$(wc -l < "${DOCKER_LOG}")"
-    for resume_argument in -c --continue -r --resume; do
-        if run_pi --worktree "${REPOSITORY}" "${resume_argument}" >/dev/null 2>"${TMP}/resume.err"; then
-            fail "managed fresh launch accepted ${resume_argument}"
-        fi
-        grep -F 'no managed worktree sessions are available' "${TMP}/resume.err" >/dev/null \
-            || fail "managed continuation rejection was unclear"
-    done
-    [[ "$(jq -r '.repositories[0].managedWorkspaces | length' "${MACHINE}")" == "${managed_count}" &&
-       "$(git -C "${REPOSITORY}" worktree list --porcelain | grep -c '^worktree ')" == "${worktree_count}" &&
-       "$(wc -l < "${DOCKER_LOG}")" == "${docker_before}" ]] \
-        || fail "rejected continuation changed Git, metadata, or Docker state"
-
     run_pi "${REPOSITORY}" --version >/dev/null 2>"${TMP}/direct.err"
     [[ "$(< "${MAIN_COUNT_FILE}")" == 2 ]] || fail "direct launch did not start Pi"
     grep -F "workspace=${REPOSITORY}" "${TMP}/main.2" >/dev/null \
-        || fail "launch without --worktree stopped using the direct checkout"
+        || fail "ordinary launch stopped using the direct checkout"
     grep -Fx 'common=' "${TMP}/main.2" >/dev/null \
         || fail "direct launch unexpectedly mounted common Git metadata"
 
-    managed_count="$(jq -r '.repositories[0].managedWorkspaces | length' "${MACHINE}")"
+    managed_count="$(jq -r '.repositories[0].tasks | length' "${MACHINE}")"
     main_before="$(< "${MAIN_COUNT_FILE}")"
-    if FAKE_DOCKER_MODE=materialize-fail run_pi --worktree "${REPOSITORY}" --version \
+    if FAKE_DOCKER_MODE=materialize-fail \
+        run_pi worktree start failed-materialize "${REPOSITORY}" -- --version \
         >/dev/null 2>"${TMP}/failed-create.err"; then
         fail "failed managed creation launched successfully"
     fi
     [[ "$(< "${MAIN_COUNT_FILE}")" == "${main_before}" &&
-       "$(jq -r '.repositories[0].managedWorkspaces | length' "${MACHINE}")" == "${managed_count}" ]] \
+       "$(jq -r '.repositories[0].tasks | length' "${MACHINE}")" == "${managed_count}" ]] \
         || fail "failed managed creation launched Pi or published metadata"
 
-    if FAKE_DOCKER_MODE=main-fail run_pi --worktree "${REPOSITORY}" --version \
+    if FAKE_DOCKER_MODE=main-fail \
+        run_pi worktree start failed-main "${REPOSITORY}" -- --version \
         >/dev/null 2>"${TMP}/failed-main.err"; then
         fail "failed Pi container returned success"
     fi

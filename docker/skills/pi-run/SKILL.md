@@ -116,8 +116,9 @@ enterprise firewall independently restricts it.
 
 Restricted startup automatically derives exact TCP/443 model destinations and
 exact-target TCP/22 rules from complete matching managed SSH key pairs. It
-reports exact `model-tcp` and `manual-tcp` rules plus only the `ssh-tcp` target
-count and port. Use `ssh-key list` to request the SSH inventory. The normalized
+reports only `model-tcp` and `ssh-tcp` target counts and fixed ports while
+reporting exact explicitly configured `manual-tcp` rules. Inferred hostnames are
+not printed. Use `ssh-key list` to request the SSH inventory. The normalized
 policy is private from Pi and frozen before startup; profile, provider, or key
 changes affect only a new launch. Network reachability and credential presence
 are capabilities, not user authorization for a task.
@@ -135,40 +136,73 @@ normal non-bare Git repository. Ask the user to run these commands from the
 repository in a host terminal:
 
 ```bash
-pi-run worktree status
-pi-run worktree enable
-pi-run worktree disable
+pi-run worktree start <task-name> <repository>
+pi-run worktree start <task-name> <repository> -c
+pi-run worktree start <task-name> <repository> -r
+pi-run worktree open <task-name> <repository>
+pi-run worktree open <task-name> <repository> -c
+pi-run worktree open <task-name> <repository> -r
+pi-run worktree finish <task-name>
 pi-run worktree list
-pi-run --worktree .
-pi-run --no-worktree .
+pi-run worktree list --all
 ```
 
-`--worktree` explicitly creates a fresh managed workspace; `--no-worktree`
-explicitly uses the selected checkout. Otherwise, the machine-local repository
-preference applies, then direct-checkout behavior. Overrides do not change the
-preference. Disabling changes only future launches and does not remove branches,
-worktrees, workspace identities, source changes, or sessions.
-
-A managed workspace begins at the selected checkout's exact committed `HEAD` on
-`pi-run/<workspace-uuid>`. Dirty source-checkout changes are reported but not
-copied. Pi-Run does not automatically stash, commit, clean, reset, merge, rebase,
-push, remove worktrees, or delete branches. Managed checkouts live under:
+`worktree start` requires a relative or absolute repository path; use `.` for
+the current repository. It creates one explicitly named task, while ordinary
+launches use the selected checkout directly. Pi arguments follow the repository
+directly; a standalone `--` remains optional compatibility. A managed task
+begins at the selected checkout's exact committed `HEAD` on
+`pi-run/<task-name>`. Its checkout and Git administration directory both use the
+task name:
 
 ```text
-<Pi-Run home>/worktrees/<repository-id>/<workspace-id>/
+<Pi-Run home>/worktrees/<repository-id>/<task-name>/
+<repository>/.git/worktrees/<task-name>/
 ```
 
-With managed mode selected, repository-local `-c` and `-r` route to the valid
-workspace whose selected-profile transcript has the newest modification time;
-ties fail as ambiguous. Global `pi-run resume` follows the selected workspace's
-recorded association regardless of the current repository preference. One
-Pi-Run process may use a particular managed workspace at a time, while distinct
-managed workspaces may run concurrently.
+Dirty source-checkout changes are reported but not copied. Starting a finished
+task recreates that branch and checkout from the selected checkout's current
+committed `HEAD` while reusing its workspace identity and retained conversations.
+No selector starts a new conversation; `-c` continues the newest conversation
+and `-r` opens Pi's selector. New tasks cannot use continuation selectors, and
+active or finishing duplicate names remain refusals. Failed recreation leaves
+the task archived. Ordinary launch and exit do not stash, commit, clean, reset,
+merge, rebase, push, remove worktrees, or delete branches. Repository and
+workspace UUIDs remain internal identity keys.
 
-`worktree list` is read-only and reports repository groups plus `available`,
-`missing`, `pending`, `path-conflict`, `git-conflict`, or `unsafe` child status.
-Pi-Run has no managed-worktree removal command. Do not interpret an inactive or
-missing session as permission to delete source or Git state.
+`worktree open` requires the same explicit repository-path form and reuses
+exactly the named task without creating another checkout. Without a selector it
+starts a fresh conversation; `-c` and `-r` stay within the selected profile's
+conversations for that task. Global `pi-run resume` also
+follows the selected workspace's recorded association. One Pi-Run process may
+use a particular managed task at a time, while distinct tasks may run concurrently.
+
+Managed startup reports only the selected profile, task name, and current task
+revision. `worktree list` is read-only and uses a compact `TASK`, `STATE`,
+`STATUS`, and `CREATED` table. Normal output omits repository/workspace UUIDs,
+internal branch names, and managed storage paths. Status may be `available`,
+`missing`, `pending`, `path-conflict`, `git-conflict`, or `unsafe`; `--all` also
+shows `finished`/`archived` history.
+
+`worktree finish` is the explicit integration and cleanup workflow. Run it from
+the checkout whose attached branch should receive the task. It shows existing
+commits, task working content, and ignored task paths without exposing internal
+workspace identifiers. Confirmation authorizes one automatic commit of tracked
+and non-ignored untracked task changes using `Complete task <task-name>`, discard
+of the displayed ignored task output, local integration, managed-checkout
+removal, and local task-branch deletion. Submodules, nested repositories, active
+use, missing tasks, and unsafe or conflicting state remain refusals.
+
+When commits need integration, the target must have no tracked changes.
+Untracked and ignored target content is normal machine-local state and is
+preserved unless a task-changed path overlaps it. An already-integrated task does
+not inspect target working content because no merge occurs. Commit, merge, and
+inspection run offline in the restricted runtime with Git hooks disabled.
+Conflicts are aborted and the target is verified restored; only successful
+integration permits checkout and local branch removal. Conversations and
+portable history remain. Finish never fetches, pushes, force-deletes a branch,
+or deletes a remote branch. Never interpret exit or an inactive or missing
+session as permission to finish.
 
 A worktree separates branches, indexes, and working files; it is not a sandbox.
 The selected checkout is mounted at `/workspace`, but the writable common Git

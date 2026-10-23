@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "${ROOT}/tests/worktree-fixtures.sh"
 TMP="$(mktemp -d)"
 trap 'rm -rf "${TMP}"' EXIT
 HOME_DIR="${TMP}/Pi Run"
@@ -49,8 +50,7 @@ for argument in "$@"; do
 done
 [[ -n "${workspace}" && -n "${common}" && -f "${pointer}" ]] || exit 3
 home="${workspace%%/worktrees/*}"
-workspace_id="${workspace##*/}"
-lock="${home}/worktrees/.launch-locks/${workspace_id}/owner.json"
+lock="$(find "${home}/worktrees/.launch-locks" -mindepth 2 -maxdepth 2 -name owner.json -print -quit)"
 [[ -f "${lock}" ]] || exit 4
 count=0
 [[ ! -f "${COUNT_FILE:?}" ]] || count="$(< "${COUNT_FILE}")"
@@ -75,27 +75,25 @@ printf 'base\n' > "${REPOSITORY}/base.txt"
 git -C "${REPOSITORY}" add base.txt
 git -C "${REPOSITORY}" commit -qm base
 HEAD_COMMIT="$(git -C "${REPOSITORY}" rev-parse HEAD)"
-(
-    cd "${REPOSITORY}"
-    PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" worktree enable >/dev/null
-)
+REPOSITORY_ID="$(register_worktree_repository_fixture "${ROOT}" "${HOME_DIR}" "${REPOSITORY}")"
 MACHINE="${HOME_DIR}/machines/$("${ROOT}/bin/pi-run" machine-id).json"
 REGISTRY="${HOME_DIR}/workspaces/registry.json"
-REPOSITORY_ID="$(jq -r '.repositories[0].id' "${MACHINE}")"
-WORKTREE="${HOME_DIR}/worktrees/${REPOSITORY_ID}/${WORKSPACE_ID}"
-BRANCH="pi-run/${WORKSPACE_ID}"
+TASK_NAME="global-resume"
+WORKTREE="${HOME_DIR}/worktrees/${REPOSITORY_ID}/${TASK_NAME}"
+BRANCH="pi-run/${TASK_NAME}"
 COMMON="${REPOSITORY}/.git"
-ADMIN="${COMMON}/worktrees/${WORKSPACE_ID}"
+ADMIN="${COMMON}/worktrees/${TASK_NAME}"
 mkdir -p "$(dirname "${WORKTREE}")"
 chmod 0700 "${HOME_DIR}/worktrees" "$(dirname "${WORKTREE}")"
 git -C "${REPOSITORY}" worktree add -q -b "${BRANCH}" "${WORKTREE}" main
 TEST_ROOT="${ROOT}" TEST_HOME="${HOME_DIR}" TEST_REPOSITORY="${REPOSITORY_ID}" \
-    TEST_ID="${WORKSPACE_ID}" TEST_PATH="${WORKTREE}" bash -ceu '
+    TEST_ID="${WORKSPACE_ID}" TEST_TASK_NAME="${TASK_NAME}" TEST_PATH="${WORKTREE}" bash -ceu '
         fail() { echo "pi-run: $*" >&2; exit 1; }
         PI_RUN_HOME_RESOLVED="${TEST_HOME}"
         source "${TEST_ROOT}/lib/pi-run/workspaces.sh"
         publish_managed_worktree_metadata \
-            "${TEST_ID}" "${TEST_REPOSITORY}" "pi-run/${TEST_ID}" "${TEST_PATH}" >/dev/null
+            "${TEST_ID}" "${TEST_TASK_NAME}" "${TEST_REPOSITORY}" \
+            "pi-run/${TEST_TASK_NAME}" "${TEST_PATH}" >/dev/null
     '
 SESSION_DIR="${HOME_DIR}/profiles/default/sessions/${WORKSPACE_ID}"
 mkdir -p "${SESSION_DIR}"
@@ -117,13 +115,20 @@ grep -F "workspace=${WORKTREE}" "${CAPTURE_PREFIX}.1" >/dev/null \
     || fail "explicit global resume did not mount the managed worktree"
 grep -F "common=${COMMON}" "${CAPTURE_PREFIX}.1" >/dev/null \
     || fail "explicit global resume did not mount common Git metadata"
-grep -F "pointer-content=gitdir: /run/pi-run-git/common/worktrees/${WORKSPACE_ID}" "${CAPTURE_PREFIX}.1" >/dev/null \
+grep -F "pointer-content=gitdir: /run/pi-run-git/common/worktrees/${TASK_NAME}" "${CAPTURE_PREFIX}.1" >/dev/null \
     || fail "explicit global resume generated the wrong .git pointer"
 grep -F -- "--session-dir /profile/sessions/${WORKSPACE_ID}" "${CAPTURE_PREFIX}.1" >/dev/null \
     || fail "explicit global resume selected the wrong session directory"
 grep -F -- '--resume' "${CAPTURE_PREFIX}.1" >/dev/null || fail "global resume did not preserve --resume for Pi"
-grep -F "managed-worktree branch=${BRANCH} head=${HEAD_COMMIT}" "${TMP}/explicit.err" >/dev/null \
-    || fail "managed global resume omitted branch and head reporting"
+grep -F "profile=default task=${TASK_NAME}" "${TMP}/explicit.err" >/dev/null \
+    || fail "managed global resume omitted task reporting"
+grep -F "task-head=${HEAD_COMMIT}" "${TMP}/explicit.err" >/dev/null \
+    || fail "managed global resume omitted current revision reporting"
+for internal in "${WORKSPACE_ID}" "${BRANCH}" "${WORKTREE}"; do
+    if grep -F "${internal}" "${TMP}/explicit.err" >/dev/null; then
+        fail "managed global resume exposed internal identity: ${internal}"
+    fi
+done
 LOCK="$(grep '^lock=' "${CAPTURE_PREFIX}.1" | cut -d= -f2-)"
 POINTER="$(grep '^pointer=' "${CAPTURE_PREFIX}.1" | cut -d= -f2-)"
 [[ ! -e "${LOCK}" && ! -e "${POINTER}" ]] \

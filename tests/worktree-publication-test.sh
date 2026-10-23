@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "${ROOT}/tests/worktree-fixtures.sh"
 TMP="$(mktemp -d)"
 trap 'rm -rf "${TMP}"' EXIT
 HOME_DIR="${TMP}/Pi Run"
@@ -26,44 +27,49 @@ git -C "${REPOSITORY}" config user.email fixture@pi-run.invalid
 printf 'base\n' > "${REPOSITORY}/base.txt"
 git -C "${REPOSITORY}" add base.txt
 git -C "${REPOSITORY}" commit -qm base
-(
-    cd "${REPOSITORY}"
-    PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" worktree enable >/dev/null
-)
+REPOSITORY_ID="$(register_worktree_repository_fixture "${ROOT}" "${HOME_DIR}" "${REPOSITORY}")"
 MACHINE="${HOME_DIR}/machines/$("${ROOT}/bin/pi-run" machine-id).json"
 REGISTRY="${HOME_DIR}/workspaces/registry.json"
-REPOSITORY_ID="$(jq -r '.repositories[0].id' "${MACHINE}")"
 WORKTREE_ROOT="${HOME_DIR}/worktrees/${REPOSITORY_ID}"
 mkdir -p "${WORKTREE_ROOT}"
 chmod 0700 "${HOME_DIR}/worktrees" "${WORKTREE_ROOT}"
 
 worktree_path() {
-    printf '%s/%s\n' "${WORKTREE_ROOT}" "$1"
+    printf '%s/%s\n' "${WORKTREE_ROOT}" "$(task_name_for_id "$1")"
+}
+
+task_name_for_id() {
+    printf 'task-%s\n' "${1%%-*}"
+}
+
+branch_for_id() {
+    printf 'pi-run/%s\n' "$(task_name_for_id "$1")"
 }
 
 create_worktree() {
-    local id="$1" branch="${2:-pi-run/$1}" path
+    local id="$1" branch="${2:-$(branch_for_id "$1")}" path
     path="$(worktree_path "${id}")"
     git -C "${REPOSITORY}" worktree add -q -b "${branch}" "${path}" main
 }
 
 remove_worktree() {
-    local id="$1" branch="${2:-pi-run/$1}" path
+    local id="$1" branch="${2:-$(branch_for_id "$1")}" path
     path="$(worktree_path "${id}")"
     git -C "${REPOSITORY}" worktree remove --force "${path}" >/dev/null 2>&1 || true
     git -C "${REPOSITORY}" branch -D "${branch}" >/dev/null 2>&1 || true
 }
 
 publish() {
-    local id="$1" path="${2:-$(worktree_path "$1")}" branch="${3:-pi-run/$1}"
-    TEST_ROOT="${ROOT}" TEST_HOME="${HOME_DIR}" TEST_ID="${id}" \
+    local id="$1" path="${2:-$(worktree_path "$1")}" branch="${3:-$(branch_for_id "$1")}" task_name
+    task_name="$(task_name_for_id "${id}")"
+    TEST_ROOT="${ROOT}" TEST_HOME="${HOME_DIR}" TEST_ID="${id}" TEST_TASK_NAME="${task_name}" \
         TEST_REPOSITORY_ID="${REPOSITORY_ID}" TEST_BRANCH="${branch}" TEST_PATH="${path}" \
         bash -ceu '
             fail() { echo "pi-run: $*" >&2; exit 1; }
             PI_RUN_HOME_RESOLVED="${TEST_HOME}"
             source "${TEST_ROOT}/lib/pi-run/workspaces.sh"
             publish_managed_worktree_metadata \
-                "${TEST_ID}" "${TEST_REPOSITORY_ID}" "${TEST_BRANCH}" "${TEST_PATH}"
+                "${TEST_ID}" "${TEST_TASK_NAME}" "${TEST_REPOSITORY_ID}" "${TEST_BRANCH}" "${TEST_PATH}"
         '
 }
 
@@ -84,13 +90,14 @@ git_before="$(git_state)"
 [[ "$(publish "${ID_A}")" == "${ID_A}" ]] || fail "publication returned the wrong workspace identity"
 [[ "$(git_state)" == "${git_before}" ]] || fail "publication changed Git state"
 PATH_A="$(worktree_path "${ID_A}")"
-jq -e --arg id "${ID_A}" --arg path "${PATH_A}" --arg repository "${REPOSITORY_ID}" '
+jq -e --arg id "${ID_A}" --arg path "${PATH_A}" --arg repository "${REPOSITORY_ID}" \
+    --arg name "$(task_name_for_id "${ID_A}")" --arg branch "$(branch_for_id "${ID_A}")" '
     ([.workspacePaths[] | select(.workspaceId == $id and .path == $path)] | length) == 1 and
-    ([.repositories[] | select(.id == $repository) | .managedWorkspaces[] |
-        select(.workspaceId == $id and .branch == ("pi-run/" + $id))] | length) == 1
+    ([.repositories[] | select(.id == $repository) | .tasks[] |
+        select(.name == $name and .workspaceId == $id and .branch == $branch and .state == "active")] | length) == 1
 ' "${MACHINE}" >/dev/null || fail "machine metadata was not published together"
-created="$(jq -r --arg id "${ID_A}" '.repositories[].managedWorkspaces[] | select(.workspaceId == $id) | .createdAt' "${MACHINE}")"
-jq -e --arg id "${ID_A}" --arg name "$(basename "${REPOSITORY}")" --arg created "${created}" '
+created="$(jq -r --arg id "${ID_A}" '.repositories[].tasks[] | select(.workspaceId == $id) | .createdAt' "${MACHINE}")"
+jq -e --arg id "${ID_A}" --arg name "$(basename "${REPOSITORY}"): $(task_name_for_id "${ID_A}")" --arg created "${created}" '
     [.workspaces[] | select(.id == $id)] | .[0] ==
         {id:$id,name:$name,kind:"git",createdAt:$created}
 ' "${REGISTRY}" >/dev/null || fail "portable metadata does not match the machine association"
@@ -105,10 +112,11 @@ publish "${ID_A}" >/dev/null
 create_worktree "${ID_PENDING}"
 PATH_PENDING="$(worktree_path "${ID_PENDING}")"
 jq --arg id "${ID_PENDING}" --arg path "${PATH_PENDING}" --arg repository "${REPOSITORY_ID}" \
+    --arg name "$(task_name_for_id "${ID_PENDING}")" --arg branch "$(branch_for_id "${ID_PENDING}")" \
     --arg created "${PENDING_TIME}" '
     .workspacePaths += [{workspaceId:$id,path:$path}] |
-    (.repositories[] | select(.id == $repository) | .managedWorkspaces) +=
-        [{workspaceId:$id,branch:("pi-run/" + $id),createdAt:$created}]
+    (.repositories[] | select(.id == $repository) | .tasks) +=
+        [{name:$name,workspaceId:$id,branch:$branch,state:"active",createdAt:$created,finishedAt:null}]
 ' "${MACHINE}" > "${MACHINE}.tmp"
 mv "${MACHINE}.tmp" "${MACHINE}"
 chmod 0600 "${MACHINE}"
@@ -125,7 +133,7 @@ if publish "${ID_PENDING}" >/dev/null 2>"${TMP}/conflict.err"; then
 fi
 grep -F 'conflicts with the managed machine association' "${TMP}/conflict.err" >/dev/null \
     || fail "portable-conflict diagnostic was unclear"
-jq --arg id "${ID_PENDING}" --arg name "$(basename "${REPOSITORY}")" \
+jq --arg id "${ID_PENDING}" --arg name "$(basename "${REPOSITORY}"): $(task_name_for_id "${ID_PENDING}")" \
     '(.workspaces[] | select(.id == $id) | .name) = $name' "${REGISTRY}" > "${REGISTRY}.tmp"
 mv "${REGISTRY}.tmp" "${REGISTRY}"
 chmod 0600 "${REGISTRY}"

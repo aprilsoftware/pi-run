@@ -49,7 +49,7 @@ session starts Off.
 Guardian is not a sandbox or an infallible security decision-maker. The temporary
 container narrows filesystem exposure, but selected mounts contain real host
 data and the default network backend uses host networking. Explicit offline and
-experimental restricted TCP modes can narrow session networking with exact
+restricted TCP modes can narrow session networking with exact
 hosts, domains, CIDRs, or public-internet rules; they do not hide mounted
 credentials or make writes disposable. Profiles, credentials, Unix
 permissions, RBAC, database roles, and network controls bound authority;
@@ -85,7 +85,7 @@ resources, and other infrastructure need their own recovery mechanisms.
   protect portable Pi-Run state and support guarded restore. They complement Git,
   workspace backups, and infrastructure recovery rather than replacing them.
 - **Selectable session networking:** retain default host networking, choose an
-  explicit offline container, or use experimental restricted TCP rules for
+  explicit offline container, or use restricted TCP rules for
   exact hosts, domains, CIDRs, and public-internet access.
 - **Understandable boundaries:** the workspace and most selected-profile state
   are writable; network-authority configuration and managed SSH credentials are
@@ -131,10 +131,10 @@ The downloaded installer contains its matching version. It verifies the
 versioned application archive, pulls the matching runtime and egress images,
 and installs the `pi-run` command. `pi-run init` creates the data home and
 initial profile;
-`pi-run .` opens the current directory as a writable workspace. For parallel
-repository sessions, `pi-run --worktree .` creates a persistent host-visible Git
-worktree, or `pi-run worktree enable` makes that behavior the repository default.
-Use `pi-run --no-worktree .` for an explicit direct-checkout launch. See
+`pi-run .` opens the current directory as a writable workspace. For explicitly
+isolated parallel repository work, `pi-run worktree start <task-name> <repository>`
+creates a named persistent host-visible Git worktree. Use `.` for the current
+repository. Ordinary launches remain in the selected checkout. See
 [workspaces and sessions](docs/workspaces-and-sessions.md) for continuation,
 inspection, and security boundaries.
 
