@@ -66,10 +66,10 @@ for storage paths and identifier differences.
 
 ## Use managed Git worktrees
 
-Managed worktrees let separate Pi-Run sessions use independent branches,
-indexes, and working files from one normal non-bare Git repository. They are
-persistent, host-visible source checkouts—not temporary container state and not
-a security boundary.
+Managed worktrees are a supported feature since Pi-Run v0.8.7. They let
+separate Pi-Run sessions use independent branches, indexes, and working files
+from one normal non-bare Git repository. They are persistent, host-visible
+source checkouts—not temporary container state and not a security boundary.
 
 Create or restart one explicitly named managed task for a selected repository:
 
@@ -187,10 +187,11 @@ successful integration does Pi-Run remove the linked checkout and delete its
 local branch without force. It never fetches, pushes, or deletes a remote
 branch.
 
-Portable workspace identity and every profile's conversations remain as
-historical records. An interrupted `finishing` cleanup is shown by normal
-listing and can be retried. Pi-Run never infers finish from exit or session
-activity.
+Portable workspace identity and every profile's conversations remain associated
+with the finished task. While its checkout is absent they cannot run, but an
+explicit `worktree start` recreates the task for a fresh conversation, `-c`, or
+`-r`. An interrupted `finishing` cleanup is shown by normal listing and can be
+retried. Pi-Run never infers finish from exit or session activity.
 
 Managed source trees and machine associations are excluded from encrypted
 snapshots. Portable identities and sessions can be restored, but Pi-Run does not

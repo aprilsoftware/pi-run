@@ -2,11 +2,11 @@
 
 ## Status and purpose
 
-The first v0.8 prerelease prototype is implemented and validated, but user
-validation rejected its automatic repository mode. It incorrectly treated a
-fresh Pi conversation as a request for a fresh worktree and branch. This record
-defines the task-oriented replacement. Named task start, open, finish, and
-historical listing are now implemented.
+Managed Git worktrees are supported since Pi-Run v0.8.7. This record preserves
+the design and validation history of that feature. An earlier withdrawn v0.8
+prerelease prototype used automatic repository mode and incorrectly treated a
+fresh Pi conversation as a request for a fresh worktree and branch. User
+validation rejected that model in favor of the explicit task-oriented workflow.
 
 A worktree is the filesystem and branch context for one explicitly named
 parallel task. It may contain many Pi conversations over its lifetime. Ordinary
@@ -372,10 +372,11 @@ other Pi-Run home state are not rewritten. Invalid, linked, hard-linked,
 unexpectedly permissive, or unsupported machine files fail without partial
 initialization.
 
-Managed-task metadata created only by prerelease development is not part of the
-stable upgrade contract. It is removed from development machines before the
-final task-oriented release rather than represented by permanent migration,
-branch/path compatibility, or format-specific refusal logic.
+Historical managed-task metadata formats created only by withdrawn prerelease
+development were not made part of the stable upgrade contract. They were removed
+from development machines before the supported v0.8.7 workflow rather than
+represented by permanent migration, branch/path compatibility, or format-specific
+refusal logic. Current schema-1 task records are supported product state.
 
 Machine files and the managed worktree root remain excluded from portable
 snapshots. The portable workspace registry schema does not need to change for
@@ -479,19 +480,22 @@ unavailable, not recreated from guesses.
 
 ## Task-oriented implementation status
 
-The replacement now provides unconditional direct ordinary launches, explicit
-`worktree start <task-name> <repository>`, schema-v1 named task lifecycle records,
-collision-safe isolated materialization, recoverable machine-first publication,
-name-first task reporting, compact repository-grouped listing, one-active-launch
-locking, and association-driven global resume. Prototype repository preferences,
-launch flags, unnamed
-workspaces, and cross-worktree transcript routing have been removed.
+The supported v0.8.7 workflow provides unconditional direct ordinary launches,
+explicit `worktree start <task-name> <repository>`, schema-1 named task lifecycle
+records, collision-safe isolated materialization, recoverable machine-first
+publication, name-first task reporting, compact repository-grouped listing,
+one-active-launch locking, and association-driven global resume. Prototype
+repository preferences, launch flags, unnamed workspaces, and cross-worktree
+transcript routing have been removed.
 
 Named `worktree open <task-name> <repository>` supports fresh, `-c`, and `-r`
-task-local conversations without creating another checkout. Recoverable
-`finish` explicitly integrates committed work, removes the checkout and local
-task branch, and preserves portable identity and conversations. It is never
-inferred from ordinary exit or Git state.
+task-local conversations without creating another checkout. `finish` explicitly
+commits tracked and non-ignored task changes, integrates the task while preserving
+unrelated target-local content, removes the checkout and local task branch, and
+retains portable identity and conversations. A later `worktree start` can
+recreate the finished task at the selected checkout's current `HEAD`, with `-c`
+or `-r` selecting retained conversations. Finish is never inferred from ordinary
+exit or Git state.
 
 ## Deferred decisions and exclusions
 

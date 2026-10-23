@@ -123,9 +123,10 @@ metadata and portable conversation identity unchanged.
 
 Creation accepts a supported non-bare repository with attached or detached
 committed `HEAD` and rejects an unborn repository. Pi-Run resolves `HEAD^{commit}`
-before creation and reports dirty source state as excluded. It allocates one UUID
-and strictly preflights the branch, worktree path, Git administration path, and
-metadata. Collisions fail instead of selecting another identity.
+before creation and reports dirty source state as excluded. A new task receives
+one UUID; a restarted task reuses its existing UUID. Pi-Run strictly preflights
+the branch, worktree path, Git administration path, and metadata. Collisions fail
+instead of selecting another identity.
 
 The branch is `pi-run/<task-name>`, and both the checkout and linked-worktree
 administration directory use `<task-name>` as their final component. Pi-Run first
