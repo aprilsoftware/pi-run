@@ -326,6 +326,14 @@ PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" \
     profile create no-caf-copy --from network-copy >/dev/null
 [[ ! -e "${HOME_DIR}/profiles/no-caf-copy/caf" ]] \
     || fail "profile creation added CAF policy to a source without one"
+mkdir -m 0700 "${HOME_DIR}/profiles/no-caf-copy/caf"
+printf '%s\n' '{"schemaVersion":1,"model":"friend/frontier","thinking":null}' \
+    > "${HOME_DIR}/profiles/no-caf-copy/caf/config.json"
+chmod 0600 "${HOME_DIR}/profiles/no-caf-copy/caf/config.json"
+PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" \
+    profile create config-only-copy --from no-caf-copy >/dev/null
+[[ ! -e "${HOME_DIR}/profiles/config-only-copy/caf" ]] \
+    || fail "profile creation copied private CAF configuration without a policy"
 cp "${development_config}" "${TMP}/network-rules.before"
 expect_failure env PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" network mode offline
 cmp "${TMP}/network-rules.before" "${development_config}" \

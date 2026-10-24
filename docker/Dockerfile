@@ -202,6 +202,7 @@ COPY extensions/plan-agent.ts /usr/local/lib/node_modules/plan-agent/
 COPY extensions/guard-runtime.ts /usr/local/lib/node_modules/guardian-agent/
 COPY extensions/guard-journal.ts /usr/local/lib/node_modules/guardian-agent/
 COPY extensions/guardian-agent.ts /usr/local/lib/node_modules/guardian-agent/
+COPY extensions/caf-agent.ts /usr/local/lib/node_modules/guardian-agent/
 COPY extensions/snapshot-agent.ts /usr/local/lib/node_modules/snapshot-agent/
 COPY skills/ /usr/local/share/pi-run/skills/
 RUN test -f /usr/local/share/pi-run/skills/pi-run/SKILL.md \

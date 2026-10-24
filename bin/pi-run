@@ -1028,6 +1028,7 @@ PI_ARGS=(
     --extension /usr/local/lib/node_modules/plan-agent/plan-agent.ts
     --extension /usr/local/lib/node_modules/guardian-agent/guard-runtime.ts
     --extension /usr/local/lib/node_modules/guardian-agent/guardian-agent.ts
+    --extension /usr/local/lib/node_modules/guardian-agent/caf-agent.ts
     --extension /usr/local/lib/node_modules/snapshot-agent/snapshot-agent.ts
     --no-prompt-templates
     --skill /usr/local/share/pi-run/skills/pi-run

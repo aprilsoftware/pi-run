@@ -124,7 +124,9 @@ validate_profile_definition_files() {
             || fail "CAF definition directory must be a non-symlink directory: ${caf_dir}"
         [[ "$(realpath "${caf_dir}")" == "${caf_dir}" ]] \
             || fail "CAF definition directory escapes its profile: ${caf_dir}"
-        definition_files+=(caf/caf.md)
+        if [[ -e "${caf_dir}/caf.md" || -L "${caf_dir}/caf.md" ]]; then
+            definition_files+=(caf/caf.md)
+        fi
     fi
     for file in "${definition_files[@]}"; do
         path="${profile_dir}/${file}"
@@ -159,7 +161,7 @@ materialize_profile_definition() {
     install -m 0600 "${source_dir}/AGENTS.md" "${staging}/AGENTS.md"
     mkdir -m 0700 "${staging}/credentials" "${staging}/sessions" "${staging}/guardian" "${staging}/skills"
     install -m 0600 "${source_dir}/guardian/guardian.md" "${staging}/guardian/guardian.md"
-    if [[ -d "${source_dir}/caf" ]]; then
+    if [[ -f "${source_dir}/caf/caf.md" ]]; then
         mkdir -m 0700 "${staging}/caf"
         install -m 0600 "${source_dir}/caf/caf.md" "${staging}/caf/caf.md"
     fi

@@ -111,7 +111,8 @@ profiles/<name>/
 ├── skills/
 ├── credentials/
 ├── caf/
-│   └── caf.md
+│   ├── caf.md
+│   └── config.json
 ├── guardian/
 │   ├── guardian.md
 │   └── config.json
@@ -125,12 +126,18 @@ profiles/<name>/
 `profile.json`, `AGENTS.md`, and `guardian/guardian.md` must be regular,
 non-symlink, singly linked files contained by the profile. The Guardian and skill
 directories must also be ordinary contained directories. When `caf/` is
-present, it and `caf/caf.md` receive the same containment and link checks.
+present, it receives the same directory checks; an optional `caf/caf.md`
+receives the same containment and link checks as other definition files.
 
 Fresh default profiles include `caf/caf.md`, and profile creation copies it when
 the source has one. Profiles without a CAF policy remain valid and are not
-modified automatically. The file defines profile-specific external-disclosure
+modified automatically. The policy defines profile-specific external-disclosure
 priorities; it does not enable CAF or grant external access.
+
+`/caf` configures a friend model and thinking preference without contacting that
+model. Preferences are created lazily in private `caf/config.json`; a missing
+model remains explicitly unconfigured. Friend conversations and external calls
+are not enabled by this configuration surface.
 
 Pi uses the selected profile as its configuration directory. Provider login,
 model configuration, settings, Git configuration, credentials, Guardian state,
