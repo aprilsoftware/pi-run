@@ -116,14 +116,21 @@ profiles/<name>/
 │   └── guardian.log* (legacy, when present)
 ├── logs/
 │   └── guardian/
-│       └── runs/
-│           └── <run-id>.jsonl*
+│       ├── runs/
+│       │   └── <run-id>.jsonl*
+│       └── legacy/
+│           └── events.jsonl*
 └── sessions/
 ```
 
 `profile.json`, `AGENTS.md`, and `guardian/guardian.md` must be regular,
 non-symlink, singly linked files contained by the profile. The Guardian and skill
 directories must also be ordinary contained directories.
+
+Legacy `guardian/guardian.log*` files remain readable in place. With all
+Pi-Run sessions stopped, `pi-run migrate guardian-logs` explicitly moves them
+into `logs/guardian/legacy/`; it does not change `guardian.md`, `config.json`, or
+profile schema 1.
 
 Pi uses the selected profile as its configuration directory. Provider login,
 model configuration, settings, Git configuration, credentials, Guardian state,

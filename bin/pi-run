@@ -14,6 +14,7 @@ Usage:
   pi-run machine-id
   pi-run [--home <path>] [--profile <name>] doctor
   pi-run upgrade [--check|vX.Y.Z]
+  pi-run [--home <path>] migrate guardian-logs
   pi-run [--home <path>] profile list
   pi-run [--home <path>] profile default [<name>]
   pi-run [--home <path>] profile create <name> [--from <profile>]
@@ -406,6 +407,13 @@ case "${COMMAND}" in
         else
             usage
         fi
+        exit 0
+        ;;
+    migrate)
+        [[ $# -eq 2 && "$2" == guardian-logs ]] || usage
+        HOME_LOCK_MODE=exclusive
+        initialize_home
+        migrate_guardian_logs
         exit 0
         ;;
     home)

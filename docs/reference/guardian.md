@@ -213,6 +213,12 @@ Each Pi process writes its own bounded run journal under
 1 MiB each. Concurrent sessions do not share a writer lock. `/guardian-log`
 merges these runs chronologically and continues to read existing
 `guardian/guardian.log*` files; this compatibility does not move or delete them.
+After stopping all Pi-Run sessions, migrate those files explicitly from a host
+terminal with `pi-run migrate guardian-logs`. The command takes the exclusive
+Pi-Run home lock, moves each profile through private restartable staging into
+`logs/guardian/legacy/`, and refuses destination collisions or unsafe files.
+`guardian.log`, `.1`, and `.2` become `events.jsonl`, `.1`, and `.2`
+respectively.
 After a clean run closure, best-effort retention targets 64 MiB and 128 run
 groups by pruning completed runs oldest first. Active, incomplete, unsafe, and
 legacy files are not automatically removed, so the aggregate can temporarily
