@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { truncateToWidth } from "@earendil-works/pi-tui";
+import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
 export const GUARD_RUNTIME_KIND = "pi-run.guard-runtime";
 export const GUARD_RUNTIME_VERSION = 1 as const;
@@ -8,7 +8,7 @@ export const GUARD_RUNTIME_AVAILABLE = "pi-run:guard-runtime:v1:available";
 export const GUARD_RUNTIME_DISCOVER = "pi-run:guard-runtime:v1:discover";
 
 export interface GuardClientRegistrationV1 { schemaVersion: 1; id: string; label: string; }
-export interface GuardActivityRequestV1 { schemaVersion: 1; state: string; detail?: string; }
+export interface GuardActivityRequestV1 { schemaVersion: 1; state: string; detail?: string; right?: string; }
 export interface GuardActivitySnapshotV1 extends GuardActivityRequestV1 { clientId: string; sequence: number; }
 export interface GuardActivityLeaseV1 {
   readonly clientId: string;
@@ -63,12 +63,14 @@ function validateRegistration(value: GuardClientRegistrationV1): Readonly<GuardC
   return Object.freeze({ ...value });
 }
 function validateActivity(value: GuardActivityRequestV1): Readonly<GuardActivityRequestV1> {
-  const keys = value && typeof value === "object" && !Array.isArray(value) ? Object.keys(value).sort().join(",") : "";
-  if (!value || (keys !== "schemaVersion,state" && keys !== "detail,schemaVersion,state") ||
+  const validText = (text: unknown) => typeof text === "string" && text === text.trim() && !!text &&
+    text.length <= 120 && !/[\u0000-\u001f\u007f]/.test(text);
+  if (!value || typeof value !== "object" || Array.isArray(value) ||
+      Object.keys(value).some(key => !["schemaVersion", "state", "detail", "right"].includes(key)) ||
       value.schemaVersion !== 1 || typeof value.state !== "string" ||
       !/^[a-z][a-z0-9-]{0,31}$/.test(value.state) ||
-      (value.detail !== undefined && (typeof value.detail !== "string" || value.detail !== value.detail.trim() ||
-        !value.detail || value.detail.length > 120 || /[\u0000-\u001f\u007f]/.test(value.detail)))) {
+      (value.detail !== undefined && !validText(value.detail)) ||
+      (value.right !== undefined && !validText(value.right))) {
     throw new Error("Invalid Guard Runtime activity");
   }
   return Object.freeze({ ...value });
@@ -83,8 +85,12 @@ function isRuntime(value: unknown): value is GuardRuntimeV1 {
 export function renderGuardStatus(activity: Readonly<GuardActivitySnapshotV1> | undefined, width: number): string {
   const safeWidth = Number.isFinite(width) ? Math.max(1, Math.floor(width)) : 1;
   const state = activity?.state.replaceAll("-", " ") ?? "ready";
-  const text = `guard · ${state}${activity?.detail ? ` ${activity.detail}` : ""}`;
-  return truncateToWidth(text, safeWidth, "…");
+  const left = `guard · ${state}${activity?.detail ? ` ${activity.detail}` : ""}`;
+  if (visibleWidth(left) >= safeWidth) return truncateToWidth(left, safeWidth, "…");
+  const available = safeWidth - visibleWidth(left) - 2;
+  if (!activity?.right || available < 12) return left;
+  const right = truncateToWidth(activity.right, available, "…");
+  return left + " ".repeat(Math.max(2, safeWidth - visibleWidth(left) - visibleWidth(right))) + right;
 }
 
 export function connectGuardClient(

@@ -12,6 +12,7 @@
 import type { ExtensionAPI, ExtensionContext, ToolCallEvent } from "@earendil-works/pi-coding-agent";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { Text, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { connectGuardClient, type GuardActivityRequestV1 } from "./guard-runtime.ts";
 import { constants } from "node:fs";
 import { open, realpath, mkdir, lstat, rename, unlink, rmdir, readdir } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep, basename, extname } from "node:path";
@@ -1834,6 +1835,7 @@ function restoredGuardianDispute(ctx:ExtensionContext):GuardianDispute|undefined
 export function createGuardianExtension(factory: ReviewerFactory = createPiReviewerBinding) {
   return function guardian(pi: ExtensionAPI) {
     const stateDir = resolve(process.env.PI_RUN_PROFILE_DIR || "/profile");
+    const guardConnection = connectGuardClient(pi, { schemaVersion: 1, id: "guardian", label: "Guardian" });
     let revision = 0, statusOwner = 0, last: Stats | undefined;
     let dispute:GuardianDispute|undefined;
     const store = new ConversationStore();
@@ -1892,9 +1894,20 @@ export function createGuardianExtension(factory: ReviewerFactory = createPiRevie
       return visible(unavailable?`${name} · unavailable`:[name,thinking].filter(Boolean).join(" · "));
     }
     function status(ctx: ExtensionContext, state: string, detail = ""): void {
-      displayState=state;displayDetail=detail;guardianStatus(ctx,state,detail,reviewerSummary(ctx));
+      displayState=state;displayDetail=detail;
+      const names:Record<string,string>={off:"off",on:"on",reviewing:"reviewing","still reviewing":"reviewing",
+        dispute:"dispute",unavailable:"unavailable",cancelled:"on",allowed:"on","not executed":"on"};
+      const normalized=names[state.trim().toLowerCase()]??state.trim().toLowerCase().replace(/\s+/g,"-");
+      const right=reviewerSummary(ctx);
+      if(guardConnection.connected()){
+        const value:GuardActivityRequestV1={schemaVersion:1,state:normalized,
+          ...(detail?{detail:`· ${detail}`} : {}),...(right?{right}:{})};
+        try{guardConnection.setBaseline(value);}catch{/* Presentation cannot affect command review. */}
+        return;
+      }
+      guardianStatus(ctx,state,detail,right); // Temporary standalone fallback during migration.
     }
-    function refreshStatus(ctx: ExtensionContext): void {guardianStatus(ctx,displayState,displayDetail,reviewerSummary(ctx));}
+    function refreshStatus(ctx: ExtensionContext): void {status(ctx,displayState,displayDetail);}
     function syncJustificationTool(ctx:ExtensionContext):void{
       try{
         const activeTools=pi.getActiveTools(),wanted=!!dispute&&dispute.phase==="investigating"&&!dispute.justification;

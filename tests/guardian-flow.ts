@@ -4,6 +4,7 @@ import { mkdtemp, mkdir, writeFile, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext, ExtensionUIContext, ToolCallEventResult } from "@earendil-works/pi-coding-agent";
+import guardRuntime from "../docker/extensions/guard-runtime.ts";
 import { createGuardianExtension, parseGuardianConfig, type ReviewDecision } from "../docker/extensions/guardian-agent.ts";
 
 type Outcome = ReviewDecision["outcome"] | "unavailable";
@@ -19,11 +20,11 @@ const scenarios = {
 } as const;
 type Scenario = keyof typeof scenarios;
 
-async function runScenario(name: Scenario, realUI?: ExtensionUIContext): Promise<void> {
+async function runScenario(name: Scenario, realUI?: ExtensionUIContext, withRuntime=true): Promise<void> {
   const scenario = scenarios[name];
   const root = await mkdtemp(join(tmpdir(), "guardian-flow-"));
   const profile = join(root, "profile"), workspace = join(root, "workspace");
-  const handlers = new Map<string, Handler>();
+  const handlers = new Map<string, Handler[]>(), busHandlers = new Map<string, Set<(data:unknown)=>void>>();
   const commands = new Map<string, {handler:(args:string,ctx:ExtensionContext)=>Promise<void>}>();
   const tools = new Map<string,any>();
   let activeTools=["bash","read","edit","write","custom-effect"];
@@ -31,11 +32,12 @@ async function runScenario(name: Scenario, realUI?: ExtensionUIContext): Promise
   let outcome: Outcome = scenario.outcome, sessionId = "guardian-flow-test", reviews = 0, assessmentReviews=0, aborts = 0;
   const userEntry = { type: "message", id: "user-1", message: { role: "user", content: "Synthetic test direction; no action may execute." } };
   const entries:any[] = [{ type: "custom", id: "mode-1", customType: "guardian-mode", data: { mode: "on" } }, userEntry];
-  let branch:any[] = entries, widget:any;
-  const tui = { requestRender: () => { if (widget) statusLines.push(widget.render(120)[0]); } };
+  let branch:any[] = entries;
+  const widgets=new Map<string,any>();
+  const tui = { requestRender: () => { for(const widget of widgets.values())statusLines.push(widget.render(120)[0]); } };
   const theme = { fg: (_color:string, text:string) => text, bold:(text:string)=>text };
   const ctx = {
-    cwd: workspace, hasUI: name !== "no-ui", hasPendingMessages: () => false,
+    cwd: workspace, mode:name==="no-ui"?"print":"tui",hasUI: name !== "no-ui", hasPendingMessages: () => false,
     abort: () => { aborts++; },
     sessionManager: {
       getSessionId: () => sessionId, getCwd: () => workspace,
@@ -43,16 +45,18 @@ async function runScenario(name: Scenario, realUI?: ExtensionUIContext): Promise
     },
     ui: {
       setStatus() {},
-      setWidget(_id:string, factory:any) { widget = typeof factory === "function" ? factory(tui, theme) : undefined; tui.requestRender(); },
+      setWidget(id:string, factory:any) { if(typeof factory==="function")widgets.set(id,factory(tui,theme));else widgets.delete(id);tui.requestRender(); },
       notify(message:string) { notices.push(message); realUI?.notify(`TEST ONLY · ${message}`, "info"); },
       async confirm() { throw new Error("Guardian disputes must not open confirmation dialogs"); },
       async select() { throw new Error("Unexpected selector in short-action fixture"); },
     },
   } as unknown as ExtensionContext;
   const dispatch = async (eventName: string, event: unknown) => {
-    const handler = handlers.get(eventName);
-    assert.ok(handler, `Missing Guardian handler: ${eventName}`);
-    return handler(event, ctx);
+    const registered=handlers.get(eventName)??[];
+    assert.ok(registered.length, `Missing Guardian handler: ${eventName}`);
+    let result:unknown;
+    for(const handler of registered){const value=await handler(event,ctx);if(value!==undefined)result=value;}
+    return result;
   };
   const invoke = async (toolName="bash", input:Record<string,unknown>={ command: "printf 'TEST ONLY: synthetic invocation, never executed\\n'", timeout: 1 }) => {
     const id = `synthetic-${calls.length + 1}`; calls.push(id);
@@ -72,7 +76,9 @@ async function runScenario(name: Scenario, realUI?: ExtensionUIContext): Promise
     const config = JSON.stringify({ schemaVersion: 1, mode: "on", model: null, thinking: "low" });
     await writeFile(join(profile, "guardian", "config.json"), config, { mode: 0o600 });
     const api = {
-      on: (eventName: string, handler: Handler) => { handlers.set(eventName, handler); },
+      events:{on:(channel:string,handler:(data:unknown)=>void)=>{const values=busHandlers.get(channel)??new Set();values.add(handler);busHandlers.set(channel,values);return()=>values.delete(handler);},
+        emit:(channel:string,data:unknown)=>{for(const handler of busHandlers.get(channel)??[])handler(data);}},
+      on: (eventName: string, handler: Handler) => { const values=handlers.get(eventName)??[];values.push(handler);handlers.set(eventName,values);return()=>handlers.set(eventName,(handlers.get(eventName)??[]).filter(value=>value!==handler)); },
       registerCommand: (commandName:string, command:{handler:(args:string,ctx:ExtensionContext)=>Promise<void>}) => { commands.set(commandName,command); },
       registerTool: (tool:any) => { tools.set(tool.name,tool);if(tool.defaultActive!==false&&!activeTools.includes(tool.name))activeTools.push(tool.name); },
       appendEntry: (customType:string,data:unknown) => {
@@ -85,6 +91,7 @@ async function runScenario(name: Scenario, realUI?: ExtensionUIContext): Promise
     const previous = process.env.PI_RUN_PROFILE_DIR;
     try {
       process.env.PI_RUN_PROFILE_DIR = profile;
+      if(withRuntime)guardRuntime(api);
       createGuardianExtension(() => ({
         select: () => ({
           id: "fixed-test-reviewer",
@@ -116,6 +123,8 @@ async function runScenario(name: Scenario, realUI?: ExtensionUIContext): Promise
       else process.env.PI_RUN_PROFILE_DIR = previous;
     }
     await dispatch("session_start", { type: "session_start" });
+    assert.deepEqual([...widgets.keys()],name==="no-ui"?[]:[withRuntime?"guard-runtime":"guardian"],
+      "Guardian must use the runtime's single widget or its temporary standalone fallback");
     assert.ok(tools.has("guardian_justify"),"Guardian must register its structured justification tool");
     assert.ok(!activeTools.includes("guardian_justify"),"Justification must be hidden outside a dispute");
     const first = await invoke();
@@ -135,7 +144,8 @@ async function runScenario(name: Scenario, realUI?: ExtensionUIContext): Promise
       assert.equal(reviews,2);
     } else {
       assert.ok(notices.some(message=>message.includes("Guardian stopped this action; nothing was executed")),"Guardian must show its own dispute reason");
-      assert.ok(statusLines.some(line=>line.includes("guard · dispute · investigating")),"Status must show dispute investigation");
+      if(name==="no-ui")assert.deepEqual(statusLines,[],"Non-TUI review must not create status output");
+      else assert.ok(statusLines.some(line=>line.includes("guard · dispute · investigating")),"Status must show dispute investigation");
       assert.ok(activeTools.includes("guardian_justify"),"An investigating dispute must activate structured justification");
 
       if(name==="ask"){
@@ -189,8 +199,10 @@ async function runScenario(name: Scenario, realUI?: ExtensionUIContext): Promise
           const saved=[...entries].reverse().find(e=>e.type==="custom"&&e.customType==="guardian-dispute"&&e.data?.assessment);
           assert.equal(saved?.data.justification.explanation,params.explanation,"Structured position must persist on the active branch");
           assert.equal(saved?.data.assessment.status,scenario.assessment==="unavailable"?"unavailable":"completed","Assessment must persist on the active branch");
-          assert.ok(statusLines.some(line=>line.includes("guard · dispute · assessing")),"Status must expose assessment work");
-          assert.ok(statusLines.at(-1)?.includes("guard · dispute · awaiting you"),"Assessment must finish waiting for human judgment");
+          if(name!=="no-ui"){
+            assert.ok(statusLines.some(line=>line.includes("guard · dispute · assessing")),"Status must expose assessment work");
+            assert.ok(statusLines.at(-1)?.includes("guard · dispute · awaiting you"),"Assessment must finish waiting for human judgment");
+          }
           if(name==="ask"){
             await dispatch("session_start",{type:"session_start"});
             assert.ok(statusLines.at(-1)?.includes("guard · dispute · awaiting you"),"Resume must restore the assessed position's waiting state");
@@ -204,7 +216,7 @@ async function runScenario(name: Scenario, realUI?: ExtensionUIContext): Promise
           assert.equal((await invoke(toolName,toolName==="bash"?{command:"echo blocked"}:{path:"blocked"}))?.block,true,`${toolName} must be blocked during dispute`);
         assert.equal(reviews,1,"Blocked dispute tools must not reach the reviewer");
         await dispatch("agent_settled",{type:"agent_settled",aborted:false});
-        assert.ok(statusLines.at(-1)?.includes("guard · dispute · awaiting you"),"Settled agent must wait for the user");
+        if(name!=="no-ui")assert.ok(statusLines.at(-1)?.includes("guard · dispute · awaiting you"),"Settled agent must wait for the user");
         assert.ok(!activeTools.includes("guardian_justify"),"Settled disputes must not retain the justification tool");
         await dispatch("input",{type:"input",source:"extension",text:"Synthetic extension input"});
         assert.equal((await invoke("read",{path:"still-blocked.txt"}))?.block,true,"Extension input must not clear the dispute");
@@ -255,7 +267,8 @@ export async function runAutomatedTests(): Promise<void> {
   assert.deepEqual(parseGuardianConfig(JSON.stringify({schemaVersion:1,mode:"on",model:null,thinking:"low"})),
     {schemaVersion:2,model:null,thinking:"low"},"Legacy profile mode must migrate out of preferences");
   for(const name of Object.keys(scenarios) as Scenario[]){await runScenario(name);console.log(`PASS guardian-flow: ${name}`);}
-  console.log("PASS guardian-flow: automatic justification assessment, cancellation, persistence, human arbitration, and fresh review");
+  await runScenario("allow",undefined,false);
+  console.log("PASS guardian-flow: runtime client, standalone status fallback, assessment, cancellation, persistence, human arbitration, and fresh review");
 }
 
 /** Opt-in Pi extension; registers a command only, never a tool or live Guardian hook. */

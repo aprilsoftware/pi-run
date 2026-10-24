@@ -199,6 +199,7 @@ RUN npm install -g \
 
 # Copy Guardian and the core Pi-Run skills into the versioned runtime image.
 COPY extensions/plan-agent.ts /usr/local/lib/node_modules/plan-agent/
+COPY extensions/guard-runtime.ts /usr/local/lib/node_modules/guardian-agent/
 COPY extensions/guardian-agent.ts /usr/local/lib/node_modules/guardian-agent/
 COPY extensions/snapshot-agent.ts /usr/local/lib/node_modules/snapshot-agent/
 COPY skills/ /usr/local/share/pi-run/skills/

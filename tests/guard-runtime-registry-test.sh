@@ -17,7 +17,7 @@ const alias = {
   '@earendil-works/pi-coding-agent': join(piDir, 'dist', 'index.js'),
   '@earendil-works/pi-tui': tuiPath,
 };
-const file = join(root, 'experiments', 'guard-runtime', 'index.ts');
+const file = join(root, 'docker', 'extensions', 'guard-runtime.ts');
 const module = await createJiti(import.meta.url, { alias, fsCache: false }).import(file);
 const { createEventBus } = await import(pathToFileURL(join(piDir, 'dist', 'core', 'event-bus.js')).href);
 const { loadExtensions } = await import(pathToFileURL(join(piDir, 'dist', 'core', 'extensions', 'loader.js')).href);
@@ -53,8 +53,8 @@ function harness(bus) {
 function registration(id, label) {
   return { schemaVersion: 1, id, label };
 }
-function activity(state, detail) {
-  return { schemaVersion: 1, state, ...(detail ? { detail } : {}) };
+function activity(state, detail, right) {
+  return { schemaVersion: 1, state, ...(detail ? { detail } : {}), ...(right ? { right } : {}) };
 }
 async function discover(bus) {
   let service;
@@ -197,7 +197,7 @@ assert.equal(typeof loadedService.subscribeStatus, 'function');
   assert.equal(heldByGuardian.active(), false);
   assert.equal(service.activity().clientId, 'caf');
   for (const invalid of [null, {}, activity('UPPER'), { ...activity('valid'), detail: ' bad' },
-    { ...activity('valid'), extra: true }]) {
+    { ...activity('valid'), right: 'bad\nright' }, { ...activity('valid'), extra: true }]) {
     await assert.rejects(caf.acquireActivity(invalid), /Invalid Guard Runtime activity/);
   }
   const transient = module.connectGuardClient(harness(bus).pi, registration('transient', 'Transient'));
@@ -262,8 +262,8 @@ assert.equal(typeof loadedService.subscribeStatus, 'function');
   guardian.setBaseline(activity('off'));
   assert.deepEqual(component.render(80), ['<muted>guard · reviewing command</muted>'],
     'A changed baseline stays hidden under active work');
-  first.update(activity('researching', 'étude 2/4'));
-  assert.deepEqual(component.render(80), ['<muted>guard · researching étude 2/4</muted>']);
+  first.update(activity('researching', 'étude 2/4', 'friend-model · high'));
+  assert.match(component.render(80)[0], /^<muted>guard · researching étude 2\/4\s+friend-model · high<\/muted>$/);
   const narrow = module.renderGuardStatus(first.snapshot(), 14);
   assert.ok(visibleWidth(narrow) <= 14);
   assert.ok(narrow.includes('…'));
