@@ -20,6 +20,7 @@ export interface GuardActivityLeaseV1 {
 export interface GuardClientHandleV1 {
   readonly id: string;
   active(): boolean;
+  setBaseline(activity: GuardActivityRequestV1 | undefined): void;
   acquireActivity(activity: GuardActivityRequestV1, signal?: AbortSignal): Promise<GuardActivityLeaseV1>;
   dispose(): void;
 }
@@ -29,11 +30,14 @@ export interface GuardRuntimeV1 {
   registerClient(registration: GuardClientRegistrationV1): GuardClientHandleV1;
   clients(): readonly Readonly<GuardClientRegistrationV1>[];
   activity(): Readonly<GuardActivitySnapshotV1> | undefined;
+  status(): Readonly<GuardActivitySnapshotV1> | undefined;
   subscribeActivity(listener: (activity: Readonly<GuardActivitySnapshotV1> | undefined) => void): () => void;
+  subscribeStatus(listener: (status: Readonly<GuardActivitySnapshotV1> | undefined) => void): () => void;
 }
 export interface GuardClientConnectionV1 {
   connected(): boolean;
   runtime(): GuardRuntimeV1 | undefined;
+  setBaseline(activity: GuardActivityRequestV1 | undefined): void;
   acquireActivity(activity: GuardActivityRequestV1, signal?: AbortSignal): Promise<GuardActivityLeaseV1>;
   dispose(): void;
 }
@@ -73,7 +77,8 @@ function isRuntime(value: unknown): value is GuardRuntimeV1 {
   const candidate = value as Partial<GuardRuntimeV1> | null;
   return !!candidate && candidate.kind === GUARD_RUNTIME_KIND && candidate.schemaVersion === GUARD_RUNTIME_VERSION &&
     typeof candidate.registerClient === "function" && typeof candidate.clients === "function" &&
-    typeof candidate.activity === "function" && typeof candidate.subscribeActivity === "function";
+    typeof candidate.activity === "function" && typeof candidate.status === "function" &&
+    typeof candidate.subscribeActivity === "function" && typeof candidate.subscribeStatus === "function";
 }
 export function renderGuardStatus(activity: Readonly<GuardActivitySnapshotV1> | undefined, width: number): string {
   const safeWidth = Number.isFinite(width) ? Math.max(1, Math.floor(width)) : 1;
@@ -101,6 +106,10 @@ export function connectGuardClient(
   const connection: GuardClientConnectionV1 = Object.freeze({
     connected: () => !disposed && !!handle?.active(),
     runtime: () => !disposed && handle?.active() ? selected : undefined,
+    setBaseline(activity) {
+      if (!handle?.active()) throw new Error("Guard Runtime client is unavailable");
+      handle.setBaseline(activity);
+    },
     acquireActivity: (activity, signal) => handle?.active()
       ? handle.acquireActivity(activity, signal)
       : Promise.reject(new Error("Guard Runtime client is unavailable")),
@@ -115,15 +124,22 @@ export function connectGuardClient(
 
 export default function guardRuntime(pi: ExtensionAPI) {
   const clients = new Map<string, ClientEntry>(), waiting: PendingActivity[] = [];
-  const listeners = new Set<(activity: Readonly<GuardActivitySnapshotV1> | undefined) => void>();
-  let closed = false, sequence = 0;
+  const baselines = new Map<string, { clientToken: symbol; order: number; snapshot: Readonly<GuardActivitySnapshotV1> }>();
+  const activityListeners = new Set<(activity: Readonly<GuardActivitySnapshotV1> | undefined) => void>();
+  const statusListeners = new Set<(status: Readonly<GuardActivitySnapshotV1> | undefined) => void>();
+  let closed = false, sequence = 0, baselineOrder = 0;
   let statusContext: ExtensionContext | undefined, statusRedraw: (() => void) | undefined;
   let statusActivity: Readonly<GuardActivitySnapshotV1> | undefined, stopStatus: (() => void) | undefined;
   let current: { clientToken: symbol; leaseToken: symbol; snapshot: Readonly<GuardActivitySnapshotV1> } | undefined;
-  const publish = () => {
-    const snapshot = current?.snapshot;
-    for (const listener of listeners) try { listener(snapshot); } catch { /* Presentation cannot affect ownership. */ }
+  const selectedBaseline = () => [...baselines.values()].sort((a, b) => b.order - a.order)[0]?.snapshot;
+  const effectiveStatus = () => current?.snapshot ?? selectedBaseline();
+  const notify = (listeners: Set<(value: Readonly<GuardActivitySnapshotV1> | undefined) => void>,
+    value: Readonly<GuardActivitySnapshotV1> | undefined) => {
+    for (const listener of listeners) try { listener(value); } catch { /* Presentation cannot affect ownership. */ }
   };
+  const publishActivity = () => notify(activityListeners, current?.snapshot);
+  const publishStatus = () => notify(statusListeners, effectiveStatus());
+  const publish = () => { publishActivity(); publishStatus(); };
   const rejectWaiting = (predicate: (pending: PendingActivity) => boolean, cause: Error) => {
     for (let index = waiting.length - 1; index >= 0; index--) {
       const pending = waiting[index];
@@ -183,14 +199,26 @@ export default function guardRuntime(pi: ExtensionAPI) {
       waiting.push(pending); activateNext();
     });
   };
+  const setBaseline = (entry: ClientEntry, value: GuardActivityRequestV1 | undefined) => {
+    if (closed || clients.get(entry.registration.id)?.token !== entry.token) {
+      throw new Error("Guard Runtime client is unavailable");
+    }
+    if (value === undefined) baselines.delete(entry.registration.id);
+    else baselines.set(entry.registration.id, {
+      clientToken: entry.token, order: ++baselineOrder,
+      snapshot: Object.freeze({ ...validateActivity(value), clientId: entry.registration.id, sequence: ++sequence }),
+    });
+    if (!current) publishStatus();
+  };
   const removeClient = (entry: ClientEntry) => {
     if (clients.get(entry.registration.id)?.token !== entry.token) return;
     clients.delete(entry.registration.id);
+    if (baselines.get(entry.registration.id)?.clientToken === entry.token) baselines.delete(entry.registration.id);
     rejectWaiting(value => value.clientToken === entry.token, new Error("Guard Runtime client was disposed"));
     if (current?.clientToken === entry.token) {
       current = undefined;
       if (!activateNext()) publish();
-    }
+    } else if (!current) publishStatus();
   };
   const service: GuardRuntimeV1 = Object.freeze({
     kind: GUARD_RUNTIME_KIND,
@@ -204,6 +232,7 @@ export default function guardRuntime(pi: ExtensionAPI) {
       return Object.freeze({
         id: registration.id,
         active: () => !closed && clients.get(registration.id)?.token === entry.token,
+        setBaseline: activity => setBaseline(entry, activity),
         acquireActivity: (activity, signal) => acquire(entry, activity, signal),
         dispose: () => removeClient(entry),
       });
@@ -211,11 +240,18 @@ export default function guardRuntime(pi: ExtensionAPI) {
     clients: () => Object.freeze([...clients.values()].map(entry => entry.registration)
       .sort((a, b) => a.id.localeCompare(b.id))),
     activity: () => current?.snapshot,
+    status: effectiveStatus,
     subscribeActivity(listener) {
       if (typeof listener !== "function") throw new Error("Invalid Guard Runtime activity listener");
       if (closed) throw new Error("Guard Runtime is unavailable");
-      listeners.add(listener); try { listener(current?.snapshot); } catch { /* Presentation cannot affect ownership. */ }
-      return () => listeners.delete(listener);
+      activityListeners.add(listener); try { listener(current?.snapshot); } catch { /* Presentation cannot affect ownership. */ }
+      return () => activityListeners.delete(listener);
+    },
+    subscribeStatus(listener) {
+      if (typeof listener !== "function") throw new Error("Invalid Guard Runtime status listener");
+      if (closed) throw new Error("Guard Runtime is unavailable");
+      statusListeners.add(listener); try { listener(effectiveStatus()); } catch { /* Presentation cannot affect ownership. */ }
+      return () => statusListeners.delete(listener);
     },
   });
   const stopDiscovery = pi.events.on(GUARD_RUNTIME_DISCOVER, value => {
@@ -236,13 +272,14 @@ export default function guardRuntime(pi: ExtensionAPI) {
         statusRedraw = () => tui.requestRender();
         return { render: (width: number) => [theme.fg("muted", renderGuardStatus(statusActivity, width))], invalidate() {} };
       }, { placement: "belowEditor" });
-      stopStatus = service.subscribeActivity(activity => { statusActivity = activity; statusRedraw?.(); });
+      stopStatus = service.subscribeStatus(activity => { statusActivity = activity; statusRedraw?.(); });
     } catch { clearStatus(); }
   });
   pi.on("session_shutdown", () => {
     closed = true;
     rejectWaiting(() => true, new Error("Guard Runtime stopped"));
-    clients.clear(); current = undefined; publish(); listeners.clear(); stopDiscovery(); clearStatus();
+    clients.clear(); baselines.clear(); current = undefined; publish();
+    activityListeners.clear(); statusListeners.clear(); stopDiscovery(); clearStatus();
   });
   pi.events.emit(GUARD_RUNTIME_AVAILABLE, service);
 }

@@ -69,6 +69,8 @@ assert.equal(loaded.extensions.length, 1);
 const loadedService = await discover(loaderBus);
 assert.equal(loadedService.kind, module.GUARD_RUNTIME_KIND);
 assert.equal(loadedService.schemaVersion, 1);
+assert.equal(typeof loadedService.status, 'function');
+assert.equal(typeof loadedService.subscribeStatus, 'function');
 {
   const bus = createEventBus(), client = harness(bus), runtime = harness(bus);
   let connected = 0;
@@ -243,8 +245,23 @@ assert.equal(loadedService.schemaVersion, 1);
   const component = widgets.get('guard-runtime')(tui, theme);
   assert.deepEqual(component.render(80), ['<muted>guard · ready</muted>']);
   const guardian = module.connectGuardClient(clientHarness.pi, registration('guardian', 'Guardian'));
+  const service = guardian.runtime();
+  guardian.setBaseline(activity('on'));
+  assert.equal(service.activity(), undefined, 'A baseline must not acquire the activity lease');
+  assert.deepEqual(component.render(80), ['<muted>guard · on</muted>']);
+  let caf = module.connectGuardClient(harness(bus).pi, registration('caf', 'Call a Friend'));
+  caf.setBaseline(activity('caf-ready'));
+  assert.deepEqual(component.render(80), ['<muted>guard · caf ready</muted>']);
+  caf.dispose();
+  assert.deepEqual(component.render(80), ['<muted>guard · on</muted>'], 'Disposal restores the previous baseline');
+  caf = module.connectGuardClient(harness(bus).pi, registration('caf', 'Call a Friend'));
+  assert.throws(() => caf.setBaseline(activity('UPPER')), /Invalid Guard Runtime activity/);
+
   const first = await guardian.acquireActivity(activity('reviewing', 'command'));
   assert.deepEqual(component.render(80), ['<muted>guard · reviewing command</muted>']);
+  guardian.setBaseline(activity('off'));
+  assert.deepEqual(component.render(80), ['<muted>guard · reviewing command</muted>'],
+    'A changed baseline stays hidden under active work');
   first.update(activity('researching', 'étude 2/4'));
   assert.deepEqual(component.render(80), ['<muted>guard · researching étude 2/4</muted>']);
   const narrow = module.renderGuardStatus(first.snapshot(), 14);
@@ -252,15 +269,19 @@ assert.equal(loadedService.schemaVersion, 1);
   assert.ok(narrow.includes('…'));
   first.update(activity('asking-primary'));
   assert.deepEqual(component.render(80), ['<muted>guard · asking primary</muted>']);
-  const caf = module.connectGuardClient(harness(bus).pi, registration('caf', 'Call a Friend'));
   const nextActivity = caf.acquireActivity(activity('researching', '2/4'));
   first.end();
   const second = await nextActivity;
   assert.deepEqual(component.render(80), ['<muted>guard · researching 2/4</muted>']);
   second.end();
+  assert.deepEqual(component.render(80), ['<muted>guard · off</muted>']);
+  guardian.setBaseline(undefined);
   assert.deepEqual(component.render(80), ['<muted>guard · ready</muted>']);
-  assert.ok(tui.redraws >= 5, 'Every visible activity transition requests a redraw');
+  caf.setBaseline(activity('caf-ready'));
+  assert.deepEqual(component.render(80), ['<muted>guard · caf ready</muted>']);
+  assert.ok(tui.redraws >= 10, 'Every visible status transition requests a redraw');
   await runtime.shutdown();
+  assert.equal(service.status(), undefined, 'Shutdown clears passive client status');
   assert.equal(widgets.size, 0, 'Shutdown removes the shared status widget');
 }
 {
