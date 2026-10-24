@@ -89,8 +89,56 @@ const permissive = create({ schemaVersion: 1, stateDir: permissiveState, clientI
 permissive.write({ event: 'refused' }); await permissive.flush();
 assert.equal(permissive.health().dropped, 1); assert.deepEqual(await readdir(permissiveLogs), []);
 
+const readState = join(tmp, 'read-profile'); await mkdir(readState, { mode: 0o700 });
+const first = create({ schemaVersion: 1, stateDir: readState, clientId: 'guardian' });
+const second = create({ schemaVersion: 1, stateDir: readState, clientId: 'guardian' });
+first.write({ event: 'first-late', timestamp: '2026-01-01T00:00:03.000Z' });
+first.write({ event: 'first-early', timestamp: '2026-01-01T00:00:01.000Z' });
+first.write({ event: 'first-tie', timestamp: '2026-01-01T00:00:02.000Z' });
+second.write({ event: 'second-tie-2', timestamp: '2026-01-01T00:00:02.000Z' });
+second.write({ event: 'second-tie-1', timestamp: '2026-01-01T00:00:02.000Z' });
+await Promise.all([first.flush(), second.flush()]);
+const legacy = join(readState, 'logs', 'guardian', 'legacy'); await mkdir(legacy, { mode: 0o700 });
+await writeFile(join(legacy, 'events.jsonl.1'), JSON.stringify({ event: 'legacy-old', timestamp: '2026-01-01T00:00:00.000Z' }) + '\n', { mode: 0o600 });
+await writeFile(join(legacy, 'events.jsonl'), JSON.stringify({ event: 'legacy-new', timestamp: '2026-01-01T00:00:04.000Z' }) +
+  '\nnot-json\n{"event":"unfinished"', { mode: 0o600 });
+await writeFile(join(legacy, 'unexpected.txt'), 'ignored\n', { mode: 0o600 });
+const outsideFile = join(tmp, 'outside-journal'); await writeFile(outsideFile, '{}\n', { mode: 0o600 });
+await symlink(outsideFile, join(readState, 'logs', 'guardian', 'runs', '11111111-1111-4111-8111-111111111111.jsonl'));
+const rotatedSnapshot = await module.readGuardJournal({ schemaVersion: 1, stateDir: state, clientId: 'rotation' });
+assert.equal(rotatedSnapshot.files.length, 3);
+assert.deepEqual(rotatedSnapshot.records.map(record => record.sequence),
+  [...rotatedSnapshot.records.map(record => record.sequence)].sort((a, b) => a - b));
+assert.equal(rotatedSnapshot.records.at(-1).value.index, 30);
+const snapshot = await module.readGuardJournal({ schemaVersion: 1, stateDir: readState, clientId: 'guardian' });
+const expectedTies = [[first.runId, 3, 'first-tie'], [second.runId, 1, 'second-tie-2'], [second.runId, 2, 'second-tie-1']]
+  .sort((a, b) => a[0].localeCompare(b[0]) || a[1] - b[1]);
+assert.deepEqual(snapshot.records.map(record => record.value.event),
+  ['legacy-old', 'first-early', ...expectedTies.map(row => row[2]), 'first-late', 'legacy-new']);
+assert.equal(snapshot.malformed, 1); assert.equal(snapshot.unstable, 0); assert.equal(snapshot.files.length, 4);
+assert.ok(snapshot.notices.some(notice => notice.includes('incomplete trailing record')));
+assert.ok(snapshot.notices.some(notice => notice.includes('unexpected entry omitted')));
+assert.ok(snapshot.notices.some(notice => notice.includes('unsafe file')));
+const tied = snapshot.records.filter(record => record.timestamp === '2026-01-01T00:00:02.000Z');
+assert.deepEqual(tied.map(record => [record.runId, record.sequence]), expectedTies.map(row => row.slice(0, 2)));
+const bounded = await module.readGuardJournal({ schemaVersion: 1, stateDir: readState, clientId: 'guardian', maxRecords: 2 });
+assert.deepEqual(bounded.records.map(record => record.value.event), ['first-late', 'legacy-new']);
+assert.ok(bounded.notices.some(notice => notice.includes('record limit')));
+const oneFile = await module.readGuardJournal({ schemaVersion: 1, stateDir: readState, clientId: 'guardian', maxFiles: 1 });
+assert.equal(oneFile.files.length, 1); assert.ok(oneFile.notices.some(notice => notice.includes('file limit')));
+const byteBound = await module.readGuardJournal({ schemaVersion: 1, stateDir: readState, clientId: 'guardian',
+  maxFileBytes: 64, maxTotalBytes: 64 });
+assert.ok(byteBound.notices.some(notice => notice.includes('byte')));
+const cancelled = new AbortController(); cancelled.abort(new Error('synthetic cancellation'));
+await assert.rejects(module.readGuardJournal({ schemaVersion: 1, stateDir: readState, clientId: 'guardian' }, cancelled.signal), /synthetic cancellation/);
+const badReadState = join(tmp, 'bad-read-profile'), badClient = join(badReadState, 'logs', 'guardian');
+await mkdir(badClient, { recursive: true, mode: 0o700 }); await symlink(outside, join(badClient, 'runs'));
+const unsafeRead = await module.readGuardJournal({ schemaVersion: 1, stateDir: badReadState, clientId: 'guardian' });
+assert.deepEqual(unsafeRead.records, []); assert.ok(unsafeRead.notices.some(notice => notice.includes('Unsafe Guard journal directory')));
+
 const loaded = await createJiti(import.meta.url, { fsCache: false }).import(file);
 assert.equal(typeof loaded.createGuardJournalWriter, 'function');
+assert.equal(typeof loaded.readGuardJournal, 'function');
 assert.ok((await readFile(join(root, 'docker', 'Dockerfile'), 'utf8')).includes(
   'COPY extensions/guard-journal.ts /usr/local/lib/node_modules/guardian-agent/'));
 console.log(`guard journal concurrent writers, rotation, identity, private modes, and unsafe-path tests passed (${basename(file)})`);
