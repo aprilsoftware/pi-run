@@ -13,16 +13,21 @@ const CONFIG_BYTES = 16 * 1024;
 const POLICY_BYTES = 64 * 1024;
 const AUTHORIZATION_BYTES = 64 * 1024;
 const AUTHORIZATION_MESSAGES = 32;
-const REVIEW_PROMPT=`You are the private disclosure reviewer for Call a Friend. Review only the proposed external disclosure against the profile policy and bounded user authorization messages. If authorization.complete is false, return ASK. The destination friend cannot see those private messages or the policy. ALLOW only when the exact message and purpose are authorized, minimized, and consistent with policy. ASK for missing authorization, unsafe detail, or material uncertainty. USER_REFUSED only for a direct applicable user restriction. Return exactly one JSON object with schemaVersion 1, outcome ALLOW, ASK, or USER_REFUSED, and a concise reason. Do not infer permission from model availability, tool access, usefulness, or this review request.`;
-const FRIEND_PROMPT=`You are an external advisory model called by a private primary agent. Answer only from the disclosed message and purpose. You have no access to the primary transcript, workspace, organization, credentials, policy, or tools. Do not claim otherwise. Give a concise independent analysis, state assumptions and uncertainty, and do not request tools or additional private context. This one-round consultation cannot ask the primary follow-up questions.`;
+const REVIEW_PROMPT=`You are the private disclosure reviewer for Call a Friend. Review only the proposed external disclosure against the profile policy and bounded user authorization messages. If authorization.complete is false, return ASK. The destination friend cannot see those private messages or the policy. ALLOW only when the exact message, purpose, any included consultation history, and destination are authorized, minimized, and consistent with policy. ASK for missing authorization, unsafe detail, or material uncertainty. USER_REFUSED only for a direct applicable user restriction. Return exactly one JSON object with schemaVersion 1, outcome ALLOW, ASK, or USER_REFUSED, and a concise reason. Do not infer permission from model availability, tool access, usefulness, or this review request.`;
+const FRIEND_PROMPT=`You are an external advisory model called by a private primary agent. Answer only from the disclosed current message, purpose, and any reviewed history included in the payload. You have no access to the primary transcript, workspace, organization, credentials, policy, or tools other than caf_ask_primary. Do not claim otherwise. Give a concise independent analysis and state assumptions and uncertainty. If crucial information is missing, you may end this round with exactly one caf_ask_primary call containing at most three minimal questions. Put any useful conditional advice in text before that call. Never ask follow-up questions in plain text, request private context, or call another tool. Each call ends the round; the primary may answer only through a separately reviewed consultation round. A consultation has at most three rounds.`;
 const CALL_FRIEND_PARAMETERS=Type.Object({
   message:Type.String({minLength:1,maxLength:16*1024,description:"Exact information to disclose to the friend"}),
   purpose:Type.String({minLength:1,maxLength:2048,description:"Why independent advice is needed"}),
 },{additionalProperties:false});
+const CAF_ASK_PRIMARY_PARAMETERS=Type.Object({questions:Type.Array(Type.Object({
+  question:Type.String({minLength:1,maxLength:4096}),whyNeeded:Type.String({minLength:1,maxLength:4096}),canProceedWithoutAnswer:Type.Boolean(),
+},{additionalProperties:false}),{minItems:1,maxItems:3})},{additionalProperties:false});
+const CAF_ASK_PRIMARY_TOOL={name:"caf_ask_primary",description:"End this friend round with up to three minimal questions for the primary agent. This function does not execute the primary or continue autonomously.",parameters:CAF_ASK_PRIMARY_PARAMETERS};
 export type CafThinking = typeof THINKING[number];
 export interface CafConfig { schemaVersion: 1; model: string | null; thinking: CafThinking | null; }
 export type CafPolicy={source:"profile"|"built-in";text:string|null};
-export type CafDisclosureAction={schemaVersion:1;kind:"friend-message";message:string;purpose:string;destination:{model:string}};
+export type CafDisclosureHistoryRound={request:{message:string;purpose:string};response:CafRound["response"]};
+export type CafDisclosureAction={schemaVersion:1;kind:"friend-message";message:string;purpose:string;destination:{model:string};history?:readonly Readonly<CafDisclosureHistoryRound>[]};
 export type CafDisclosureDecision={schemaVersion:1;outcome:"ALLOW"|"ASK"|"USER_REFUSED";reason:string};
 export interface CafDisclosureReviewer{review(action:Readonly<CafDisclosureAction>,context:Readonly<{policy:Readonly<CafPolicy>;signal:AbortSignal}>):Promise<unknown>;}
 export type CafDisclosureResult={released:true;action:Readonly<CafDisclosureAction>;decision:Readonly<CafDisclosureDecision>}|
@@ -39,6 +44,18 @@ function object(value:unknown,label:string):Record<string,unknown>{if(!value||ty
 function exact(value:Record<string,unknown>,keys:string[],label:string):void{if(Object.keys(value).sort().join(",")!==[...keys].sort().join(","))throw new Error(`Invalid ${label}`);}
 function text(value:unknown,bytes:number,label:string):string{if(typeof value!=="string"||!value.trim()||value.includes("\0")||Buffer.byteLength(value,"utf8")>bytes)throw new Error(`Invalid ${label}`);return value;}
 function freeze<T>(value:T):T{if(value&&typeof value==="object"&&!Object.isFrozen(value)){Object.freeze(value);for(const child of Object.values(value))freeze(child);}return value;}
+function parseCafResponse(input:unknown):CafRound["response"]{
+  const response=object(input,"CAF response"),kind=response.kind;
+  if(kind==="answer"){exact(response,["kind","text"],"CAF answer");return {kind,text:text(response.text,64*1024,"CAF answer")};}
+  if(kind!=="questions")throw new Error("Invalid CAF response");
+  exact(response,["kind","questions","provisionalAnswer"],"CAF questions");
+  if(!Array.isArray(response.questions)||response.questions.length<1||response.questions.length>3||
+      !(response.provisionalAnswer===null||typeof response.provisionalAnswer==="string"))throw new Error("Invalid CAF questions");
+  const questions=response.questions.map((item,index)=>{const question=object(item,`CAF question ${index+1}`);exact(question,["question","whyNeeded","canProceedWithoutAnswer"],"CAF question");
+    if(typeof question.canProceedWithoutAnswer!=="boolean")throw new Error("Invalid CAF question");
+    return {question:text(question.question,4096,"CAF question"),whyNeeded:text(question.whyNeeded,4096,"CAF question reason"),canProceedWithoutAnswer:question.canProceedWithoutAnswer};});
+  return {kind,questions,provisionalAnswer:response.provisionalAnswer===null?null:text(response.provisionalAnswer,32*1024,"CAF provisional answer")};
+}
 export function parseCafRound(input:unknown):CafRound{
   const value=object(input,"CAF round");exact(value,["schemaVersion","consultationId","round","request","friend","response"],"CAF round");
   if(value.schemaVersion!==1||typeof value.consultationId!=="string"||!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value.consultationId)||
@@ -46,19 +63,7 @@ export function parseCafRound(input:unknown):CafRound{
   const request=object(value.request,"CAF request");exact(request,["message","purpose"],"CAF request");
   const friend=object(value.friend,"CAF friend");exact(friend,["model","thinking"],"CAF friend");
   const model=text(friend.model,512,"CAF friend model");if(!/^[^\s/]+\/[^\s]+$/.test(model)||!(friend.thinking===null||THINKING.includes(friend.thinking as CafThinking)))throw new Error("Invalid CAF friend");
-  const response=object(value.response,"CAF response"),kind=response.kind;
-  let parsedResponse:CafRound["response"];
-  if(kind==="answer"){
-    exact(response,["kind","text"],"CAF answer");parsedResponse={kind,text:text(response.text,64*1024,"CAF answer")};
-  }else if(kind==="questions"){
-    exact(response,["kind","questions","provisionalAnswer"],"CAF questions");
-    if(!Array.isArray(response.questions)||response.questions.length<1||response.questions.length>3||
-        !(response.provisionalAnswer===null||typeof response.provisionalAnswer==="string"))throw new Error("Invalid CAF questions");
-    const questions=response.questions.map((item,index)=>{const question=object(item,`CAF question ${index+1}`);exact(question,["question","whyNeeded","canProceedWithoutAnswer"],"CAF question");
-      if(typeof question.canProceedWithoutAnswer!=="boolean")throw new Error("Invalid CAF question");
-      return {question:text(question.question,4096,"CAF question"),whyNeeded:text(question.whyNeeded,4096,"CAF question reason"),canProceedWithoutAnswer:question.canProceedWithoutAnswer};});
-    parsedResponse={kind,questions,provisionalAnswer:response.provisionalAnswer===null?null:text(response.provisionalAnswer,32*1024,"CAF provisional answer")};
-  }else throw new Error("Invalid CAF response");
+  const parsedResponse=parseCafResponse(value.response);
   return freeze({schemaVersion:1,consultationId:value.consultationId,round:Number(value.round),
     request:{message:text(request.message,16*1024,"CAF message"),purpose:text(request.purpose,2048,"CAF purpose")},
     friend:{model,thinking:friend.thinking as CafThinking|null},response:parsedResponse});
@@ -97,12 +102,18 @@ export function collectCafAuthorizationMessages(entries:readonly BranchEntry[]):
   return freeze({complete,messages:Object.freeze(selected.reverse())});
 }
 export function parseCafDisclosureAction(input:unknown):Readonly<CafDisclosureAction>{
-  const value=object(input,"CAF disclosure action");exact(value,["schemaVersion","kind","message","purpose","destination"],"CAF disclosure action");
+  const value=object(input,"CAF disclosure action"),hasHistory=Object.hasOwn(value,"history");
+  exact(value,["schemaVersion","kind","message","purpose","destination",...(hasHistory?["history"]:[])],"CAF disclosure action");
   const destination=object(value.destination,"CAF destination");exact(destination,["model"],"CAF destination");
   const model=text(destination.model,512,"CAF destination model");
   if(value.schemaVersion!==1||value.kind!=="friend-message"||!/^[^\s/]+\/[^\s]+$/.test(model))throw new Error("Invalid CAF disclosure action");
+  let history:Readonly<CafDisclosureHistoryRound>[]|undefined;
+  if(hasHistory){if(!Array.isArray(value.history)||value.history.length<1||value.history.length>2)throw new Error("Invalid CAF disclosure history");
+    history=value.history.map((item,index)=>{const row=object(item,`CAF disclosure history ${index+1}`);exact(row,["request","response"],"CAF disclosure history");
+      const request=object(row.request,"CAF disclosure history request");exact(request,["message","purpose"],"CAF disclosure history request");
+      return freeze({request:{message:text(request.message,16*1024,"CAF disclosure history message"),purpose:text(request.purpose,2048,"CAF disclosure history purpose")},response:parseCafResponse(row.response)});});}
   return freeze({schemaVersion:1,kind:"friend-message",message:text(value.message,16*1024,"CAF disclosure message"),
-    purpose:text(value.purpose,2048,"CAF disclosure purpose"),destination:{model}});
+    purpose:text(value.purpose,2048,"CAF disclosure purpose"),destination:{model},...(history?{history}:{})});
 }
 export function parseCafDisclosureDecision(input:unknown):Readonly<CafDisclosureDecision>{
   const value=object(input,"CAF disclosure decision");exact(value,["schemaVersion","outcome","reason"],"CAF disclosure decision");
@@ -152,24 +163,33 @@ export function runPrimaryCafDisclosureReview(input:unknown,policy:CafPolicy,ctx
   let reviewer:CafDisclosureReviewer|undefined;try{reviewer=createPrimaryCafDisclosureReviewer(ctx,onUsage);}catch{/* Gate records unavailability. */}
   return runCafDisclosureReview(input,policy,reviewer,signal,timeoutMs);
 }
-export type CafFriendAnswer={text:string;usage:Usage};
+export type CafFriendResult={response:CafRound["response"];usage:Usage};
 class CafFriendCallError extends Error{constructor(message:string,readonly usage?:Usage){super(message);this.name="CafFriendCallError";}}
-export async function callCafFriendModel(ctx:ExtensionContext,model:Model<Api>,messageValue:string,purposeValue:string,thinking:CafThinking|null,signal:AbortSignal,timeoutMs=120_000):Promise<CafFriendAnswer>{
+export async function callCafFriendModel(ctx:ExtensionContext,model:Model<Api>,messageValue:string,purposeValue:string,thinking:CafThinking|null,signal:AbortSignal,timeoutMs=120_000,history?:readonly Readonly<CafDisclosureHistoryRound>[]):Promise<CafFriendResult>{
   const messageText=text(messageValue,16*1024,"CAF friend message"),purpose=text(purposeValue,2048,"CAF friend purpose");
+  const payload=parseCafDisclosureAction({schemaVersion:1,kind:"friend-message",message:messageText,purpose,destination:{model:`${model.provider}/${model.id}`},...(history?{history}:{})});
   if(!Number.isSafeInteger(timeoutMs)||timeoutMs<1||timeoutMs>300_000)throw new Error("Invalid CAF friend timeout");
   const controller=new AbortController(),abort=()=>controller.abort(signal.reason??new Error("CAF friend call cancelled"));
   signal.addEventListener("abort",abort,{once:true});if(signal.aborted)abort();
   const timer=setTimeout(()=>controller.abort(new Error("CAF friend call timed out")),timeoutMs);
   try{
-    const request:UserMessage={role:"user",content:[{type:"text",text:JSON.stringify({message:messageText,purpose})}],timestamp:Date.now()};
-    const stream=ctx.modelRegistry.streamSimple(model,{systemPrompt:FRIEND_PROMPT,messages:[request]},
-      {signal:controller.signal,toolChoice:"none",maxTokens:8192,...(model.reasoning&&thinking?{reasoning:thinking}:{})});
+    const friendPayload={message:payload.message,purpose:payload.purpose,...(payload.history?{history:payload.history}:{})};
+    const request:UserMessage={role:"user",content:[{type:"text",text:JSON.stringify(friendPayload)}],timestamp:Date.now()};
+    const stream=ctx.modelRegistry.streamSimple(model,{systemPrompt:FRIEND_PROMPT,messages:[request],tools:[CAF_ASK_PRIMARY_TOOL]},
+      {signal:controller.signal,toolChoice:"auto",maxTokens:8192,...(model.reasoning&&thinking?{reasoning:thinking}:{})});
     let final:any;const work=(async()=>{for await(const event of stream)if(event.type==="done")final=event.message;})();work.catch(()=>{});
     await Promise.race([work,new Promise<never>((_,reject)=>{const stop=()=>reject(controller.signal.reason);controller.signal.addEventListener("abort",stop,{once:true});if(controller.signal.aborted)stop();})]);
-    if(!final||final.stopReason!=="stop")throw new CafFriendCallError(`CAF friend response ended with ${final?.stopReason??"no completed message"}`,final?.usage);
-    const answer=final.content.map((part:any)=>part.type==="text"?part.text:"").filter(Boolean).join("\n");
-    if(!answer.trim()||answer.includes("\0")||Buffer.byteLength(answer,"utf8")>64*1024)throw new CafFriendCallError("CAF friend returned an invalid or oversized answer",final.usage);
-    return {text:answer,usage:final.usage as Usage};
+    if(!final||!["stop","toolUse"].includes(final.stopReason))throw new CafFriendCallError(`CAF friend response ended with ${final?.stopReason??"no completed message"}`,final?.usage);
+    if(!Array.isArray(final.content)||final.content.some((part:any)=>!part||!["text","thinking","toolCall"].includes(part.type)))throw new CafFriendCallError("CAF friend returned unsupported content",final.usage);
+    const calls=final.content.filter((part:any)=>part.type==="toolCall"),answer=final.content.map((part:any)=>part.type==="text"?part.text:"").filter(Boolean).join("\n");
+    if(final.stopReason==="stop"){
+      if(calls.length||!answer.trim()||answer.includes("\0")||Buffer.byteLength(answer,"utf8")>64*1024)throw new CafFriendCallError("CAF friend returned an invalid or oversized answer",final.usage);
+      return {response:{kind:"answer",text:answer},usage:final.usage as Usage};
+    }
+    if(calls.length!==1||calls[0].name!=="caf_ask_primary"||calls[0].argumentsError)throw new CafFriendCallError("CAF friend returned an invalid question request",final.usage);
+    const args=object(calls[0].arguments,"CAF question request");exact(args,["questions"],"CAF question request");
+    const response=parseCafResponse({kind:"questions",questions:args.questions,provisionalAnswer:answer.trim()?answer:null});
+    return {response,usage:final.usage as Usage};
   }finally{clearTimeout(timer);signal.removeEventListener("abort",abort);controller.abort();}
 }
 function combinedUsage(...values:(Usage|undefined)[]):Usage|undefined{
@@ -185,6 +205,11 @@ function standaloneCall(ctx:ExtensionContext,toolCallId:string):boolean{
     const calls=entry.message.content.filter((part:any)=>part.type==="toolCall");if(calls.some((call:any)=>call.id===toolCallId))return calls.length===1&&calls[0].name==="call_friend";
   }
   return false;
+}
+function formatFriendResponse(response:CafRound["response"]):string{
+  if(response.kind==="answer")return response.text;
+  const questions=response.questions.map((item,index)=>`${index+1}. ${item.question}\n   Why needed: ${item.whyNeeded}\n   Can proceed without answer: ${item.canProceedWithoutAnswer?"yes":"no"}`).join("\n");
+  return `The friend ended this round with questions:\n${questions}${response.provisionalAnswer?`\n\nProvisional advice:\n${response.provisionalAnswer}`:""}\n\nAnswer only through a new standalone call_friend invocation; that disclosure will be reviewed separately.`;
 }
 
 function message(error: unknown): string { return error instanceof Error ? error.message : String(error); }
@@ -254,7 +279,7 @@ export default function cafAgent(pi:ExtensionAPI){
   let conversation:readonly CafRound[]=[],conversationError:string|undefined;
   const tell=(ctx:ExtensionContext,text:string,level:"info"|"warning"|"error"="info")=>ctx.ui.notify(text,level);
   const friendModel=(ctx:ExtensionContext)=>{const slash=config.model?.indexOf("/")??-1;return slash>0?ctx.modelRegistry.find(config.model!.slice(0,slash),config.model!.slice(slash+1)):undefined;};
-  const conversationPending=()=>conversation.at(-1)?.response.kind==="questions";
+  const pendingRound=()=>conversation.at(-1)?.response.kind==="questions"?conversation.at(-1):undefined;
   const restore=(ctx:ExtensionContext,announce=false)=>{try{conversation=restoreCafConversation(ctx.sessionManager.getBranch());conversationError=undefined;}
     catch(error){conversation=[];conversationError=message(error);if(announce)tell(ctx,`CAF conversation unavailable: ${conversationError}`,"warning");}};
   const persist=async(ctx:ExtensionContext,next:CafConfig)=>{try{config=await saveCafConfig(stateDir,next);configError=undefined;return true;}
@@ -263,8 +288,8 @@ export default function cafAgent(pi:ExtensionAPI){
     `Friend model: ${config.model??"unconfigured"}`,`Thinking: ${config.thinking??"default"}`,
     `Disclosure policy: ${policyError?`unavailable — ${policyError}`:policy.source==="profile"?"profile":"built-in only"}`,
     `Disclosure review: ${primaryCafReviewerAvailable(ctx)?"ready — primary model":"unavailable"}`,
-    `Conversation: ${conversationError?`unavailable — ${conversationError}`:conversation.length?`${conversation.length} completed round(s) on this branch`:"none on this branch"}`,
-    configError?`Configuration error: ${configError}`:`Friend calls: ${guard.connected()&&primaryCafReviewerAvailable(ctx)&&!!friendModel(ctx)&&!policyError&&!conversationError&&!conversationPending()?"ready":"unavailable"}`].join("\n"),configError||policyError||conversationError?"warning":"info");
+    `Conversation: ${conversationError?`unavailable — ${conversationError}`:conversation.length?`${conversation.length} finalized round(s) on this branch${pendingRound()?pendingRound()!.round===3?" — round limit reached":" — awaiting primary":""}`:"none on this branch"}`,
+    configError?`Configuration error: ${configError}`:`Friend calls: ${guard.connected()&&primaryCafReviewerAvailable(ctx)&&!!friendModel(ctx)&&!policyError&&!conversationError&&(!pendingRound()||(pendingRound()!.round<3&&pendingRound()!.friend.model===config.model))?"ready":"unavailable"}`].join("\n"),configError||policyError||conversationError?"warning":"info");
   const setModel=async(value:string,ctx:ExtensionContext)=>{
     if(!value){
       if(!ctx.hasUI){tell(ctx,"Usage: /caf model <provider/model>");return;}
@@ -299,24 +324,28 @@ export default function cafAgent(pi:ExtensionAPI){
       const operationSignal=signal??new AbortController().signal;let lease:GuardActivityLeaseV1|undefined,reviewUsage:Usage|undefined,friendStarted=false;
       try{
         if(!standaloneCall(ctx,toolCallId))return toolFailure("call_friend must be the only tool call in its assistant message.","not-standalone");
-        if(configError||policyError||conversationError||conversationPending())return toolFailure("CAF configuration, policy, or branch state is unavailable.","state-unavailable");
+        if(configError||policyError||conversationError)return toolFailure("CAF configuration, policy, or branch state is unavailable.","state-unavailable");
         if(!config.model)return toolFailure("No friend model is configured. Use /caf model <provider/model>.","model-unconfigured");
+        const destination=config.model,friendThinking=config.thinking,pending=pendingRound();
+        if(pending?.round===3)return toolFailure("This consultation reached its three-round limit.","round-limit");
+        if(pending&&pending.friend.model!==destination)return toolFailure("Restore the pending consultation's friend model before continuing.","continuation-model-mismatch");
         const model=friendModel(ctx);
         if(!model||typeof ctx.modelRegistry.streamSimple!=="function")return toolFailure("The configured friend model is unavailable.","model-unavailable");
+        const history=pending?conversation.filter(round=>round.consultationId===pending.consultationId).map(round=>({request:round.request,response:round.response})):undefined;
         if(!guard.connected())return toolFailure("Guard Runtime is unavailable.","guard-unavailable");
         lease=await guard.acquireActivity({schemaVersion:1,state:"reviewing-disclosure",detail:"call friend"},operationSignal);
-        const review=await runPrimaryCafDisclosureReview({schemaVersion:1,kind:"friend-message",message:params.message,purpose:params.purpose,destination:{model:config.model}},policy,ctx,operationSignal,15_000,usage=>{reviewUsage=usage;});
+        const review=await runPrimaryCafDisclosureReview({schemaVersion:1,kind:"friend-message",message:params.message,purpose:params.purpose,destination:{model:destination},...(history?{history}:{})},policy,ctx,operationSignal,15_000,usage=>{reviewUsage=usage;});
         if(!review.released)return toolFailure(review.reason,"review-withheld",reviewUsage);
-        if(!standaloneCall(ctx,toolCallId))return toolFailure("The active session branch changed before disclosure.","branch-changed",reviewUsage);
+        if(!standaloneCall(ctx,toolCallId)||config.model!==destination)return toolFailure("The active branch or friend configuration changed before disclosure.","branch-changed",reviewUsage);
         try{lease.update({schemaVersion:1,state:"asking-friend",detail:"one round"});}catch{/* Presentation cannot authorize or withhold. */}
         if(!lease.active())return toolFailure("Guard Runtime became unavailable before friend transmission.","guard-unavailable",reviewUsage);
-        friendStarted=true;const answer=await callCafFriendModel(ctx,model,review.action.message,review.action.purpose,config.thinking,operationSignal);
-        const usage=combinedUsage(reviewUsage,answer.usage),consultationId=randomUUID();
-        const round=parseCafRound({schemaVersion:1,consultationId,round:1,request:{message:review.action.message,purpose:review.action.purpose},
-          friend:{model:config.model,thinking:config.thinking},response:{kind:"answer",text:answer.text}});
+        friendStarted=true;const result=await callCafFriendModel(ctx,model,review.action.message,review.action.purpose,friendThinking,operationSignal,120_000,review.action.history);
+        const usage=combinedUsage(reviewUsage,result.usage),consultationId=pending?.consultationId??randomUUID(),roundNumber=(pending?.round??0)+1;
+        const round=parseCafRound({schemaVersion:1,consultationId,round:roundNumber,request:{message:review.action.message,purpose:review.action.purpose},
+          friend:{model:destination,thinking:friendThinking},response:result.response});
         try{pi.appendEntry(CAF_ROUND_ENTRY,round);conversation=Object.freeze([...conversation,round]);}
-        catch(error){return toolFailure(`The friend answered, but the finalized round could not be retained (${message(error)}). Do not retry automatically.`,"persistence-failed",usage,true);}
-        return {content:[{type:"text" as const,text:answer.text}],details:{schemaVersion:1,status:"answered",consultationId,round:1,model:config.model},...(usage?{usage}:{})};
+        catch(error){return toolFailure(`The friend responded, but the finalized round could not be retained (${message(error)}). Do not retry automatically.`,"persistence-failed",usage,true);}
+        return {content:[{type:"text" as const,text:formatFriendResponse(result.response)}],details:{schemaVersion:1,status:result.response.kind,consultationId,round:roundNumber,model:destination},...(usage?{usage}:{})};
       }catch(error){const reason=message(error),usage=combinedUsage(reviewUsage,error instanceof CafFriendCallError?error.usage:undefined);return toolFailure(friendStarted?`${reason} The friend request may have reached its provider; do not retry automatically.`:reason,
         friendStarted?"friend-unavailable":"review-unavailable",usage,friendStarted);}
       finally{lease?.end();}

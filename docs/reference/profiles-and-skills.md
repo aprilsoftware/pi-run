@@ -152,22 +152,33 @@ model remains explicitly unconfigured.
 
 The primary can invoke `call_friend({ message, purpose })` as one standalone,
 sequential tool call. After disclosure review allows the exact payload, CAF
-sends only the message and purpose under a dedicated advisory system prompt to
-the configured friend model. The friend receives no primary transcript,
-authorization evidence, CAF policy, workspace data, credentials, prior CAF
-rounds, or tools. This is application-level context isolation, not a sandbox or
-confidentiality guarantee.
+sends the message and purpose under a dedicated advisory system prompt to the
+configured friend model. A continuation also includes only the previously
+reviewed requests and friend responses from that pending consultation; the
+reviewer sees that exact history again before release. The friend receives no
+primary transcript, authorization evidence, CAF policy, workspace data,
+credentials, or unrelated CAF rounds. This is application-level context
+isolation, not a sandbox or confidentiality guarantee.
 
-Each invocation performs at most one friend request and returns one bounded
-answer. There is no public-web access, friend tool use, follow-up-question
-protocol, or autonomous friend loop. Review refusal and failures before release
-produce no friend request. Failures after a friend request starts report that
-uncertain external effect and must not be retried automatically.
+Each invocation performs at most one friend request. The friend may return one
+bounded answer or end its round with the single constrained
+`caf_ask_primary` function containing up to three minimal questions. That
+function does not execute the primary. The primary receives the questions and
+must use a new standalone `call_friend` invocation to answer; the answer receives
+a new disclosure review before transmission. A consultation is limited to three
+primary/friend rounds.
 
-Successful answers are stored as finalized branch-local session metadata while
-the tool result supplies the answer to the primary model. `/caf status`
-reconstructs only finalized CAF rounds on the selected branch and reports
-malformed state as unavailable.
+The friend has no public-web, filesystem, shell, arbitrary Pi, or MCP tools.
+There is no recursive primary invocation or autonomous friend loop. Review
+refusal and failures before release produce no friend request. Failures after a
+friend request starts report that uncertain external effect and must not be
+retried automatically.
+
+Successful answers and question requests are stored as finalized branch-local
+session metadata while the tool result supplies the response to the primary
+model. `/caf status` reconstructs only finalized CAF rounds on the selected
+branch, marks a pending consultation as awaiting the primary or at its round
+limit, and reports malformed state as unavailable.
 
 Pi uses the selected profile as its configuration directory. Provider login,
 model configuration, settings, Git configuration, credentials, Guardian state,
