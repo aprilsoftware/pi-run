@@ -43,6 +43,9 @@ function harness(bus) {
 function registration(id, label) {
   return { schemaVersion: 1, id, label };
 }
+function activity(state, detail) {
+  return { schemaVersion: 1, state, ...(detail ? { detail } : {}) };
+}
 async function discover(bus) {
   let service;
   bus.emit(module.GUARD_RUNTIME_DISCOVER, { schemaVersion: 1, accept(value) { service = value; } });
@@ -127,5 +130,92 @@ assert.equal(loadedService.schemaVersion, 1);
   await tick();
   assert.equal(incompatible.connected(), false);
 }
-console.log('guard runtime registry experiment passed');
+{
+  const bus = createEventBus(), runtime = harness(bus), guardianHarness = harness(bus), cafHarness = harness(bus);
+  module.default(runtime.pi);
+  const guardian = module.connectGuardClient(guardianHarness.pi, registration('guardian', 'Guardian'));
+  const caf = module.connectGuardClient(cafHarness.pi, registration('caf', 'Call a Friend'));
+  await tick();
+  const service = guardian.runtime(), changes = [];
+  const stop = service.subscribeActivity(value => changes.push(value));
+  service.subscribeActivity(() => { throw new Error('presentation failure'); });
+  assert.equal(changes.at(-1), undefined);
+
+  const first = await guardian.acquireActivity(activity('reviewing', 'command'));
+  assert.equal(first.active(), true);
+  assert.equal(Object.isFrozen(first.snapshot()), true);
+  assert.deepEqual(service.activity(), first.snapshot());
+  let cafReady = false;
+  const cafPending = caf.acquireActivity(activity('researching', '1/4')).then(lease => { cafReady = true; return lease; });
+  await tick();
+  assert.equal(cafReady, false, 'CAF must wait for the Guardian activity');
+  first.update(activity('reviewing', '12s'));
+  assert.equal(service.activity().detail, '12s');
+  const finalFirst = first.snapshot();
+  first.end();
+  const cafLease = await cafPending;
+  assert.equal(cafReady, true);
+  assert.equal(first.active(), false);
+  assert.deepEqual(first.snapshot(), finalFirst, 'Ended leases retain their final immutable snapshot');
+  assert.throws(() => first.update(activity('reviewing')), /not active/);
+  assert.equal(service.activity().clientId, 'caf');
+
+  const order = [];
+  const guardianPending = guardian.acquireActivity(activity('reviewing')).then(lease => { order.push('guardian'); return lease; });
+  const secondCafPending = caf.acquireActivity(activity('asking-primary')).then(lease => { order.push('caf'); return lease; });
+  cafLease.end();
+  const secondGuardian = await guardianPending;
+  assert.deepEqual(order, ['guardian']);
+  secondGuardian.end();
+  const secondCaf = await secondCafPending;
+  assert.deepEqual(order, ['guardian', 'caf'], 'Queued activities must remain FIFO');
+
+  const cancelled = new AbortController();
+  const cancelledPending = guardian.acquireActivity(activity('reviewing'), cancelled.signal);
+  const cancellation = assert.rejects(cancelledPending, /no longer needed/);
+  cancelled.abort(new Error('no longer needed'));
+  await cancellation;
+  secondCaf.end();
+  assert.equal(service.activity(), undefined);
+
+  const heldByGuardian = await guardian.acquireActivity(activity('reviewing'));
+  const afterDispose = caf.acquireActivity(activity('researching'));
+  guardian.dispose();
+  const heldByCaf = await afterDispose;
+  assert.equal(heldByGuardian.active(), false);
+  assert.equal(service.activity().clientId, 'caf');
+  for (const invalid of [null, {}, activity('UPPER'), { ...activity('valid'), detail: ' bad' },
+    { ...activity('valid'), extra: true }]) {
+    await assert.rejects(caf.acquireActivity(invalid), /Invalid Guard Runtime activity/);
+  }
+  const transient = module.connectGuardClient(harness(bus).pi, registration('transient', 'Transient'));
+  const disposedPending = transient.acquireActivity(activity('waiting'));
+  const disposed = assert.rejects(disposedPending, /disposed/);
+  transient.dispose();
+  await disposed;
+
+  const observer = module.connectGuardClient(harness(bus).pi, registration('observer', 'Observer'));
+  const stoppedPending = observer.acquireActivity(activity('waiting'));
+  const stopped = assert.rejects(stoppedPending, /stopped/);
+  await runtime.shutdown();
+  await stopped;
+  assert.equal(heldByCaf.active(), false);
+  assert.equal(service.activity(), undefined);
+  assert.equal(caf.connected(), false);
+  assert.equal(changes.at(-1), undefined);
+  stop();
+}
+{
+  const busA = createEventBus(), busB = createEventBus();
+  module.default(harness(busA).pi); module.default(harness(busB).pi);
+  const a = module.connectGuardClient(harness(busA).pi, registration('guardian', 'Guardian'));
+  const b = module.connectGuardClient(harness(busB).pi, registration('guardian', 'Guardian'));
+  const [leaseA, leaseB] = await Promise.all([
+    a.acquireActivity(activity('reviewing')), b.acquireActivity(activity('reviewing')),
+  ]);
+  assert.equal(leaseA.active(), true);
+  assert.equal(leaseB.active(), true, 'Separate runtimes must not share an activity lock');
+  leaseA.end(); leaseB.end();
+}
+console.log('guard runtime registry and activity lease experiment passed');
 NODE
