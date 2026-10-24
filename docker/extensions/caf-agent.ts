@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import type { UserMessage } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { constants } from "node:fs";
 import { lstat, mkdir, open, realpath, rename, unlink } from "node:fs/promises";
@@ -9,6 +10,9 @@ import { connectGuardClient } from "./guard-runtime.ts";
 const THINKING = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 const CONFIG_BYTES = 16 * 1024;
 const POLICY_BYTES = 64 * 1024;
+const AUTHORIZATION_BYTES = 64 * 1024;
+const AUTHORIZATION_MESSAGES = 32;
+const REVIEW_PROMPT=`You are the private disclosure reviewer for Call a Friend. Review only the proposed external disclosure against the profile policy and bounded user authorization messages. If authorization.complete is false, return ASK. The destination friend cannot see those private messages or the policy. ALLOW only when the exact message and purpose are authorized, minimized, and consistent with policy. ASK for missing authorization, unsafe detail, or material uncertainty. USER_REFUSED only for a direct applicable user restriction. Return exactly one JSON object with schemaVersion 1, outcome ALLOW, ASK, or USER_REFUSED, and a concise reason. Do not infer permission from model availability, tool access, usefulness, or this review request.`;
 export type CafThinking = typeof THINKING[number];
 export interface CafConfig { schemaVersion: 1; model: string | null; thinking: CafThinking | null; }
 export type CafPolicy={source:"profile"|"built-in";text:string|null};
@@ -21,7 +25,9 @@ export const CAF_ROUND_ENTRY="pi-run-caf-round";
 export type CafRound={schemaVersion:1;consultationId:string;round:number;
   request:{message:string;purpose:string};friend:{model:string;thinking:CafThinking};response:
   {kind:"answer";text:string}|{kind:"questions";questions:{question:string;whyNeeded:string;canProceedWithoutAnswer:boolean}[];provisionalAnswer:string|null}};
-type BranchEntry={type:string;customType?:string;data?:unknown};
+type BranchEntry={type:string;id?:string;customType?:string;data?:unknown;message?:unknown};
+export type CafAuthorizationMessage={id:string;text:string};
+export type CafAuthorizationSnapshot={complete:boolean;messages:readonly Readonly<CafAuthorizationMessage>[]};
 
 function object(value:unknown,label:string):Record<string,unknown>{if(!value||typeof value!=="object"||Array.isArray(value))throw new Error(`Invalid ${label}`);return value as Record<string,unknown>;}
 function exact(value:Record<string,unknown>,keys:string[],label:string):void{if(Object.keys(value).sort().join(",")!==[...keys].sort().join(","))throw new Error(`Invalid ${label}`);}
@@ -63,6 +69,27 @@ export function restoreCafConversation(entries:readonly BranchEntry[]):readonly 
   }
   return Object.freeze(rounds);
 }
+export function collectCafAuthorizationMessages(entries:readonly BranchEntry[]):Readonly<CafAuthorizationSnapshot> {
+  const candidates:CafAuthorizationMessage[]=[];let complete=true;
+  for(const entry of entries){
+    if(entry.type!=="message")continue;const value=entry.message;
+    if(!value||typeof value!=="object"||Array.isArray(value)||(value as {role?:unknown}).role!=="user")continue;
+    if(typeof entry.id!=="string"||!entry.id||entry.id.length>512){complete=false;continue;}
+    const content=(value as {content?:unknown}).content;let body="";
+    if(typeof content==="string")body=content;
+    else if(Array.isArray(content)){const parts:string[]=[];for(const part of content){
+      if(part&&typeof part==="object"&&(part as {type?:unknown}).type==="text"&&typeof (part as {text?:unknown}).text==="string")parts.push((part as {text:string}).text);
+      else complete=false;}body=parts.join("\n");}
+    else complete=false;
+    if(!body.trim()||body.includes("\0")||Buffer.byteLength(body,"utf8")>16*1024){complete=false;continue;}
+    candidates.push({id:entry.id,text:body});
+  }
+  const selected:CafAuthorizationMessage[]=[],ids=new Set<string>();let bytes=0;
+  for(let index=candidates.length-1;index>=0;index--){const item=candidates[index],size=Buffer.byteLength(item.id,"utf8")+Buffer.byteLength(item.text,"utf8");
+    if(ids.has(item.id)||selected.length>=AUTHORIZATION_MESSAGES||bytes+size>AUTHORIZATION_BYTES){complete=false;continue;}
+    ids.add(item.id);bytes+=size;selected.push(freeze({...item}));}
+  return freeze({complete,messages:Object.freeze(selected.reverse())});
+}
 export function parseCafDisclosureAction(input:unknown):Readonly<CafDisclosureAction>{
   const value=object(input,"CAF disclosure action");exact(value,["schemaVersion","kind","message","purpose","destination"],"CAF disclosure action");
   const destination=object(value.destination,"CAF destination");exact(destination,["model"],"CAF destination");
@@ -96,6 +123,28 @@ export async function runCafDisclosureReview(input:unknown,policy:CafPolicy,revi
     return decision.outcome==="ALLOW"?{released:true,action,decision}:{released:false,outcome:decision.outcome,reason:decision.reason};
   }catch(error){return {released:false,outcome:null,reason:message(error)||"CAF disclosure review unavailable"};}
   finally{clearTimeout(timer);signal.removeEventListener("abort",abort);controller.abort();}
+}
+export function primaryCafReviewerAvailable(ctx:ExtensionContext):boolean{
+  return !!ctx.model&&typeof ctx.modelRegistry.complete==="function";
+}
+export function createPrimaryCafDisclosureReviewer(ctx:ExtensionContext):CafDisclosureReviewer{
+  if(!primaryCafReviewerAvailable(ctx))throw new Error("Primary CAF disclosure reviewer unavailable");
+  return Object.freeze({async review(action:Readonly<CafDisclosureAction>,context:Readonly<{policy:Readonly<CafPolicy>;signal:AbortSignal}>):Promise<unknown>{
+    const authorization=collectCafAuthorizationMessages(ctx.sessionManager.getBranch() as BranchEntry[]);
+    const payload=JSON.stringify({disclosure:action,policy:context.policy,authorization});
+    const request:UserMessage={role:"user",content:[{type:"text",text:payload}],timestamp:Date.now()};
+    const response=await ctx.modelRegistry.complete(ctx.model!,{systemPrompt:REVIEW_PROMPT,messages:[request]},{signal:context.signal});
+    if(response.stopReason!=="stop")throw new Error(`CAF disclosure reviewer ended with ${response.stopReason}`);
+    const output=response.content.map(part=>part.type==="text"?part.text:"").filter(Boolean).join("\n");
+    if(!output.trim()||Buffer.byteLength(output,"utf8")>16*1024)throw new Error("CAF disclosure reviewer returned invalid output");
+    const decision=parseCafDisclosureDecision(JSON.parse(output));
+    return !authorization.complete&&decision.outcome==="ALLOW"
+      ? {schemaVersion:1,outcome:"ASK",reason:"Authorization evidence exceeded the private review bounds."}:decision;
+  }});
+}
+export function runPrimaryCafDisclosureReview(input:unknown,policy:CafPolicy,ctx:ExtensionContext,signal:AbortSignal,timeoutMs=15_000):Promise<CafDisclosureResult>{
+  let reviewer:CafDisclosureReviewer|undefined;try{reviewer=createPrimaryCafDisclosureReviewer(ctx);}catch{/* Gate records unavailability. */}
+  return runCafDisclosureReview(input,policy,reviewer,signal,timeoutMs);
 }
 
 function message(error: unknown): string { return error instanceof Error ? error.message : String(error); }
@@ -171,7 +220,7 @@ export default function cafAgent(pi:ExtensionAPI){
   const status=(ctx:ExtensionContext)=>tell(ctx,["Call a Friend · not enabled",`Guard Runtime: ${guard.connected()?"available":"unavailable"}`,
     `Friend model: ${config.model??"unconfigured"}`,`Thinking: ${config.thinking??"default"}`,
     `Disclosure policy: ${policyError?`unavailable — ${policyError}`:policy.source==="profile"?"profile":"built-in only"}`,
-    "Disclosure review: unavailable — friend calls disabled",
+    `Disclosure review: ${primaryCafReviewerAvailable(ctx)?"ready — primary model":"unavailable"}`,
     `Conversation: ${conversationError?`unavailable — ${conversationError}`:conversation.length?`${conversation.length} completed round(s) on this branch`:"none on this branch"}`,
     configError?`Configuration error: ${configError}`:"Friend calls: not enabled in this version"].join("\n"),configError||policyError||conversationError?"warning":"info");
   const setModel=async(value:string,ctx:ExtensionContext)=>{

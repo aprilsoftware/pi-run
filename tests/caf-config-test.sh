@@ -33,6 +33,10 @@ for(const value of [{...answer,extra:true},{...answer,round:4},{...answer,reques
   assert.throws(()=>caf.parseCafRound(value),/CAF/);
 assert.throws(()=>caf.restoreCafConversation([{type:'custom',customType:caf.CAF_ROUND_ENTRY,data:answer}]),/consultation sequence/);
 assert.throws(()=>caf.restoreCafConversation([{type:'custom',customType:caf.CAF_ROUND_ENTRY,data:{...questions,extra:true}}]),/CAF round/);
+const manyUsers=Array.from({length:40},(_,index)=>({type:'message',id:`user-${index}`,message:{role:'user',content:[{type:'text',text:`authorization ${index}`} ]}}));
+const boundedAuthorization=caf.collectCafAuthorizationMessages([...manyUsers,{type:'message',id:'oversized',message:{role:'user',content:'x'.repeat(17*1024)}},{type:'message',id:'assistant',message:{role:'assistant',content:[{type:'text',text:'not user authority'}]}}]);
+assert.equal(boundedAuthorization.complete,false);assert.equal(boundedAuthorization.messages.length,32);assert.equal(boundedAuthorization.messages[0].id,'user-8');assert.equal(boundedAuthorization.messages.at(-1).id,'user-39');assert.equal(Object.isFrozen(boundedAuthorization),true);
+assert.equal(caf.collectCafAuthorizationMessages([{type:'message',id:'image-user',message:{role:'user',content:[{type:'image',data:'omitted'}]}}]).complete,false);
 const profile=join(tmp,'profile');await mkdir(profile,{mode:0o700});
 assert.deepEqual(await caf.loadCafConfig(profile),caf.defaultCafConfig());
 await caf.saveCafConfig(profile,valid);
@@ -77,13 +81,28 @@ const {createEventBus}=await import(pathToFileURL(join(piDir,'dist/core/event-bu
 const handlers=new Map(),commands=new Map(),notifications=[];
 const pi={events:bus,on(name,handler){const rows=handlers.get(name)??[];rows.push(handler);handlers.set(name,rows);return()=>handlers.set(name,(handlers.get(name)??[]).filter(row=>row!==handler));},registerCommand(name,command){commands.set(name,command);}};
 runtime.default(pi);caf.default(pi);assert.ok(commands.has('caf'));
-const available=[{provider:'friend',id:'frontier'},{provider:'local',id:'small'}],selections=[];
-let branch=[{type:'custom',customType:caf.CAF_ROUND_ENTRY,data:questions}];
-const ctx={mode:'json',hasUI:false,modelRegistry:{getAvailable:()=>available,find:(provider,id)=>available.find(model=>model.provider===provider&&model.id===id)},
-  ui:{notify:(text,level)=>notifications.push({text,level}),select:async()=>selections.shift()},sessionManager:{getSessionId:()=> 'session',getBranch:()=>branch}};
+const available=[{provider:'friend',id:'frontier'},{provider:'local',id:'small'}],selections=[],providerCalls=[];let providerOutput=JSON.stringify({schemaVersion:1,outcome:'ALLOW',reason:'Explicitly authorized and abstract.'});
+let branch=[{type:'message',id:'current-user',message:{role:'user',content:[{type:'text',text:'You may ask the configured friend about this abstract API design.'}]}},
+  {type:'message',id:'assistant-private',message:{role:'assistant',content:[{type:'text',text:'assistant-only private analysis'}]}},
+  {type:'message',id:'tool-private',message:{role:'toolResult',content:[{type:'text',text:'private tool result'}]}},
+  {type:'custom',customType:caf.CAF_ROUND_ENTRY,data:questions}];
+const ctx={mode:'json',hasUI:false,model:available[1],cwd:'/private/workspace',modelRegistry:{getAvailable:()=>available,find:(provider,id)=>available.find(model=>model.provider===provider&&model.id===id),
+  complete:async(model,request,options)=>{providerCalls.push({model,request,options});return {stopReason:'stop',content:[{type:'text',text:providerOutput}]};}},
+  ui:{notify:(text,level)=>notifications.push({text,level}),select:async()=>selections.shift()},sessionManager:{getSessionId:()=> 'session',getBranch:()=>branch,getEntries:()=>{throw new Error('CAF must use only the current branch');}}};
 const dispatch=async(name,event)=>{for(const handler of handlers.get(name)??[])await handler(event,ctx);};
 await dispatch('session_start',{type:'session_start',reason:'resume'});
-await commands.get('caf').handler('status',ctx);assert.match(notifications.at(-1).text,/Guard Runtime: available/);assert.match(notifications.at(-1).text,/Disclosure policy: built-in only/);assert.match(notifications.at(-1).text,/Disclosure review: unavailable/);assert.match(notifications.at(-1).text,/Conversation: 1 completed round/);assert.match(notifications.at(-1).text,/Friend calls: not enabled/);
+await commands.get('caf').handler('status',ctx);assert.match(notifications.at(-1).text,/Guard Runtime: available/);assert.match(notifications.at(-1).text,/Disclosure policy: built-in only/);assert.match(notifications.at(-1).text,/Disclosure review: ready — primary model/);assert.match(notifications.at(-1).text,/Conversation: 1 completed round/);assert.match(notifications.at(-1).text,/Friend calls: not enabled/);assert.equal(providerCalls.length,0);
+result=await caf.runPrimaryCafDisclosureReview(disclosure,{source:'built-in',text:null},ctx,new AbortController().signal);
+assert.equal(result.released,true);assert.equal(providerCalls.length,1);assert.equal(providerCalls[0].model,available[1]);assert.ok(providerCalls[0].options.signal instanceof AbortSignal);assert.deepEqual(Object.keys(providerCalls[0].request).sort(),['messages','systemPrompt']);
+const privateReviewPayload=JSON.parse(providerCalls[0].request.messages[0].content[0].text);
+assert.deepEqual(privateReviewPayload.disclosure,disclosure);assert.deepEqual(privateReviewPayload.policy,{source:'built-in',text:null});assert.deepEqual(privateReviewPayload.authorization,{complete:true,messages:[{id:'current-user',text:'You may ask the configured friend about this abstract API design.'}]});
+assert.ok(!JSON.stringify(privateReviewPayload).includes('assistant-only private analysis'));assert.ok(!JSON.stringify(privateReviewPayload).includes('private tool result'));assert.ok(!JSON.stringify(privateReviewPayload).includes('/private/workspace'));
+const completeBranch=branch;branch=manyUsers;result=await caf.runPrimaryCafDisclosureReview(disclosure,{source:'built-in',text:null},ctx,new AbortController().signal);assert.equal(result.released,false);assert.equal(result.outcome,'ASK');branch=completeBranch;
+providerOutput='not-json';result=await caf.runPrimaryCafDisclosureReview(disclosure,{source:'built-in',text:null},ctx,new AbortController().signal);assert.equal(result.released,false);providerOutput=JSON.stringify({schemaVersion:1,outcome:'ALLOW',reason:'Explicitly authorized and abstract.'});
+let enteredResolve,observedProviderSignal;const entered=new Promise(resolve=>{enteredResolve=resolve;});
+const cancelCtx={...ctx,modelRegistry:{...ctx.modelRegistry,complete:async(_model,_request,options)=>{observedProviderSignal=options.signal;enteredResolve();return new Promise((_,reject)=>options.signal.addEventListener('abort',()=>reject(options.signal.reason),{once:true}));}}};
+const primaryCancellation=new AbortController(),pendingReview=caf.runPrimaryCafDisclosureReview(disclosure,{source:'built-in',text:null},cancelCtx,primaryCancellation.signal);await entered;primaryCancellation.abort(new Error('cancelled primary reviewer'));result=await pendingReview;assert.equal(result.released,false);assert.equal(observedProviderSignal.aborted,true);
+result=await caf.runPrimaryCafDisclosureReview(disclosure,{source:'built-in',text:null},{...ctx,model:null},new AbortController().signal);assert.equal(result.released,false);
 branch=[];await dispatch('session_tree',{type:'session_tree'});await commands.get('caf').handler('status',ctx);assert.match(notifications.at(-1).text,/Conversation: none on this branch/);
 branch=[{type:'custom',customType:caf.CAF_ROUND_ENTRY,data:{...questions,extra:true}}];await dispatch('session_tree',{type:'session_tree'});await commands.get('caf').handler('status',ctx);assert.match(notifications.at(-1).text,/Conversation: unavailable/);
 branch=[];await dispatch('session_tree',{type:'session_tree'});
@@ -99,5 +118,5 @@ const dockerfile=await readFile(join(root,'docker/Dockerfile'),'utf8'),launcher=
 const guardian='/usr/local/lib/node_modules/guardian-agent/guardian-agent.ts',cafPath='/usr/local/lib/node_modules/guardian-agent/caf-agent.ts';
 assert.ok(dockerfile.includes('COPY extensions/caf-agent.ts /usr/local/lib/node_modules/guardian-agent/'));
 assert.ok(launcher.includes(`--extension ${cafPath}`));assert.ok(launcher.indexOf(guardian)<launcher.indexOf(cafPath));
-console.log('CAF configuration, disclosure gate, branch-local state, Guard Runtime, path safety, and packaging tests passed');
+console.log('CAF primary disclosure reviewer, gate, configuration, branch state, path safety, and packaging tests passed');
 NODE

@@ -139,8 +139,13 @@ unavailable rather than silently ignored.
 
 The CAF disclosure gate accepts only a complete valid `ALLOW` for the exact
 message, purpose, and friend-model destination. Missing, failed, malformed,
-cancelled, or non-allowing review remains withheld. No production disclosure
-reviewer or external transmission is enabled yet.
+cancelled, or non-allowing review remains withheld. Its production reviewer
+uses the current primary model with no tools and receives only that disclosure,
+the CAF policy, and bounded user-authored messages from the selected session
+branch. It receives no assistant or tool results, workspace contents, or
+credentials. If user-message evidence exceeds its bounds, an `ALLOW` is
+reduced to `ASK`. Startup and `/caf status` do not invoke the reviewer. No
+friend transmission is enabled yet.
 
 `/caf` configures a friend model and thinking preference without contacting that
 model. Preferences are created lazily in private `caf/config.json`; a missing
