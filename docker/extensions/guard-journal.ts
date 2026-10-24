@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 import { constants } from "node:fs";
-import { lstat, mkdir, open, readdir, realpath, rename, unlink } from "node:fs/promises";
+import { lstat, mkdir, open, readdir, realpath, rename, rmdir, unlink } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { join, resolve } from "node:path";
 
@@ -25,6 +25,7 @@ export interface GuardJournalWriterV1 {
   readonly path: string;
   write(entry: Record<string, unknown>): void;
   flush(): Promise<void>;
+  close(): Promise<void>;
   health(): Readonly<GuardJournalHealthV1>;
 }
 
@@ -89,7 +90,8 @@ export function createGuardJournalWriter(
   const runsPath = join(stateDir, "logs", options.clientId, "runs");
   const path = join(runsPath, `${runId}.jsonl`);
   let queue: Promise<void> = Promise.resolve(), pending = 0, dropped = 0, written = 0, sequence = 0;
-  let lastError: string | undefined, warned = false, claimed = false;
+  let lastError: string | undefined, warned = false, claimed = false, closed = false;
+  let closePromise:Promise<void>|undefined;
 
   async function directories(): Promise<void> {
     const stateStat = await lstat(stateDir), resolvedState = await realpath(stateDir);
@@ -148,6 +150,7 @@ export function createGuardJournalWriter(
   const writer: GuardJournalWriterV1 = Object.freeze({
     schemaVersion: 1 as const, clientId: options.clientId, runId, path,
     write(entry) {
+      if(closed){failure(new Error("Guard journal writer is closed"));return;}
       if (!entry || typeof entry !== "object" || Array.isArray(entry)) { failure(new Error("Invalid Guard journal entry")); return; }
       if (pending >= maxPending) { failure(new Error("Guard journal queue is full")); return; }
       let line: string;
@@ -165,6 +168,26 @@ export function createGuardJournalWriter(
       });
     },
     flush: async () => { for (;;) { const batch = queue; await batch; if (batch === queue) return; } },
+    close() {
+      if(closePromise)return closePromise;
+      closed=true;
+      closePromise=(async()=>{
+        await writer.flush();if(!claimed)return;
+        try{
+          await directories();
+          const marker=`${path}.complete`;
+          try{
+            const handle=await open(marker,constants.O_WRONLY|constants.O_CREAT|constants.O_EXCL|constants.O_NOFOLLOW,0o600);
+            try{await handle.writeFile(JSON.stringify({schemaVersion:1,clientId:options.clientId,runId,closedAt:new Date().toISOString()})+"\n","utf8");await handle.chmod(0o600);}
+            finally{await handle.close();}
+          }catch(error){
+            if((error as NodeJS.ErrnoException).code!=="EEXIST")throw error;
+            if(!await regularFile(marker))throw new Error("Guard journal completion marker disappeared");
+          }
+        }catch(error){failure(error);}
+      })();
+      return closePromise;
+    },
     health: () => Object.freeze({ pending, dropped, written, lastError: lastError ?? null }),
   });
   return writer;
@@ -197,7 +220,9 @@ export interface GuardJournalSnapshotV1 {
 }
 
 type ReadCandidate = { path: string; source: string; size: number; mtimeMs: number; dev: number; ino: number };
-const RUN_FILE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.jsonl(?:\.[1-8])?$/;
+const RUN_ID_PATTERN="[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
+const RUN_FILE = new RegExp(`^(${RUN_ID_PATTERN})\\.jsonl(?:\\.[1-8])?$`);
+const COMPLETE_FILE = new RegExp(`^(${RUN_ID_PATTERN})\\.jsonl\\.complete$`);
 const LEGACY_FILE = /^events\.jsonl(?:\.[1-8])?$/;
 
 async function readableDirectory(path: string): Promise<boolean> {
@@ -251,6 +276,11 @@ export async function readGuardJournal(options: GuardJournalReadOptionsV1, signa
       for (const entry of await readdir(directory, { withFileTypes: true })) {
         signal?.throwIfAborted();
         const source = `${kind}/${entry.name}`, path = join(directory, entry.name);
+        if(kind==="runs"&&COMPLETE_FILE.test(entry.name)){
+          try{if(!entry.isFile()||!await regularFile(path))throw new Error("unsafe completion marker");}
+          catch(error){notices.push(`${source}: ${errorText(error)}; omitted.`);}
+          continue;
+        }
         if (!pattern.test(entry.name)) { notices.push(`${source}: unexpected entry omitted.`); continue; }
         try {
           const stat = await lstat(path);
@@ -321,4 +351,94 @@ export async function readGuardJournal(options: GuardJournalReadOptionsV1, signa
   if (records.length > maxRecords) notices.push(`${records.length - maxRecords} older journal record(s) omitted by the record limit.`);
   const retained = records.slice(-maxRecords).map(({time: _time, ...record}) => record);
   return snapshot(retained, files);
+}
+
+export interface GuardJournalRetentionOptionsV1 {
+  schemaVersion:1;
+  stateDir:string;
+  clientId:string;
+  maxBytes:number;
+  maxRuns:number;
+}
+export interface GuardJournalRetentionResultV1 {
+  status:"completed"|"busy"|"unavailable";
+  bytesBefore:number;
+  bytesAfter:number;
+  runsBefore:number;
+  runsAfter:number;
+  removedRuns:number;
+  removedFiles:number;
+  skippedUnsafe:number;
+  targetMet:boolean;
+  notices:readonly string[];
+}
+type RetentionFile={path:string;size:number};
+type RetentionGroup={runId:string;files:RetentionFile[];marker?:string;completedAt:number;unsafe:boolean};
+
+export async function maintainGuardJournalRetention(options:GuardJournalRetentionOptionsV1):Promise<GuardJournalRetentionResultV1>{
+  if(!options||options.schemaVersion!==1||typeof options.stateDir!=="string"||!options.stateDir||
+      typeof options.clientId!=="string"||!/^[a-z][a-z0-9-]{0,63}$/.test(options.clientId))throw new Error("Invalid Guard journal retention options");
+  const maxBytes=validateInteger(options.maxBytes,256,1024*1024*1024,"retention byte limit");
+  const maxRuns=validateInteger(options.maxRuns,1,100000,"retention run limit");
+  const stateDir=resolve(options.stateDir),logs=join(stateDir,"logs"),client=join(logs,options.clientId),runs=join(client,"runs");
+  const empty=(status:GuardJournalRetentionResultV1["status"],notices:string[]=[]):GuardJournalRetentionResultV1=>({
+    status,bytesBefore:0,bytesAfter:0,runsBefore:0,runsAfter:0,removedRuns:0,removedFiles:0,skippedUnsafe:0,
+    targetMet:status==="completed",notices:Object.freeze(notices),
+  });
+  try{
+    const stateStat=await lstat(stateDir);
+    if(!stateStat.isDirectory()||stateStat.isSymbolicLink()||(await realpath(stateDir))!==stateDir)throw new Error("State directory is redirected");
+    if(!await readableDirectory(logs)||!await readableDirectory(client)||!await readableDirectory(runs))return empty("completed");
+  }catch(error){return empty("unavailable",[`Retention unavailable: ${errorText(error)}.`]);}
+  const lock=join(client,".retention.lock");
+  try{await mkdir(lock,{mode:0o700});}
+  catch(error){
+    if((error as NodeJS.ErrnoException).code==="EEXIST")return empty("busy",["Retention already running; cleanup postponed."]);
+    return empty("unavailable",[`Retention lock unavailable: ${errorText(error)}.`]);
+  }
+  let result:GuardJournalRetentionResultV1=empty("unavailable");
+  try{
+    if(!await readableDirectory(lock))throw new Error("Unsafe retention lock");
+    const entries=await readdir(runs,{withFileTypes:true});
+    if(entries.length>8192)throw new Error("Guard journal retention scan limit exceeded");
+    const groups=new Map<string,RetentionGroup>();let skippedUnsafe=0,removedFiles=0,removedRuns=0;
+    for(const entry of entries){
+      const run=entry.name.match(RUN_FILE),complete=entry.name.match(COMPLETE_FILE);
+      if(!run&&!complete)continue;
+      const runId=(run??complete)![1],group=groups.get(runId)??{runId,files:[],completedAt:0,unsafe:false};
+      groups.set(runId,group);
+      const path=join(runs,entry.name),stat=await lstat(path);
+      const safe=entry.isFile()&&stat.isFile()&&!stat.isSymbolicLink()&&stat.nlink===1&&ownedByProcess(stat.uid)&&(stat.mode&0o777)===0o600;
+      if(!safe){group.unsafe=true;skippedUnsafe++;continue;}
+      if(complete){group.marker=path;group.completedAt=stat.mtimeMs;}
+      else group.files.push({path,size:stat.size});
+    }
+    let bytes=[...groups.values()].flatMap(group=>group.files).reduce((total,file)=>total+file.size,0);
+    let runsCount=[...groups.values()].filter(group=>group.files.length>0).length;
+    const bytesBefore=bytes,runsBefore=runsCount,notices:string[]=[];
+    for(const group of groups.values())if(group.marker&&!group.unsafe&&!group.files.length){
+      try{await unlink(group.marker);removedFiles++;}catch(error){if(!missing(error))throw error;}
+      group.marker=undefined;
+    }
+    const eligible=[...groups.values()].filter(group=>group.marker&&!group.unsafe&&group.files.length)
+      .sort((a,b)=>a.completedAt-b.completedAt||a.runId.localeCompare(b.runId));
+    for(const group of eligible){
+      if(bytes<=maxBytes&&runsCount<=maxRuns)break;
+      for(const file of group.files){
+        try{await unlink(file.path);removedFiles++;}catch(error){if(!missing(error))throw error;}
+        bytes-=file.size;
+      }
+      try{await unlink(group.marker!);removedFiles++;}catch(error){if(!missing(error))throw error;}
+      removedRuns++;runsCount--;
+    }
+    const targetMet=bytes<=maxBytes&&runsCount<=maxRuns&&skippedUnsafe===0;
+    if(!targetMet)notices.push("Retention target not met; active, incomplete, or unsafe runs were preserved.");
+    result={status:"completed",bytesBefore,bytesAfter:Math.max(0,bytes),runsBefore,runsAfter:runsCount,
+      removedRuns,removedFiles,skippedUnsafe,targetMet,notices:Object.freeze(notices)};
+  }catch(error){result={...result,status:"unavailable",targetMet:false,notices:Object.freeze([`Retention incomplete: ${errorText(error)}.`])};}
+  finally{
+    try{await rmdir(lock);}catch(error){result={...result,status:"unavailable",targetMet:false,
+      notices:Object.freeze([...result.notices,`Retention lock cleanup failed: ${errorText(error)}.`])};}
+  }
+  return Object.freeze(result);
 }

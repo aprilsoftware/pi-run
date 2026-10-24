@@ -10,7 +10,7 @@ trap 'rm -rf "${TMP}"' EXIT
 
 node --input-type=module - "${ROOT}" "${PI_PACKAGE_DIR}" "${TMP}" <<'NODE'
 import assert from 'node:assert/strict';
-import { chmod, link, mkdir, readFile, readdir, stat, symlink, writeFile } from 'node:fs/promises';
+import { chmod, link, mkdir, readFile, readdir, rmdir, stat, symlink, unlink, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { basename, dirname, join } from 'node:path';
 const [root, piDir, tmp] = process.argv.slice(2);
@@ -20,6 +20,7 @@ const file = join(root, 'docker', 'extensions', 'guard-journal.ts');
 const module = await createJiti(import.meta.url, { fsCache: false }).import(file);
 const create = module.createGuardJournalWriter;
 const mode = async path => (await stat(path)).mode & 0o777;
+const exists = async path => stat(path).then(() => true, error => error.code === 'ENOENT' ? false : Promise.reject(error));
 const entries = async path => (await readFile(path, 'utf8')).trim().split('\n').filter(Boolean).map(JSON.parse);
 
 for (const options of [null, {}, { schemaVersion: 1, stateDir: tmp, clientId: '../bad' },
@@ -89,6 +90,48 @@ const permissive = create({ schemaVersion: 1, stateDir: permissiveState, clientI
 permissive.write({ event: 'refused' }); await permissive.flush();
 assert.equal(permissive.health().dropped, 1); assert.deepEqual(await readdir(permissiveLogs), []);
 
+const retentionState = join(tmp, 'retention-profile'); await mkdir(retentionState, { mode: 0o700 });
+const retained = Array.from({ length: 4 }, () => create({ schemaVersion: 1, stateDir: retentionState, clientId: 'guardian' }));
+for (let index = 0; index < retained.length; index++) {
+  retained[index].write({ event: 'retention', index, payload: 'r'.repeat(300) }); await retained[index].flush();
+  if (index < 3) { await retained[index].close(); await new Promise(resolve => setTimeout(resolve, 5)); }
+}
+const retentionLegacy = join(retentionState, 'logs', 'guardian', 'legacy'); await mkdir(retentionLegacy, { mode: 0o700 });
+const retainedLegacyFile = join(retentionLegacy, 'events.jsonl'); await writeFile(retainedLegacyFile, '{}\n', { mode: 0o600 });
+const sizes = await Promise.all(retained.map(writer => stat(writer.path).then(value => value.size)));
+const byteRetention = await module.maintainGuardJournalRetention({ schemaVersion: 1, stateDir: retentionState,
+  clientId: 'guardian', maxBytes: sizes.reduce((sum, size) => sum + size, 0) - sizes[0], maxRuns: 10 });
+assert.equal(byteRetention.status, 'completed'); assert.equal(byteRetention.removedRuns, 1); assert.equal(byteRetention.targetMet, true);
+assert.equal(await exists(retained[0].path), false); assert.equal(await exists(`${retained[0].path}.complete`), false);
+assert.equal(await exists(retained[3].path), true); assert.equal(await exists(`${retained[3].path}.complete`), false);
+assert.equal(await readFile(retainedLegacyFile, 'utf8'), '{}\n');
+const runRetention = await module.maintainGuardJournalRetention({ schemaVersion: 1, stateDir: retentionState,
+  clientId: 'guardian', maxBytes: 1024 * 1024, maxRuns: 2 });
+assert.equal(runRetention.removedRuns, 1); assert.equal(runRetention.runsAfter, 2); assert.equal(await exists(retained[1].path), false);
+await Promise.all([retained[3].close(), retained[3].close()]);
+assert.equal(await exists(`${retained[3].path}.complete`), true);
+retained[3].write({ event: 'closed-writer-refuses' }); assert.equal(retained[3].health().dropped, 1);
+const duringLock = create({ schemaVersion: 1, stateDir: retentionState, clientId: 'guardian' });
+const retentionLock = join(retentionState, 'logs', 'guardian', '.retention.lock'); await mkdir(retentionLock, { mode: 0o700 });
+duringLock.write({ event: 'write-during-retention-contention' });
+const [busy] = await Promise.all([module.maintainGuardJournalRetention({ schemaVersion: 1, stateDir: retentionState,
+  clientId: 'guardian', maxBytes: 1024, maxRuns: 1 }), duringLock.flush()]);
+assert.equal(busy.status, 'busy'); assert.equal(await exists(retained[2].path), true);
+assert.deepEqual(duringLock.health(), { pending: 0, dropped: 0, written: 1, lastError: null });
+await rmdir(retentionLock);
+const interrupted = create({ schemaVersion: 1, stateDir: retentionState, clientId: 'interrupted' });
+interrupted.write({ event: 'interrupted-cleanup' }); await interrupted.close(); await unlink(interrupted.path);
+const recovered = await module.maintainGuardJournalRetention({ schemaVersion: 1, stateDir: retentionState,
+  clientId: 'interrupted', maxBytes: 1024, maxRuns: 1 });
+assert.equal(recovered.status, 'completed'); assert.equal(await exists(`${interrupted.path}.complete`), false);
+const unsafeRetention = create({ schemaVersion: 1, stateDir: retentionState, clientId: 'unsafe-retention' });
+unsafeRetention.write({ event: 'unsafe', payload: 'u'.repeat(400) }); await unsafeRetention.close();
+await link(unsafeRetention.path, `${unsafeRetention.path}.extra`);
+const unsafeResult = await module.maintainGuardJournalRetention({ schemaVersion: 1, stateDir: retentionState,
+  clientId: 'unsafe-retention', maxBytes: 256, maxRuns: 1 });
+assert.equal(unsafeResult.status, 'completed'); assert.equal(unsafeResult.targetMet, false); assert.equal(unsafeResult.skippedUnsafe, 1);
+assert.equal(await exists(unsafeRetention.path), true);
+
 const readState = join(tmp, 'read-profile'); await mkdir(readState, { mode: 0o700 });
 const first = create({ schemaVersion: 1, stateDir: readState, clientId: 'guardian' });
 const second = create({ schemaVersion: 1, stateDir: readState, clientId: 'guardian' });
@@ -141,5 +184,5 @@ assert.equal(typeof loaded.createGuardJournalWriter, 'function');
 assert.equal(typeof loaded.readGuardJournal, 'function');
 assert.ok((await readFile(join(root, 'docker', 'Dockerfile'), 'utf8')).includes(
   'COPY extensions/guard-journal.ts /usr/local/lib/node_modules/guardian-agent/'));
-console.log(`guard journal concurrent writers, rotation, identity, private modes, and unsafe-path tests passed (${basename(file)})`);
+console.log(`guard journal writers, merged reading, retention, private modes, and unsafe-path tests passed (${basename(file)})`);
 NODE
