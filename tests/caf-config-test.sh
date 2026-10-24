@@ -41,12 +41,36 @@ assert.deepEqual(await caf.loadCafConfig(profile),valid);
 assert.equal((await lstat(join(profile,'caf'))).mode&0o777,0o700);assert.equal((await lstat(path)).mode&0o777,0o600);
 const firstInode=(await lstat(path)).ino;await caf.saveCafConfig(profile,{...valid,thinking:null});
 assert.notEqual((await lstat(path)).ino,firstInode);assert.ok(!(await readdir(join(profile,'caf'))).some(name=>name.startsWith('.config.json.tmp.')));
+assert.deepEqual(await caf.loadCafPolicy(profile),{source:'built-in',text:null});
+const policyPath=join(profile,'caf','caf.md'),policyText='# Private CAF policy\nDo not disclose internal names.\n';await writeFile(policyPath,policyText,{mode:0o600});
+assert.deepEqual(await caf.loadCafPolicy(profile),{source:'profile',text:policyText});
+await chmod(policyPath,0o644);await assert.rejects(caf.loadCafPolicy(profile),/private single-link/);await chmod(policyPath,0o600);
+await writeFile(policyPath,Buffer.alloc(64*1024+1,120));await assert.rejects(caf.loadCafPolicy(profile),/private single-link|too large/);
+await writeFile(policyPath,Buffer.from([0xff]));await assert.rejects(caf.loadCafPolicy(profile));
+const policyOutside=join(tmp,'outside-policy');await writeFile(policyOutside,policyText,{mode:0o600});await rm(policyPath);await link(policyOutside,policyPath);await assert.rejects(caf.loadCafPolicy(profile),/private single-link/);
+await rm(policyPath);await symlink(policyOutside,policyPath);await assert.rejects(caf.loadCafPolicy(profile));await rm(policyPath);await writeFile(policyPath,policyText,{mode:0o600});
 await chmod(path,0o644);await assert.rejects(caf.loadCafConfig(profile),/private single-link/);await chmod(path,0o600);
 const outside=join(tmp,'outside');await writeFile(outside,'outside\n',{mode:0o600});await rm(path);await symlink(outside,path);
 await assert.rejects(caf.saveCafConfig(profile,valid),/private single-link/);assert.equal(await readFile(outside,'utf8'),'outside\n');await rm(path);
 await link(outside,path);await assert.rejects(caf.saveCafConfig(profile,valid),/private single-link/);
 const redirected=join(tmp,'redirected');await mkdir(redirected,{mode:0o700});await symlink(join(profile,'caf'),join(redirected,'caf'));
-await assert.rejects(caf.loadCafConfig(redirected),/private, owned, and unredirected/);
+await assert.rejects(caf.loadCafConfig(redirected),/private, owned, and unredirected/);await assert.rejects(caf.loadCafPolicy(redirected),/private, owned, and unredirected/);
+
+const disclosure={schemaVersion:1,kind:'friend-message',message:'Review this abstract public interface.',purpose:'Independent API critique',destination:{model:'friend/frontier'}};
+const disclosurePolicy={source:'profile',text:policyText};let reviewed;
+const allowReviewer={async review(action,context){reviewed={action,context};return {schemaVersion:1,outcome:'ALLOW',reason:'The abstract payload follows policy.'};}};
+let result=await caf.runCafDisclosureReview(disclosure,disclosurePolicy,allowReviewer,new AbortController().signal);
+assert.equal(result.released,true);assert.deepEqual(result.action,disclosure);assert.deepEqual(reviewed.context.policy,disclosurePolicy);assert.equal(Object.isFrozen(reviewed.action),true);assert.equal(Object.isFrozen(reviewed.context.policy),true);
+assert.deepEqual(Object.keys(reviewed.action).sort(),['destination','kind','message','purpose','schemaVersion']);assert.deepEqual(Object.keys(reviewed.context).sort(),['policy','signal']);
+assert.equal(Object.isFrozen(result.decision),true);assert.throws(()=>{reviewed.action.message='changed';},TypeError);assert.equal(result.action.message,disclosure.message);
+for(const outcome of ['ASK','USER_REFUSED']){result=await caf.runCafDisclosureReview(disclosure,disclosurePolicy,{async review(){return {schemaVersion:1,outcome,reason:'Withheld.'};}},new AbortController().signal);assert.deepEqual(result,{released:false,outcome,reason:'Withheld.'});}
+for(const reviewer of [undefined,{async review(){throw new Error('review failed');}},{async review(){return {outcome:'ALLOW'};}}]){
+  result=await caf.runCafDisclosureReview(disclosure,disclosurePolicy,reviewer,new AbortController().signal);assert.equal(result.released,false);
+}
+const cancelled=new AbortController();cancelled.abort(new Error('cancelled fixture'));result=await caf.runCafDisclosureReview(disclosure,disclosurePolicy,allowReviewer,cancelled.signal);assert.equal(result.released,false);assert.match(result.reason,/cancelled fixture/);
+result=await caf.runCafDisclosureReview(disclosure,disclosurePolicy,{review:()=>new Promise(()=>{})},new AbortController().signal,5);assert.equal(result.released,false);assert.match(result.reason,/timed out/);
+result=await caf.runCafDisclosureReview({...disclosure,workspace:'/workspace'},disclosurePolicy,allowReviewer,new AbortController().signal);assert.equal(result.released,false);
+result=await caf.runCafDisclosureReview(disclosure,{source:'profile',text:null},allowReviewer,new AbortController().signal);assert.equal(result.released,false);
 
 const commandProfile=join(tmp,'command-profile');await mkdir(commandProfile,{mode:0o700});process.env.PI_RUN_PROFILE_DIR=commandProfile;
 const {createEventBus}=await import(pathToFileURL(join(piDir,'dist/core/event-bus.js')).href),bus=createEventBus();
@@ -59,7 +83,7 @@ const ctx={mode:'json',hasUI:false,modelRegistry:{getAvailable:()=>available,fin
   ui:{notify:(text,level)=>notifications.push({text,level}),select:async()=>selections.shift()},sessionManager:{getSessionId:()=> 'session',getBranch:()=>branch}};
 const dispatch=async(name,event)=>{for(const handler of handlers.get(name)??[])await handler(event,ctx);};
 await dispatch('session_start',{type:'session_start',reason:'resume'});
-await commands.get('caf').handler('status',ctx);assert.match(notifications.at(-1).text,/Guard Runtime: available/);assert.match(notifications.at(-1).text,/Conversation: 1 completed round/);assert.match(notifications.at(-1).text,/Friend calls: not enabled/);
+await commands.get('caf').handler('status',ctx);assert.match(notifications.at(-1).text,/Guard Runtime: available/);assert.match(notifications.at(-1).text,/Disclosure policy: built-in only/);assert.match(notifications.at(-1).text,/Disclosure review: unavailable/);assert.match(notifications.at(-1).text,/Conversation: 1 completed round/);assert.match(notifications.at(-1).text,/Friend calls: not enabled/);
 branch=[];await dispatch('session_tree',{type:'session_tree'});await commands.get('caf').handler('status',ctx);assert.match(notifications.at(-1).text,/Conversation: none on this branch/);
 branch=[{type:'custom',customType:caf.CAF_ROUND_ENTRY,data:{...questions,extra:true}}];await dispatch('session_tree',{type:'session_tree'});await commands.get('caf').handler('status',ctx);assert.match(notifications.at(-1).text,/Conversation: unavailable/);
 branch=[];await dispatch('session_tree',{type:'session_tree'});
@@ -75,5 +99,5 @@ const dockerfile=await readFile(join(root,'docker/Dockerfile'),'utf8'),launcher=
 const guardian='/usr/local/lib/node_modules/guardian-agent/guardian-agent.ts',cafPath='/usr/local/lib/node_modules/guardian-agent/caf-agent.ts';
 assert.ok(dockerfile.includes('COPY extensions/caf-agent.ts /usr/local/lib/node_modules/guardian-agent/'));
 assert.ok(launcher.includes(`--extension ${cafPath}`));assert.ok(launcher.indexOf(guardian)<launcher.indexOf(cafPath));
-console.log('CAF configuration, branch-local conversation state, Guard Runtime registration, path safety, and packaging tests passed');
+console.log('CAF configuration, disclosure gate, branch-local state, Guard Runtime, path safety, and packaging tests passed');
 NODE

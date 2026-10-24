@@ -8,8 +8,15 @@ import { connectGuardClient } from "./guard-runtime.ts";
 
 const THINKING = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 const CONFIG_BYTES = 16 * 1024;
+const POLICY_BYTES = 64 * 1024;
 export type CafThinking = typeof THINKING[number];
 export interface CafConfig { schemaVersion: 1; model: string | null; thinking: CafThinking | null; }
+export type CafPolicy={source:"profile"|"built-in";text:string|null};
+export type CafDisclosureAction={schemaVersion:1;kind:"friend-message";message:string;purpose:string;destination:{model:string}};
+export type CafDisclosureDecision={schemaVersion:1;outcome:"ALLOW"|"ASK"|"USER_REFUSED";reason:string};
+export interface CafDisclosureReviewer{review(action:Readonly<CafDisclosureAction>,context:Readonly<{policy:Readonly<CafPolicy>;signal:AbortSignal}>):Promise<unknown>;}
+export type CafDisclosureResult={released:true;action:Readonly<CafDisclosureAction>;decision:Readonly<CafDisclosureDecision>}|
+  {released:false;outcome:CafDisclosureDecision["outcome"]|null;reason:string};
 export const CAF_ROUND_ENTRY="pi-run-caf-round";
 export type CafRound={schemaVersion:1;consultationId:string;round:number;
   request:{message:string;purpose:string};friend:{model:string;thinking:CafThinking};response:
@@ -56,6 +63,40 @@ export function restoreCafConversation(entries:readonly BranchEntry[]):readonly 
   }
   return Object.freeze(rounds);
 }
+export function parseCafDisclosureAction(input:unknown):Readonly<CafDisclosureAction>{
+  const value=object(input,"CAF disclosure action");exact(value,["schemaVersion","kind","message","purpose","destination"],"CAF disclosure action");
+  const destination=object(value.destination,"CAF destination");exact(destination,["model"],"CAF destination");
+  const model=text(destination.model,512,"CAF destination model");
+  if(value.schemaVersion!==1||value.kind!=="friend-message"||!/^[^\s/]+\/[^\s]+$/.test(model))throw new Error("Invalid CAF disclosure action");
+  return freeze({schemaVersion:1,kind:"friend-message",message:text(value.message,16*1024,"CAF disclosure message"),
+    purpose:text(value.purpose,2048,"CAF disclosure purpose"),destination:{model}});
+}
+export function parseCafDisclosureDecision(input:unknown):Readonly<CafDisclosureDecision>{
+  const value=object(input,"CAF disclosure decision");exact(value,["schemaVersion","outcome","reason"],"CAF disclosure decision");
+  if(value.schemaVersion!==1||!["ALLOW","ASK","USER_REFUSED"].includes(String(value.outcome)))throw new Error("Invalid CAF disclosure decision");
+  return freeze({schemaVersion:1,outcome:value.outcome as CafDisclosureDecision["outcome"],reason:text(value.reason,2400,"CAF disclosure reason")});
+}
+export async function runCafDisclosureReview(input:unknown,policy:CafPolicy,reviewer:CafDisclosureReviewer|undefined,signal:AbortSignal,timeoutMs=15_000):Promise<CafDisclosureResult>{
+  let action:Readonly<CafDisclosureAction>,safePolicy:Readonly<CafPolicy>;
+  try{action=parseCafDisclosureAction(input);const validPolicy=policy?.source==="built-in"?policy.text===null:
+      policy?.source==="profile"&&typeof policy.text==="string"&&!!policy.text.trim()&&Buffer.byteLength(policy.text,"utf8")<=POLICY_BYTES;
+    if(!validPolicy)throw new Error("Invalid CAF policy");safePolicy=freeze({source:policy.source,text:policy.text});
+    if(!Number.isSafeInteger(timeoutMs)||timeoutMs<1||timeoutMs>60_000)throw new Error("Invalid CAF review timeout");}
+  catch(error){return {released:false,outcome:null,reason:message(error)};}
+  if(signal.aborted)return {released:false,outcome:null,reason:message(signal.reason??new Error("CAF disclosure review cancelled"))};
+  if(!reviewer)return {released:false,outcome:null,reason:"CAF disclosure reviewer unavailable"};
+  const controller=new AbortController(),abort=()=>controller.abort(signal.reason??new Error("CAF disclosure review cancelled"));
+  signal.addEventListener("abort",abort,{once:true});if(signal.aborted)abort();
+  const timer=setTimeout(()=>controller.abort(new Error("CAF disclosure review timed out")),timeoutMs);
+  try{
+    const context=Object.freeze({policy:safePolicy,signal:controller.signal});
+    const work=Promise.resolve().then(()=>reviewer.review(action,context));work.catch(()=>{});
+    const raw=await Promise.race([work,new Promise<never>((_,reject)=>{const stop=()=>reject(controller.signal.reason);controller.signal.addEventListener("abort",stop,{once:true});if(controller.signal.aborted)stop();})]);
+    const decision=parseCafDisclosureDecision(raw);
+    return decision.outcome==="ALLOW"?{released:true,action,decision}:{released:false,outcome:decision.outcome,reason:decision.reason};
+  }catch(error){return {released:false,outcome:null,reason:message(error)||"CAF disclosure review unavailable"};}
+  finally{clearTimeout(timer);signal.removeEventListener("abort",abort);controller.abort();}
+}
 
 function message(error: unknown): string { return error instanceof Error ? error.message : String(error); }
 function owned(uid: number): boolean { return typeof process.getuid !== "function" || uid === process.getuid(); }
@@ -76,8 +117,21 @@ async function cafDirectory(stateDir:string,create:boolean):Promise<string|undef
   let stat;
   try{stat=await lstat(dir);}catch(error){if(!create&&(error as NodeJS.ErrnoException).code==="ENOENT")return;throw error;}
   if(!stat.isDirectory()||stat.isSymbolicLink()||!owned(stat.uid)||(stat.mode&0o777)!==0o700||await realpath(dir)!==join(resolvedState,"caf"))
-    throw new Error("CAF configuration directory must be private, owned, and unredirected");
+    throw new Error("CAF directory must be private, owned, and unredirected");
   return dir;
+}
+export async function loadCafPolicy(stateDir:string):Promise<Readonly<CafPolicy>>{
+  const dir=await cafDirectory(stateDir,false);if(!dir)return freeze({source:"built-in",text:null});
+  const path=join(dir,"caf.md");let file:Awaited<ReturnType<typeof open>>|undefined;
+  try{
+    file=await open(path,constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);const stat=await file.stat();
+    if(!stat.isFile()||stat.nlink!==1||!owned(stat.uid)||(stat.mode&0o777)!==0o600||stat.size>POLICY_BYTES)
+      throw new Error("CAF policy must be a private single-link regular file");
+    const data=await file.readFile();if(data.length>POLICY_BYTES||data.includes(0))throw new Error("CAF policy is invalid or too large");
+    const policy=new TextDecoder("utf-8",{fatal:true}).decode(data);if(!policy.trim())throw new Error("CAF policy is empty");
+    return freeze({source:"profile",text:policy});
+  }catch(error){if((error as NodeJS.ErrnoException).code==="ENOENT")return freeze({source:"built-in",text:null});throw error;}
+  finally{await file?.close();}
 }
 export async function loadCafConfig(stateDir:string):Promise<CafConfig>{
   const dir=await cafDirectory(stateDir,false);if(!dir)return defaultCafConfig();
@@ -107,7 +161,8 @@ export async function saveCafConfig(stateDir:string,value:CafConfig):Promise<Caf
 export default function cafAgent(pi:ExtensionAPI){
   const stateDir=resolve(process.env.PI_RUN_PROFILE_DIR||"/profile");
   const guard=connectGuardClient(pi,{schemaVersion:1,id:"caf",label:"Call a Friend"});
-  let config=defaultCafConfig(),configError:string|undefined,conversation:readonly CafRound[]=[],conversationError:string|undefined;
+  let config=defaultCafConfig(),configError:string|undefined,policy:Readonly<CafPolicy>=freeze({source:"built-in",text:null}),policyError:string|undefined;
+  let conversation:readonly CafRound[]=[],conversationError:string|undefined;
   const tell=(ctx:ExtensionContext,text:string,level:"info"|"warning"|"error"="info")=>ctx.ui.notify(text,level);
   const restore=(ctx:ExtensionContext,announce=false)=>{try{conversation=restoreCafConversation(ctx.sessionManager.getBranch());conversationError=undefined;}
     catch(error){conversation=[];conversationError=message(error);if(announce)tell(ctx,`CAF conversation unavailable: ${conversationError}`,"warning");}};
@@ -115,8 +170,10 @@ export default function cafAgent(pi:ExtensionAPI){
     catch(error){tell(ctx,`CAF configuration was not changed: ${message(error)}`,"error");return false;}};
   const status=(ctx:ExtensionContext)=>tell(ctx,["Call a Friend · not enabled",`Guard Runtime: ${guard.connected()?"available":"unavailable"}`,
     `Friend model: ${config.model??"unconfigured"}`,`Thinking: ${config.thinking??"default"}`,
+    `Disclosure policy: ${policyError?`unavailable — ${policyError}`:policy.source==="profile"?"profile":"built-in only"}`,
+    "Disclosure review: unavailable — friend calls disabled",
     `Conversation: ${conversationError?`unavailable — ${conversationError}`:conversation.length?`${conversation.length} completed round(s) on this branch`:"none on this branch"}`,
-    configError?`Configuration error: ${configError}`:"Friend calls: not enabled in this version"].join("\n"),configError||conversationError?"warning":"info");
+    configError?`Configuration error: ${configError}`:"Friend calls: not enabled in this version"].join("\n"),configError||policyError||conversationError?"warning":"info");
   const setModel=async(value:string,ctx:ExtensionContext)=>{
     if(!value){
       if(!ctx.hasUI){tell(ctx,"Usage: /caf model <provider/model>");return;}
@@ -138,7 +195,9 @@ export default function cafAgent(pi:ExtensionAPI){
     if(await persist(ctx,{...config,thinking}))tell(ctx,`CAF thinking: ${thinking??"default"} (saved).`);
   };
   pi.on("session_start",async(_event,ctx)=>{try{config=await loadCafConfig(stateDir);configError=undefined;}
-    catch(error){config=defaultCafConfig();configError=message(error);tell(ctx,`CAF configuration unavailable: ${configError}`,"warning");}restore(ctx,true);});
+    catch(error){config=defaultCafConfig();configError=message(error);tell(ctx,`CAF configuration unavailable: ${configError}`,"warning");}
+    try{policy=await loadCafPolicy(stateDir);policyError=undefined;}catch(error){policy=freeze({source:"built-in",text:null});policyError=message(error);tell(ctx,`CAF policy unavailable: ${policyError}`,"warning");}
+    restore(ctx,true);});
   pi.on("session_tree",(_event,ctx)=>restore(ctx,true));
   pi.registerCommand("caf",{description:"Configure Call a Friend (friend calls are not enabled yet)",handler:async(args,ctx)=>{
     const [action="",...rest]=args.trim().split(/\s+/),value=rest.join(" ");

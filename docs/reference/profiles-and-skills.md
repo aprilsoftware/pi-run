@@ -132,7 +132,15 @@ receives the same containment and link checks as other definition files.
 Fresh default profiles include `caf/caf.md`, and profile creation copies it when
 the source has one. Profiles without a CAF policy remain valid and are not
 modified automatically. The policy defines profile-specific external-disclosure
-priorities; it does not enable CAF or grant external access.
+priorities; it does not enable CAF or grant external access. CAF loads the
+optional policy as a bounded private regular file and reports only its source,
+not its contents, through `/caf status`. Unsafe or malformed policy is
+unavailable rather than silently ignored.
+
+The CAF disclosure gate accepts only a complete valid `ALLOW` for the exact
+message, purpose, and friend-model destination. Missing, failed, malformed,
+cancelled, or non-allowing review remains withheld. No production disclosure
+reviewer or external transmission is enabled yet.
 
 `/caf` configures a friend model and thinking preference without contacting that
 model. Preferences are created lazily in private `caf/config.json`; a missing
