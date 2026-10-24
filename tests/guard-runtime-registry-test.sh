@@ -12,11 +12,16 @@ import { pathToFileURL } from 'node:url';
 const [root, piDir] = process.argv.slice(2);
 const require = createRequire(join(piDir, 'package.json'));
 const { createJiti } = require('jiti');
-const alias = { '@earendil-works/pi-coding-agent': join(piDir, 'dist', 'index.js') };
+const tuiPath = join(piDir, 'node_modules', '@earendil-works', 'pi-tui', 'dist', 'index.js');
+const alias = {
+  '@earendil-works/pi-coding-agent': join(piDir, 'dist', 'index.js'),
+  '@earendil-works/pi-tui': tuiPath,
+};
 const file = join(root, 'experiments', 'guard-runtime', 'index.ts');
 const module = await createJiti(import.meta.url, { alias, fsCache: false }).import(file);
 const { createEventBus } = await import(pathToFileURL(join(piDir, 'dist', 'core', 'event-bus.js')).href);
 const { loadExtensions } = await import(pathToFileURL(join(piDir, 'dist', 'core', 'extensions', 'loader.js')).href);
+const { visibleWidth } = await import(pathToFileURL(tuiPath).href);
 const tick = () => new Promise(resolve => setImmediate(resolve));
 function harness(bus) {
   const handlers = new Map();
@@ -33,6 +38,11 @@ function harness(bus) {
   };
   return {
     pi,
+    async start(ctx) {
+      for (const handler of [...(handlers.get('session_start') ?? [])]) {
+        await handler({ type: 'session_start', reason: 'startup' }, ctx);
+      }
+    },
     async shutdown(reason = 'reload') {
       for (const handler of [...(handlers.get('session_shutdown') ?? [])]) {
         await handler({ type: 'session_shutdown', reason }, {});
@@ -217,5 +227,51 @@ assert.equal(loadedService.schemaVersion, 1);
   assert.equal(leaseB.active(), true, 'Separate runtimes must not share an activity lock');
   leaseA.end(); leaseB.end();
 }
-console.log('guard runtime registry and activity lease experiment passed');
+{
+  const bus = createEventBus(), runtime = harness(bus), clientHarness = harness(bus);
+  module.default(runtime.pi);
+  const widgets = new Map(), tui = { redraws: 0, requestRender() { this.redraws++; } };
+  const theme = { fg: (color, text) => `<${color}>${text}</${color}>` };
+  const ctx = { mode: 'tui', hasUI: true, ui: {
+    setWidget(key, value, options) {
+      assert.deepEqual(options, { placement: 'belowEditor' });
+      if (value) widgets.set(key, value); else widgets.delete(key);
+    },
+  } };
+  await runtime.start(ctx);
+  assert.equal(widgets.size, 1);
+  const component = widgets.get('guard-runtime')(tui, theme);
+  assert.deepEqual(component.render(80), ['<muted>guard · ready</muted>']);
+  const guardian = module.connectGuardClient(clientHarness.pi, registration('guardian', 'Guardian'));
+  const first = await guardian.acquireActivity(activity('reviewing', 'command'));
+  assert.deepEqual(component.render(80), ['<muted>guard · reviewing command</muted>']);
+  first.update(activity('researching', 'étude 2/4'));
+  assert.deepEqual(component.render(80), ['<muted>guard · researching étude 2/4</muted>']);
+  const narrow = module.renderGuardStatus(first.snapshot(), 14);
+  assert.ok(visibleWidth(narrow) <= 14);
+  assert.ok(narrow.includes('…'));
+  first.update(activity('asking-primary'));
+  assert.deepEqual(component.render(80), ['<muted>guard · asking primary</muted>']);
+  const caf = module.connectGuardClient(harness(bus).pi, registration('caf', 'Call a Friend'));
+  const nextActivity = caf.acquireActivity(activity('researching', '2/4'));
+  first.end();
+  const second = await nextActivity;
+  assert.deepEqual(component.render(80), ['<muted>guard · researching 2/4</muted>']);
+  second.end();
+  assert.deepEqual(component.render(80), ['<muted>guard · ready</muted>']);
+  assert.ok(tui.redraws >= 5, 'Every visible activity transition requests a redraw');
+  await runtime.shutdown();
+  assert.equal(widgets.size, 0, 'Shutdown removes the shared status widget');
+}
+{
+  for (const mode of ['print', 'json', 'rpc']) {
+    const bus = createEventBus(), runtime = harness(bus);
+    module.default(runtime.pi);
+    let widgetCalls = 0;
+    await runtime.start({ mode, hasUI: mode === 'rpc', ui: { setWidget() { widgetCalls++; } } });
+    assert.equal(widgetCalls, 0, `${mode} mode must not install a terminal widget`);
+    await runtime.shutdown();
+  }
+}
+console.log('guard runtime registry, activity lease, and status experiment passed');
 NODE

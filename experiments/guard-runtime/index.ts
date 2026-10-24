@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { truncateToWidth } from "@earendil-works/pi-tui";
 
 export const GUARD_RUNTIME_KIND = "pi-run.guard-runtime";
 export const GUARD_RUNTIME_VERSION = 1 as const;
@@ -74,6 +75,12 @@ function isRuntime(value: unknown): value is GuardRuntimeV1 {
     typeof candidate.registerClient === "function" && typeof candidate.clients === "function" &&
     typeof candidate.activity === "function" && typeof candidate.subscribeActivity === "function";
 }
+export function renderGuardStatus(activity: Readonly<GuardActivitySnapshotV1> | undefined, width: number): string {
+  const safeWidth = Number.isFinite(width) ? Math.max(1, Math.floor(width)) : 1;
+  const state = activity?.state.replaceAll("-", " ") ?? "ready";
+  const text = `guard · ${state}${activity?.detail ? ` ${activity.detail}` : ""}`;
+  return truncateToWidth(text, safeWidth, "…");
+}
 
 export function connectGuardClient(
   pi: Pick<ExtensionAPI, "events" | "on">,
@@ -110,6 +117,8 @@ export default function guardRuntime(pi: ExtensionAPI) {
   const clients = new Map<string, ClientEntry>(), waiting: PendingActivity[] = [];
   const listeners = new Set<(activity: Readonly<GuardActivitySnapshotV1> | undefined) => void>();
   let closed = false, sequence = 0;
+  let statusContext: ExtensionContext | undefined, statusRedraw: (() => void) | undefined;
+  let statusActivity: Readonly<GuardActivitySnapshotV1> | undefined, stopStatus: (() => void) | undefined;
   let current: { clientToken: symbol; leaseToken: symbol; snapshot: Readonly<GuardActivitySnapshotV1> } | undefined;
   const publish = () => {
     const snapshot = current?.snapshot;
@@ -213,10 +222,27 @@ export default function guardRuntime(pi: ExtensionAPI) {
     const discovery = value as Partial<DiscoveryV1> | null;
     if (!closed && discovery?.schemaVersion === 1 && typeof discovery.accept === "function") discovery.accept(service);
   });
+  const clearStatus = () => {
+    stopStatus?.(); stopStatus = undefined; statusRedraw = undefined;
+    try { statusContext?.ui.setWidget("guard-runtime", undefined, { placement: "belowEditor" }); } catch { /* UI only. */ }
+    statusContext = undefined; statusActivity = undefined;
+  };
+  pi.on("session_start", (_event, ctx) => {
+    clearStatus();
+    if (ctx.mode !== "tui") return;
+    try {
+      statusContext = ctx;
+      ctx.ui.setWidget("guard-runtime", (tui, theme) => {
+        statusRedraw = () => tui.requestRender();
+        return { render: (width: number) => [theme.fg("muted", renderGuardStatus(statusActivity, width))], invalidate() {} };
+      }, { placement: "belowEditor" });
+      stopStatus = service.subscribeActivity(activity => { statusActivity = activity; statusRedraw?.(); });
+    } catch { clearStatus(); }
+  });
   pi.on("session_shutdown", () => {
     closed = true;
     rejectWaiting(() => true, new Error("Guard Runtime stopped"));
-    clients.clear(); current = undefined; publish(); listeners.clear(); stopDiscovery();
+    clients.clear(); current = undefined; publish(); listeners.clear(); stopDiscovery(); clearStatus();
   });
   pi.events.emit(GUARD_RUNTIME_AVAILABLE, service);
 }
