@@ -144,18 +144,30 @@ uses the current primary model with no tools and receives only that disclosure,
 the CAF policy, and bounded user-authored messages from the selected session
 branch. It receives no assistant or tool results, workspace contents, or
 credentials. If user-message evidence exceeds its bounds, an `ALLOW` is
-reduced to `ASK`. Startup and `/caf status` do not invoke the reviewer. No
-friend transmission is enabled yet.
+reduced to `ASK`. Startup and `/caf status` do not invoke the reviewer.
 
 `/caf` configures a friend model and thinking preference without contacting that
 model. Preferences are created lazily in private `caf/config.json`; a missing
-model remains explicitly unconfigured. Friend conversations and external calls
-are not enabled by this configuration surface.
+model remains explicitly unconfigured.
 
-CAF conversation state is branch-local session metadata excluded from the
-primary model context. `/caf status` reconstructs only finalized CAF rounds on
-the selected branch and reports malformed state as unavailable. The current
-configuration-only implementation does not create conversation rounds.
+The primary can invoke `call_friend({ message, purpose })` as one standalone,
+sequential tool call. After disclosure review allows the exact payload, CAF
+sends only the message and purpose under a dedicated advisory system prompt to
+the configured friend model. The friend receives no primary transcript,
+authorization evidence, CAF policy, workspace data, credentials, prior CAF
+rounds, or tools. This is application-level context isolation, not a sandbox or
+confidentiality guarantee.
+
+Each invocation performs at most one friend request and returns one bounded
+answer. There is no public-web access, friend tool use, follow-up-question
+protocol, or autonomous friend loop. Review refusal and failures before release
+produce no friend request. Failures after a friend request starts report that
+uncertain external effect and must not be retried automatically.
+
+Successful answers are stored as finalized branch-local session metadata while
+the tool result supplies the answer to the primary model. `/caf status`
+reconstructs only finalized CAF rounds on the selected branch and reports
+malformed state as unavailable.
 
 Pi uses the selected profile as its configuration directory. Provider login,
 model configuration, settings, Git configuration, credentials, Guardian state,
