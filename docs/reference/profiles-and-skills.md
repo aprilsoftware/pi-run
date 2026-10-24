@@ -113,7 +113,11 @@ profiles/<name>/
 ├── guardian/
 │   ├── guardian.md
 │   ├── config.json
-│   └── guardian.log*
+│   └── guardian.log* (legacy, when present)
+├── logs/
+│   └── guardian/
+│       └── runs/
+│           └── <run-id>.jsonl*
 └── sessions/
 ```
 

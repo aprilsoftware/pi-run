@@ -208,10 +208,14 @@ missing conversation content, or reconstruct data no longer retained. It
 requires Pi's terminal UI. Opening a dispute closes the log browser so its reason
 is not obscured.
 
-Logs use `guardian/guardian.log` plus two rotated backups, `.1` and `.2`, at
-about 1 MiB each. Rotation, partial writes, process interruption, display limits,
-missing tool results, and logging failures can create gaps. Logging failure does
-not alter a review decision or dispute state.
+Each Pi process writes its own bounded run journal under
+`logs/guardian/runs/<run-id>.jsonl*`, with up to two rotated segments at about
+1 MiB each. Concurrent sessions do not share a writer lock. `/guardian-log`
+merges these runs chronologically and continues to read existing
+`guardian/guardian.log*` files; this compatibility does not move or delete them.
+Rotation, partial writes, process interruption, display limits, missing tool
+results, and logging failures can create gaps. Logging failure does not alter a
+review decision or dispute state.
 
 Treat logs as private. They can contain commands, paths, selected conversation
 text, evidence excerpts, model details, and errors. Redaction is best effort,

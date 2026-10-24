@@ -13,8 +13,9 @@ import type { ExtensionAPI, ExtensionContext, ToolCallEvent } from "@earendil-wo
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { Text } from "@earendil-works/pi-tui";
 import { connectGuardClient, type GuardActivityLeaseV1, type GuardActivityRequestV1 } from "./guard-runtime.ts";
+import { createGuardJournalWriter, readGuardJournal } from "./guard-journal.ts";
 import { constants } from "node:fs";
-import { open, realpath, mkdir, lstat, rename, unlink, rmdir, readdir } from "node:fs/promises";
+import { open, realpath, mkdir, lstat, rename, unlink, readdir } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep, basename, extname } from "node:path";
 import { randomUUID } from "node:crypto";
 
@@ -315,88 +316,21 @@ function toolResultDetails(value: unknown, isError: boolean, toolName: string): 
 }
 
 export function createLogger(stateDir: string, warn: (message: string) => void) {
-  const dir = join(stateDir, "guardian"), path = join(dir, "guardian.log");
-  const lock = join(dir, ".guardian-log.lock");
-  let queue: Promise<void> = Promise.resolve(), pending = 0, lastError: string | undefined;
-  let warned = false, dropped = 0, reportedDropped = 0, written = 0;
-  const missing = (e: unknown) => (e as NodeJS.ErrnoException).code === "ENOENT";
-  async function regular(file: string) {
-    try {
-      const st = await lstat(file);
-      if (!st.isFile() || st.nlink !== 1) throw new Error(`Not a single-link regular log file: ${file}`);
-      return st;
-    } catch (e) { if (missing(e)) return undefined; throw e; }
-  }
-  async function append(line: string) {
-    await mkdir(dir, { recursive: true, mode: 0o700 });
-    if (await realpath(dir) !== join(await realpath(stateDir), "guardian")) throw new Error("Log directory is redirected");
-    // Serialize append+rotation across cooperating containers sharing /profile.
-    // Never steal a lock on a guessed age: a paused writer may still own it.
-    // A crash while holding this tiny critical section leaves an empty lock dir;
-    // report it, do not block agent work. Remove it only after stopping all writers.
-    const deadline = Date.now() + 250;
-    for (;;) {
-      try { await mkdir(lock, { mode: 0o700 }); break; }
-      catch (e) {
-        if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
-        if (Date.now() >= deadline) throw new Error(`Log lock busy: ${lock}. If this persists, stop all profile sessions before removing this empty lock directory.`);
-        await new Promise(resolve => setTimeout(resolve, 10));
-      }
-    }
-    try {
-      const current = await regular(path);
-      if (current && current.size + Buffer.byteLength(line) > MAX_LOG_BYTES) {
-        for (let i = 1; i <= LOG_BACKUPS; i++) await regular(`${path}.${i}`);
-        try { await unlink(`${path}.${LOG_BACKUPS}`); } catch (e) { if (!missing(e)) throw e; }
-        for (let i = LOG_BACKUPS - 1; i >= 0; i--) {
-          const from = i === 0 ? path : `${path}.${i}`;
-          try { await rename(from, `${path}.${i + 1}`); } catch (e) { if (!missing(e)) throw e; }
-        }
-      }
-      const file = await open(path, constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | constants.O_NOFOLLOW | constants.O_NONBLOCK, 0o600);
-      try {
-        const st = await file.stat();
-        if (!st.isFile() || st.nlink !== 1) throw new Error("Log destination is not a single-link regular file");
-        await file.chmod(0o600);
-        await file.writeFile(line, "utf8");
-      } finally { await file.close(); }
-    } finally { await rmdir(lock); }
-  }
-  function failure(e: unknown) {
-    lastError = logText(errorText(e)); dropped++;
-    if (!warned) {
-      warned = true;
-      try { warn(`Guardian logging unavailable: ${lastError}. Reviews and dispute enforcement are unchanged. See /guardian for log status.`); } catch { /* UI errors must not affect the review. */ }
-    }
-  }
+  const writer=createGuardJournalWriter({schemaVersion:1,stateDir,clientId:"guardian",maxBytes:MAX_LOG_BYTES,backups:LOG_BACKUPS},message=>{
+    try{warn(`${message.replace(/^Guard journal unavailable:/,"Guardian logging unavailable:")}. Reviews and dispute enforcement are unchanged. See /guardian for log status.`);}
+    catch{/* UI errors must not affect the review. */}
+  });
   return {
-    path,
-    status: () => lastError ? `unavailable; ${dropped} record(s) not written: ${lastError}` :
-      `${written ? "enabled" : "waiting for first write"}${dropped ? `; ${dropped} earlier record(s) not written` : ""}${pending ? `; ${pending} pending` : ""}`,
-    health: () => ({ pending, dropped, written, lastError: lastError ?? null }),
-    write(entry: Record<string, unknown>) {
-      // No unbounded memory growth if a disk/lock is unavailable.
-      if (pending >= 128) { failure(new Error("Log queue is full")); return; }
-      let line: string;
-      try {
-        line = JSON.stringify(logValue(entry)) + "\n";
-        if (Buffer.byteLength(line) > 32 * 1024) throw new Error("Log record exceeds 32 KiB");
-      } catch (e) { failure(e); return; }
-      pending++;
-      queue = queue.then(async () => {
-        try {
-          const droppedAtWrite = dropped;
-          const outgoing = droppedAtWrite > reportedDropped ? JSON.stringify({ ...JSON.parse(line),
-            loggingRecovery: { recordsNotWritten: droppedAtWrite - reportedDropped, lastError: lastError ?? null } }) + "\n" : line;
-          if (Buffer.byteLength(outgoing) > 32 * 1024) throw new Error("Log record exceeds 32 KiB");
-          await append(outgoing); reportedDropped = droppedAtWrite; written++; lastError = undefined; warned = false;
-        } catch (e) { failure(e); }
-        finally { pending--; }
-      });
+    path:writer.path,
+    status:()=>{const health=writer.health();return health.lastError?`unavailable; ${health.dropped} record(s) not written: ${health.lastError}`:
+      `${health.written?"enabled":"waiting for first write"}${health.dropped?`; ${health.dropped} earlier record(s) not written`:""}${health.pending?`; ${health.pending} pending`:""}`;},
+    health:writer.health,
+    write(entry:Record<string,unknown>){
+      try{const safe=logValue(entry);writer.write(safe&&typeof safe==="object"&&!Array.isArray(safe)?safe as Record<string,unknown>:undefined as never);}
+      catch{writer.write(undefined as never);}
     },
-    flush: async () => { // Include entries enqueued while the preceding batch drains.
-      for (;;) { const batch = queue; await batch; if (batch === queue) return; }
-    },
+    flush:writer.flush,
+    close:writer.close,
   };
 }
 
@@ -472,9 +406,9 @@ function oneLine(text: string, limit: number): string {
   return clean.length > limit ? clean.slice(0, limit - 1) + "…" : clean;
 }
 function reviewFailureSummary(error:string):string{
-  if(/timed? out|timeout|exceeded.*seconds/i.test(error))return "Review timed out; details are in guardian.log.";
-  if(/reviewer response|decision|userMessageIds|instructionRefs|list argument/i.test(error))return "Reviewer response was invalid; details are in guardian.log.";
-  return "Review could not complete; details are in guardian.log.";
+  if(/timed? out|timeout|exceeded.*seconds/i.test(error))return "Review timed out; details are in the Guardian journal.";
+  if(/reviewer response|decision|userMessageIds|instructionRefs|list argument/i.test(error))return "Reviewer response was invalid; details are in the Guardian journal.";
+  return "Review could not complete; details are in the Guardian journal.";
 }
 
 // ============================================================================
@@ -1264,6 +1198,11 @@ export function parseGuardianLogChunks(chunks: readonly { name: string; text: st
       entries.push({ value: safe, details: lvObject(safe.details), file: chunk.name, line: chunk.partialStart ? null : n + 1, order: entries.length });
     }
   }
+  entries.sort((a,b)=>lvTime(a.value.timestamp)-lvTime(b.value.timestamp)||(()=>{
+    const aj=lvObject(a.value.journal),bj=lvObject(b.value.journal),ar=lvString(aj.runId),br=lvString(bj.runId);
+    return ar.localeCompare(br)||(lvNumber(aj.sequence)??0)-(lvNumber(bj.sequence)??0)||a.order-b.order;
+  })());
+  entries.forEach((entry,order)=>{entry.order=order;});
   const messages = [...notices];
   if (malformed) messages.push(`${malformed} malformed/non-event line(s) skipped.`);
   if (oversized) messages.push(`${oversized} oversized record(s) omitted from display.`);
@@ -1323,13 +1262,21 @@ export function groupGuardianLogs(entries: readonly GuardianLogEntry[]): Guardia
   });
   return [...groups.values()].filter(actualReview).sort((a, b) => lvTime(b.timestamp) - lvTime(a.timestamp) || b.events[0].order - a.events[0].order);
 }
-/** Snapshot the three existing log files. No mkdir, lock, write, rotation or flush.
- * Readers hold their own descriptors; replacement/truncation triggers one refresh.
+/** Snapshot legacy files and merge bounded per-run journals. No mkdir, lock, write, rotation or flush.
+ * Readers hold legacy descriptors; both readers detect replacement/truncation.
  * Appends may continue. Every size/record limit is reported, never silently omitted. */
 export async function readGuardianLogs(stateDir: string, signal?: AbortSignal): Promise<GuardianLogSnapshot> {
   const dir = join(resolve(stateDir), "guardian");
   const names = ["guardian.log.2", "guardian.log.1", "guardian.log"];
   const missing = (e: unknown) => (e as NodeJS.ErrnoException)?.code === "ENOENT";
+  const merged=async(chunks:{name:string;text:string;partialStart?:boolean}[],notices:string[])=>{
+    const journal=await readGuardJournal({schemaVersion:1,stateDir,clientId:"guardian",maxRecords:VIEW_RECORDS},signal);
+    const sources=new Map<string,string[]>();
+    for(const record of journal.records){const name=`logs/guardian/${record.source}`,lines=sources.get(name)??[];lines.push(JSON.stringify(record.value));sources.set(name,lines);}
+    for(const [name,lines] of sources)chunks.push({name,text:lines.join("\n")+"\n"});
+    notices.push(...journal.notices.map(notice=>`Journal: ${notice}`));
+    return parseGuardianLogChunks(chunks,notices);
+  };
   for (let attempt = 0; attempt < 2; attempt++) {
     signal?.throwIfAborted();
     const chunks: {name: string; text: string; partialStart?: boolean}[] = [], notices: string[] = [];
@@ -1340,8 +1287,8 @@ export async function readGuardianLogs(stateDir: string, signal?: AbortSignal): 
       const st = await lstat(dir);
       if (!st.isDirectory() || st.isSymbolicLink()) throw new Error("Log path is not a regular directory");
     } catch (e) {
-      if (!missing(e)) notices.push(`Logs unavailable: ${lvSafeText(errorText(e))}`);
-      return parseGuardianLogChunks([], notices);
+      if (!missing(e)) notices.push(`Legacy logs unavailable: ${lvSafeText(errorText(e))}`);
+      return merged([],notices);
     }
     const identities: {path: string; dev: number; ino: number; size: number}[] = [];
     for (const name of names) {
@@ -1375,9 +1322,9 @@ export async function readGuardianLogs(stateDir: string, signal?: AbortSignal): 
     if (changed && attempt === 0) continue;
     if (changed) notices.push("Logs rotated or truncated during refresh; this snapshot may be partial. Press R to refresh.");
     signal?.throwIfAborted();
-    return parseGuardianLogChunks(chunks, notices);
+    return merged(chunks,notices);
   }
-  return parseGuardianLogChunks([], ["Could not read a stable log snapshot. Refresh to retry."]);
+  return merged([], ["Could not read a stable log snapshot. Refresh to retry."]);
 }
 function lvLast(g: GuardianLogReview, ...names: string[]): GuardianLogEntry | undefined {
   return [...g.events].reverse().find(e => names.includes(lvEvent(e)));
@@ -1717,7 +1664,7 @@ export class GuardianLogViewer {
 export async function openGuardianLogViewer(ctx: ExtensionContext, stateDir: string, signal: AbortSignal, initialQuery = "", suppliedToolkit?: GuardianLogToolkit): Promise<void> {
   const mode = (ctx as unknown as {mode?: string}).mode;
   if (!ctx.hasUI || (mode && !["tui", "interactive"].includes(mode))) {
-    ctx.ui.notify(`Guardian log: ${join(stateDir, "guardian", "guardian.log")} (viewer requires Pi's terminal UI).`, "info"); return;
+    ctx.ui.notify(`Guardian journals: ${join(stateDir,"logs","guardian","runs")} (viewer requires Pi's terminal UI).`, "info"); return;
   }
   const custom = (ctx.ui as unknown as {custom?: <T>(factory: (tui: any, theme: any, keys: any, done: (result: T) => void) => any, options?: any) => Promise<T>}).custom;
   if (typeof custom !== "function") { ctx.ui.notify("Guardian log viewer needs Pi's custom terminal UI.", "warning"); return; }
@@ -1970,7 +1917,7 @@ export function createGuardianExtension(factory: ReviewerFactory = createPiRevie
           effects:decision.effects??null,instructionRefs:decision.instructionRefs??[],explanationSource:decision.reason?"reviewer":"extension_fallback",
           userMessageIds:decision.userMessageIds??[],decisionAvailable:true,assessment:true,authorizationGranted:false,pendingInvocationReleased:false});
         return assessment;
-      }catch(e){failure=e;const error=timedOut?"Assessment timed out; details are in guardian.log.":signal.aborted?"Assessment cancelled because the conversation or session changed.":reviewFailureSummary(errorText(e));
+      }catch(e){failure=e;const error=timedOut?"Assessment timed out; details are in the Guardian journal.":signal.aborted?"Assessment cancelled because the conversation or session changed.":reviewFailureSummary(errorText(e));
         emit(signal.aborted?"CANCELLED":"ERROR","dispute_assessment_unavailable","No completed assessment was applied",{disputeId:snapshot.id,error:errorText(e)});
         emit(signal.aborted?"CANCELLED":"ERROR","review_unavailable","No completed reviewer decision for this assessment",{
           error:errorText(e),failureKind:timedOut?"timeout":signal.aborted?"cancelled":"review_failure",stage:trace?.stage()??"assessment",decisionAvailable:false});
@@ -2048,9 +1995,9 @@ export function createGuardianExtension(factory: ReviewerFactory = createPiRevie
       // Bounded drain with a visible timeout; never hold authorization on disk I/O.
       let timer: ReturnType<typeof setTimeout> | undefined;
       try {
-        const drained = await Promise.race([logger.flush().then(() => true),
+        const drained = await Promise.race([logger.close().then(() => true),
           new Promise<false>(resolve => { timer = setTimeout(() => resolve(false), 1500); })]);
-        if (!drained) console.error(`Guardian log shutdown incomplete: ${logger.health().pending} record(s) still pending at ${logger.path}`);
+        if (!drained) console.error(`Guardian journal shutdown incomplete: ${logger.health().pending} record(s) still pending at ${logger.path}`);
       } finally { if (timer) clearTimeout(timer); }
     });
     pi.on("input", (event,ctx) => {

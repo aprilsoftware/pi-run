@@ -1,11 +1,11 @@
 /** Test-only: real Guardian gate, fixed reviewer, synthetic context, NO executor. */
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, writeFile, readFile, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext, ExtensionUIContext, ToolCallEventResult } from "@earendil-works/pi-coding-agent";
 import guardRuntime, { GUARD_RUNTIME_DISCOVER, type GuardRuntimeV1 } from "../docker/extensions/guard-runtime.ts";
-import { createGuardianExtension, parseGuardianConfig, type ReviewDecision } from "../docker/extensions/guardian-agent.ts";
+import { createGuardianExtension, parseGuardianConfig, readGuardianLogs, type ReviewDecision } from "../docker/extensions/guardian-agent.ts";
 
 type Outcome = ReviewDecision["outcome"] | "unavailable";
 type Handler = (event: any, ctx: ExtensionContext) => unknown | Promise<unknown>;
@@ -76,6 +76,7 @@ async function runScenario(name: Scenario, realUI?: ExtensionUIContext, withRunt
     await writeFile(join(profile, "guardian", "guardian.md"), "Synthetic reviewer fixture; never execute actions.\n");
     const config = JSON.stringify({ schemaVersion: 1, mode: "on", model: null, thinking: "low" });
     await writeFile(join(profile, "guardian", "config.json"), config, { mode: 0o600 });
+    await writeFile(join(profile,"guardian","guardian.log"),JSON.stringify({timestamp:"2000-01-01T00:00:00.000Z",event:"legacy_fixture"})+"\n",{mode:0o600});
     const api = {
       events:{on:(channel:string,handler:(data:unknown)=>void)=>{const values=busHandlers.get(channel)??new Set();values.add(handler);busHandlers.set(channel,values);return()=>values.delete(handler);},
         emit:(channel:string,data:unknown)=>{for(const handler of busHandlers.get(channel)??[])handler(data);}},
@@ -257,7 +258,14 @@ async function runScenario(name: Scenario, realUI?: ExtensionUIContext, withRunt
 
     assert.equal(aborts,0,"Guardian must not abort the acting agent when opening a dispute");
     await dispatch("session_shutdown",{type:"session_shutdown"});handlers.delete("session_shutdown");
-    const events=(await readFile(join(profile,"guardian","guardian.log"),"utf8")).trim().split("\n").map(line=>JSON.parse(line));
+    const snapshot=await readGuardianLogs(profile),events=snapshot.entries.map(entry=>entry.value);
+    const runFiles=await readdir(join(profile,"logs","guardian","runs"));
+    assert.equal(runFiles.filter(name=>name.endsWith(".jsonl")).length,1,"Guardian must write one run shard");
+    assert.equal(runFiles.filter(name=>name.endsWith(".complete")).length,1,"Clean shutdown must complete the run journal");
+    assert.ok(snapshot.files.includes("guardian.log"),"Existing Guardian logs must remain visible");
+    assert.ok(snapshot.files.some(name=>name.startsWith("logs/guardian/runs/")),"Run journals must be visible");
+    assert.ok(events.some(e=>e.event==="legacy_fixture"),"Legacy and run journals must merge");
+    assert.ok(!(await readdir(profile,{recursive:true})).some(name=>String(name).includes(".guardian-log.lock")),"Guardian must not use the shared writer lock");
     const disposition=events.find(e=>e.toolCallId==="synthetic-1"&&["invocation_released","invocation_withheld"].includes(e.event));
     assert.equal(disposition?.event,scenario.released?"invocation_released":"invocation_withheld");
     const basis=name==="allow"?"reviewer_decision":name==="user-refused"?"existing_user_refusal":name==="unavailable"?"review_unavailable":"reviewer_dispute";
