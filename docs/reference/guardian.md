@@ -213,9 +213,13 @@ Each Pi process writes its own bounded run journal under
 1 MiB each. Concurrent sessions do not share a writer lock. `/guardian-log`
 merges these runs chronologically and continues to read existing
 `guardian/guardian.log*` files; this compatibility does not move or delete them.
+After a clean run closure, best-effort retention targets 64 MiB and 128 run
+groups by pruning completed runs oldest first. Active, incomplete, unsafe, and
+legacy files are not automatically removed, so the aggregate can temporarily
+exceed those targets.
 Rotation, partial writes, process interruption, display limits, missing tool
-results, and logging failures can create gaps. Logging failure does not alter a
-review decision or dispute state.
+results, and logging failures can create gaps. Logging or retention failure does
+not alter a review decision or dispute state.
 
 Treat logs as private. They can contain commands, paths, selected conversation
 text, evidence excerpts, model details, and errors. Redaction is best effort,

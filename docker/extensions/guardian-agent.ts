@@ -13,7 +13,7 @@ import type { ExtensionAPI, ExtensionContext, ToolCallEvent } from "@earendil-wo
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { Text } from "@earendil-works/pi-tui";
 import { connectGuardClient, type GuardActivityLeaseV1, type GuardActivityRequestV1 } from "./guard-runtime.ts";
-import { createGuardJournalWriter, readGuardJournal } from "./guard-journal.ts";
+import { createGuardJournalWriter, maintainGuardJournalRetention, readGuardJournal } from "./guard-journal.ts";
 import { constants } from "node:fs";
 import { open, realpath, mkdir, lstat, rename, unlink, readdir } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep, basename, extname } from "node:path";
@@ -210,6 +210,8 @@ export async function saveGuardianConfig(stateDir: string, config: GuardianConfi
 
 const MAX_LOG_BYTES = 1024 * 1024;
 const LOG_BACKUPS = 2;
+const GUARDIAN_RETENTION_BYTES = 64 * 1024 * 1024;
+const GUARDIAN_RETENTION_RUNS = 128;
 export type LogLevel = "INFO" | "SESSION_START" | "INVESTIGATE" | "ALLOW" | "ASK" | "BLOCK" | "ERROR" | "HUMAN_APPROVED" | "HUMAN_NOT_APPROVED" | "CANCELLED";
 export type LogSink = (level: LogLevel, event: string, message: string, details?: Record<string, unknown>) => void;
 
@@ -315,11 +317,13 @@ function toolResultDetails(value: unknown, isError: boolean, toolName: string): 
     outputOmitted: !isError || !errorExcerpt || errorSource === "omitted_oversize" };
 }
 
-export function createLogger(stateDir: string, warn: (message: string) => void) {
+export function createLogger(stateDir: string, warn: (message: string) => void,
+  retention:{maxBytes:number;maxRuns:number}={maxBytes:GUARDIAN_RETENTION_BYTES,maxRuns:GUARDIAN_RETENTION_RUNS}) {
   const writer=createGuardJournalWriter({schemaVersion:1,stateDir,clientId:"guardian",maxBytes:MAX_LOG_BYTES,backups:LOG_BACKUPS},message=>{
     try{warn(`${message.replace(/^Guard journal unavailable:/,"Guardian logging unavailable:")}. Reviews and dispute enforcement are unchanged. See /guardian for log status.`);}
     catch{/* UI errors must not affect the review. */}
   });
+  let closePromise:Promise<void>|undefined;
   return {
     path:writer.path,
     status:()=>{const health=writer.health();return health.lastError?`unavailable; ${health.dropped} record(s) not written: ${health.lastError}`:
@@ -330,7 +334,17 @@ export function createLogger(stateDir: string, warn: (message: string) => void) 
       catch{writer.write(undefined as never);}
     },
     flush:writer.flush,
-    close:writer.close,
+    close(){
+      if(closePromise)return closePromise;
+      closePromise=(async()=>{
+        await writer.close();if(writer.health().lastError)return;
+        try{
+          const result=await maintainGuardJournalRetention({schemaVersion:1,stateDir,clientId:"guardian",...retention});
+          if(result.status==="unavailable")try{warn(`Guardian journal retention unavailable: ${result.notices.join(" ")}`);}catch{/* Diagnostics only. */}
+        }catch(error){try{warn(`Guardian journal retention unavailable: ${errorText(error)}`);}catch{/* Diagnostics only. */}}
+      })();
+      return closePromise;
+    },
   };
 }
 
@@ -1997,7 +2011,7 @@ export function createGuardianExtension(factory: ReviewerFactory = createPiRevie
       try {
         const drained = await Promise.race([logger.close().then(() => true),
           new Promise<false>(resolve => { timer = setTimeout(() => resolve(false), 1500); })]);
-        if (!drained) console.error(`Guardian journal shutdown incomplete: ${logger.health().pending} record(s) still pending at ${logger.path}`);
+        if (!drained) console.error(`Guardian journal shutdown incomplete: ${logger.health().pending} record(s) pending or retention still running at ${logger.path}`);
       } finally { if (timer) clearTimeout(timer); }
     });
     pi.on("input", (event,ctx) => {

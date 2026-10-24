@@ -2,10 +2,10 @@
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, writeFile, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import type { ExtensionAPI, ExtensionContext, ExtensionUIContext, ToolCallEventResult } from "@earendil-works/pi-coding-agent";
 import guardRuntime, { GUARD_RUNTIME_DISCOVER, type GuardRuntimeV1 } from "../docker/extensions/guard-runtime.ts";
-import { createGuardianExtension, parseGuardianConfig, readGuardianLogs, type ReviewDecision } from "../docker/extensions/guardian-agent.ts";
+import { createGuardianExtension, createLogger, parseGuardianConfig, readGuardianLogs, type ReviewDecision } from "../docker/extensions/guardian-agent.ts";
 
 type Outcome = ReviewDecision["outcome"] | "unavailable";
 type Handler = (event: any, ctx: ExtensionContext) => unknown | Promise<unknown>;
@@ -284,12 +284,38 @@ async function runScenario(name: Scenario, realUI?: ExtensionUIContext, withRunt
   }
 }
 
+async function testAutomaticRetention():Promise<void>{
+  const root=await mkdtemp(join(tmpdir(),"guardian-retention-")),activeRoot=await mkdtemp(join(tmpdir(),"guardian-retention-active-"));
+  const warnings:string[]=[];
+  try{
+    await mkdir(join(root,"guardian"),{mode:0o700});
+    const legacy=join(root,"guardian","guardian.log");await writeFile(legacy,"legacy remains\n",{mode:0o600});
+    const paths:string[]=[];
+    for(let index=0;index<3;index++){
+      const logger=createLogger(root,message=>warnings.push(message),{maxBytes:1024*1024,maxRuns:1});paths.push(logger.path);
+      logger.write({timestamp:`2026-01-01T00:00:0${index}.000Z`,event:"retention_fixture",index});
+      await Promise.all([logger.close(),logger.close()]);await new Promise(resolve=>setTimeout(resolve,5));
+    }
+    const runDir=join(root,"logs","guardian","runs"),files=await readdir(runDir);
+    assert.deepEqual(files.sort(),[`${basename(paths.at(-1)!)}.complete`,basename(paths.at(-1)!)].sort(),"Only the newest completed run must remain");
+    assert.match(await readFile(paths.at(-1)!,"utf8"),/"index":2/);assert.equal(await readFile(legacy,"utf8"),"legacy remains\n");
+    const active=createLogger(activeRoot,message=>warnings.push(message),{maxBytes:1024*1024,maxRuns:1});
+    active.write({timestamp:"2026-01-01T00:00:00.000Z",event:"active_fixture"});await active.flush();
+    const completed=createLogger(activeRoot,message=>warnings.push(message),{maxBytes:1024*1024,maxRuns:1});
+    completed.write({timestamp:"2026-01-01T00:00:01.000Z",event:"completed_fixture"});await completed.close();
+    assert.match(await readFile(active.path,"utf8"),/active_fixture/);
+    await assert.rejects(readFile(completed.path,"utf8"),(error:any)=>error?.code==="ENOENT");
+    await active.close();assert.deepEqual(warnings,[]);
+  }finally{await rm(root,{recursive:true,force:true});await rm(activeRoot,{recursive:true,force:true});}
+}
+
 export async function runAutomatedTests(): Promise<void> {
   assert.deepEqual(parseGuardianConfig(JSON.stringify({schemaVersion:1,mode:"on",model:null,thinking:"low"})),
     {schemaVersion:2,model:null,thinking:"low"},"Legacy profile mode must migrate out of preferences");
   for(const name of Object.keys(scenarios) as Scenario[]){await runScenario(name);console.log(`PASS guardian-flow: ${name}`);}
   await runScenario("allow",undefined,false);
-  console.log("PASS guardian-flow: runtime client, unavailable presentation, assessment, cancellation, persistence, human arbitration, and fresh review");
+  await testAutomaticRetention();
+  console.log("PASS guardian-flow: runtime client, journal retention, unavailable presentation, assessment, cancellation, persistence, human arbitration, and fresh review");
 }
 
 /** Opt-in Pi extension; registers a command only, never a tool or live Guardian hook. */
