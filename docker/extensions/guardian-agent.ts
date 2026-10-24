@@ -12,7 +12,7 @@
 import type { ExtensionAPI, ExtensionContext, ToolCallEvent } from "@earendil-works/pi-coding-agent";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { Text } from "@earendil-works/pi-tui";
-import { connectGuardClient, type GuardActivityRequestV1 } from "./guard-runtime.ts";
+import { connectGuardClient, type GuardActivityLeaseV1, type GuardActivityRequestV1 } from "./guard-runtime.ts";
 import { constants } from "node:fs";
 import { open, realpath, mkdir, lstat, rename, unlink, rmdir, readdir } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep, basename, extname } from "node:path";
@@ -1861,16 +1861,25 @@ export function createGuardianExtension(factory: ReviewerFactory = createPiRevie
       const name=slash>=0?full.slice(slash+1):full;
       return visible(unavailable?`${name} · unavailable`:[name,thinking].filter(Boolean).join(" · "));
     }
-    function status(ctx: ExtensionContext, state: string, detail = ""): void {
-      displayState=state;displayDetail=detail;
+    function guardStatusValue(ctx:ExtensionContext,state:string,detail=""):GuardActivityRequestV1{
       const names:Record<string,string>={off:"off",on:"on",reviewing:"reviewing","still reviewing":"reviewing",
         dispute:"dispute",unavailable:"unavailable",cancelled:"on",allowed:"on","not executed":"on"};
       const normalized=names[state.trim().toLowerCase()]??state.trim().toLowerCase().replace(/\s+/g,"-");
-      if(!guardConnection.connected())return;
       const right=reviewerSummary(ctx);
-      const value:GuardActivityRequestV1={schemaVersion:1,state:normalized,
-        ...(detail?{detail:`· ${detail}`} : {}),...(right?{right}:{})};
-      try{guardConnection.setBaseline(value);}catch{/* Presentation cannot affect command review. */}
+      return {schemaVersion:1,state:normalized,...(detail?{detail:`· ${detail}`} : {}),...(right?{right}:{})};
+    }
+    function status(ctx: ExtensionContext, state: string, detail = ""): void {
+      displayState=state;displayDetail=detail;
+      if(!guardConnection.connected())return;
+      try{guardConnection.setBaseline(guardStatusValue(ctx,state,detail));}catch{/* Presentation cannot affect command review. */}
+    }
+    async function beginGuardActivity(ctx:ExtensionContext,state:string,detail="",signal?:AbortSignal):Promise<GuardActivityLeaseV1|undefined>{
+      if(!guardConnection.connected())return undefined;
+      try{return await guardConnection.acquireActivity(guardStatusValue(ctx,state,detail),signal);}catch{return undefined;}
+    }
+    function updateGuardActivity(lease:GuardActivityLeaseV1|undefined,ctx:ExtensionContext,state:string,detail=""):boolean{
+      if(!lease?.active())return false;
+      try{lease.update(guardStatusValue(ctx,state,detail));return true;}catch{return false;}
     }
     function refreshStatus(ctx: ExtensionContext): void {status(ctx,displayState,displayDetail);}
     function syncJustificationTool(ctx:ExtensionContext):void{
@@ -1925,13 +1934,16 @@ export function createGuardianExtension(factory: ReviewerFactory = createPiRevie
       const deadline=new AbortController(),signals=[controller.signal,deadline.signal,...(callerSignal?[callerSignal]:[])];
       const signal=AbortSignal.any(signals),stats:Stats={requests:null,durationMs:0,result:"assessment unavailable"},started=Date.now();
       let trace:ReviewTrace|undefined,timer:ReturnType<typeof setTimeout>|undefined,failure:unknown,timedOut=false;
-      active.add(controller);statusOwner++;status(ctx,"Dispute","assessing");
-      emit("INFO","dispute_assessment_started","Guardian is reassessing the blocked action against the agent's structured position",{
-        disputeId:snapshot.id,position:justification.position,originalOutcome:snapshot.originalOutcome??null,
-      });
-      emit("INFO","review_started","Reviewing a structured dispute justification",{reviewScope:"dispute_assessment",
-        action:snapshot.action?actionPreview(snapshot.action.input as Json):{},disputeId:snapshot.id});
+      let guardActivity:GuardActivityLeaseV1|undefined;
+      active.add(controller);statusOwner++;
       try{
+        guardActivity=await beginGuardActivity(ctx,"Dispute","assessing",signal);signal.throwIfAborted();
+        if(!guardActivity)status(ctx,"Dispute","assessing");
+        emit("INFO","dispute_assessment_started","Guardian is reassessing the blocked action against the agent's structured position",{
+          disputeId:snapshot.id,position:justification.position,originalOutcome:snapshot.originalOutcome??null,
+        });
+        emit("INFO","review_started","Reviewing a structured dispute justification",{reviewScope:"dispute_assessment",
+          action:snapshot.action?actionPreview(snapshot.action.input as Json):{},disputeId:snapshot.id});
         const reviewer=binding.select(ctx);
         if(!reviewer||typeof reviewer.review!=="function"||typeof reviewer.id!=="string"||!reviewer.id.trim()||reviewer.id.length>128)throw new Error("Invalid reviewer implementation");
         const budget=validBudget(reviewer.budget),deadlineAt=Date.now()+budget.totalMs;
@@ -1965,7 +1977,7 @@ export function createGuardianExtension(factory: ReviewerFactory = createPiRevie
         return {status:"unavailable",error};
       }finally{
         if(timer)clearTimeout(timer);trace?.close(failure);deadline.abort(failure??new Error("Assessment finished"));controller.abort(failure??new Error("Assessment finished"));active.delete(controller);
-        stats.durationMs=Date.now()-started;
+        guardActivity?.end();guardActivity=undefined;stats.durationMs=Date.now()-started;
         emit("INFO","dispute_assessment_finished","Justification assessment finished without releasing the blocked invocation",{
           disputeId:snapshot.id,result:stats.result,durationMs:stats.durationMs,requests:stats.requests,pendingInvocationReleased:false,
         });
@@ -2138,6 +2150,7 @@ export function createGuardianExtension(factory: ReviewerFactory = createPiRevie
       const name = event.toolName, cwd = ctx.cwd;
       const callerSignal = (ctx as ExtensionContext & { signal?: AbortSignal }).signal;
       const signal = callerSignal ? AbortSignal.any([current.signal, callerSignal]) : current.signal;
+      let guardActivity:GuardActivityLeaseV1|undefined;
       const unchanged = () => !signal.aborted && generation === revision && !ctx.hasPendingMessages() &&
         session === ctx.sessionManager.getSessionId() && cwd === ctx.cwd && event.toolName === name &&
         JSON.stringify(event.input) === args && (!leaf || ctx.sessionManager.getBranch().some(e => e.id === leaf));
@@ -2150,7 +2163,9 @@ export function createGuardianExtension(factory: ReviewerFactory = createPiRevie
       const started = Date.now();
       try {
         if (!unchanged()) return stale();
-        show("Reviewing");
+        guardActivity=await beginGuardActivity(ctx,"Reviewing","",signal);
+        if (!unchanged()) return stale();
+        if(!guardActivity)show("Reviewing");
         emit("INFO", "review_started", "Reviewing proposed command", {
           reviewScope: "command_execution", action: actionPreview(event.input as Record<string, unknown>),
         });
@@ -2177,7 +2192,7 @@ export function createGuardianExtension(factory: ReviewerFactory = createPiRevie
           pulse = setInterval(() => {
             if (reviewSignal.aborted) return;
             const elapsed = Date.now() - started, slow = elapsed >= budget.slowMs;
-            show("Reviewing", `${Math.floor(elapsed / 1000)}s`);
+            if(!updateGuardActivity(guardActivity,ctx,"Reviewing",`${Math.floor(elapsed / 1000)}s`))show("Reviewing",`${Math.floor(elapsed / 1000)}s`);
             if (slow && Date.now() - lastProgress >= 15_000) {
               emit("INFO", "review_progress", "Review still pending; this is elapsed time, not a missing-authorization decision", {
                 elapsedMs: elapsed, stage: runTrace!.stage(), pending: runTrace!.pending(), requests: stats.requests, remainingMs: Math.max(0, deadlineAt - Date.now()),
@@ -2215,7 +2230,7 @@ export function createGuardianExtension(factory: ReviewerFactory = createPiRevie
           // Close all spans explicitly; late provider results cannot turn into approvals.
           runTrace?.close(failureError);
           deadline.abort(failureError ?? new Error("Review finished"));
-          stats.durationMs = Date.now() - started;
+          guardActivity?.end();guardActivity=undefined;stats.durationMs = Date.now() - started;
           if (viewOwner === statusOwner && generation === revision) {
             last = stats;
             show("On");
@@ -2245,7 +2260,7 @@ export function createGuardianExtension(factory: ReviewerFactory = createPiRevie
         const stopped=withheld("review_interrupted",`Not executed: Guardian opened a dispute. ${visible(reason)} Present your position to the user and stop for feedback.`);
         openDispute(ctx,current,reason,"review_interrupted",emit,event);
         return stopped;
-      } finally { active.delete(current); }
+      } finally { guardActivity?.end();active.delete(current); }
     });
 
     // Pi emits this final event for thrown tool errors as well as normal returns.

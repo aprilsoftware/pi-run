@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, writeFile, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext, ExtensionUIContext, ToolCallEventResult } from "@earendil-works/pi-coding-agent";
-import guardRuntime from "../docker/extensions/guard-runtime.ts";
+import guardRuntime, { GUARD_RUNTIME_DISCOVER, type GuardRuntimeV1 } from "../docker/extensions/guard-runtime.ts";
 import { createGuardianExtension, parseGuardianConfig, type ReviewDecision } from "../docker/extensions/guardian-agent.ts";
 
 type Outcome = ReviewDecision["outcome"] | "unavailable";
@@ -30,6 +30,7 @@ async function runScenario(name: Scenario, realUI?: ExtensionUIContext, withRunt
   let activeTools=["bash","read","edit","write","custom-effect"];
   const calls: string[] = [], reviewedIds: string[] = [], notices: string[] = [], statusLines: string[] = [];
   let outcome: Outcome = scenario.outcome, sessionId = "guardian-flow-test", reviews = 0, assessmentReviews=0, aborts = 0;
+  let runtimeService:GuardRuntimeV1|undefined;
   const userEntry = { type: "message", id: "user-1", message: { role: "user", content: "Synthetic test direction; no action may execute." } };
   const entries:any[] = [{ type: "custom", id: "mode-1", customType: "guardian-mode", data: { mode: "on" } }, userEntry];
   let branch:any[] = entries;
@@ -91,12 +92,20 @@ async function runScenario(name: Scenario, realUI?: ExtensionUIContext, withRunt
     const previous = process.env.PI_RUN_PROFILE_DIR;
     try {
       process.env.PI_RUN_PROFILE_DIR = profile;
-      if(withRuntime)guardRuntime(api);
+      if(withRuntime){
+        guardRuntime(api);
+        api.events.emit(GUARD_RUNTIME_DISCOVER,{schemaVersion:1,accept:(service:GuardRuntimeV1)=>{runtimeService=service;}});
+        assert.ok(runtimeService,"Guard Runtime must be discoverable before Guardian loads");
+      }
       createGuardianExtension(() => ({
         select: () => ({
           id: "fixed-test-reviewer",
           async review(request,services) {
             const reassessment=request.dispute!==undefined;
+            if(withRuntime){
+              assert.equal(runtimeService?.activity()?.clientId,"guardian","Guardian review must own the active Guard lease");
+              assert.equal(runtimeService?.activity()?.state,reassessment?"dispute":"reviewing","Guardian activity must identify the active review phase");
+            }
             if(reassessment){
               assessmentReviews++;
               assert.equal(request.action.toolName,"bash","Assessment must retain the original blocked tool");
@@ -130,6 +139,8 @@ async function runScenario(name: Scenario, realUI?: ExtensionUIContext, withRunt
     const first = await invoke();
     assert.equal(first?.block !== true, scenario.released, `${name}: wrong release disposition`);
     assert.equal(reviews, 1, "The real gate must invoke the fixed reviewer");
+    assert.equal(runtimeService?.activity(),undefined,"Guardian must release its command-review activity");
+    if(withRuntime)assert.equal(runtimeService?.status()?.clientId,"guardian","Guardian baseline must resume after command review");
 
     if (name === "allow") {
       branch=[userEntry];await dispatch("session_tree",{type:"session_tree"});
@@ -180,6 +191,7 @@ async function runScenario(name: Scenario, realUI?: ExtensionUIContext, withRunt
           branch.push({type:"message",id:"user-cancel",message:{role:"user",content:"Cancel the pending assessment."}});
           await dispatch("input",{type:"input",source:"interactive",text:"Cancel the pending assessment."});
           const result=await pending;
+          assert.equal(runtimeService?.activity(),undefined,"Cancelled assessment must release its Guard activity");
           assert.equal(result.details.assessment.status,"unavailable","Cancelled assessment must not produce a decision");
           assert.match(result.details.assessment.error,/cancelled/i);
           assert.ok(!entries.some(e=>e.customType==="guardian-dispute"&&e.data?.assessment),"Late assessment must not be persisted after resolution");
@@ -187,6 +199,7 @@ async function runScenario(name: Scenario, realUI?: ExtensionUIContext, withRunt
           assert.equal(reviews,2);cancellationHandled=true;
         }else{
           const result=await justify(params);
+          assert.equal(runtimeService?.activity(),undefined,"Completed assessment must release its Guard activity");
           assert.equal(result.terminate,true,"Structured justification must terminate automatic agent follow-up");
           assert.equal(result.details.executed,false);assert.equal(result.details.humanRequired,true);
           assert.equal(assessmentReviews,1,"Every structured submission must receive one assessment");
