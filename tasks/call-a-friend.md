@@ -148,9 +148,13 @@ profiles/<name>/
 │   └── config.json
 ├── logs/
 │   ├── guardian/
-│   │   └── events.jsonl*
+│   │   ├── runs/
+│   │   │   └── <run-id>.jsonl*
+│   │   └── legacy/
+│   │       └── events.jsonl*
 │   └── caf/
-│       └── events.jsonl*
+│       └── runs/
+│           └── <run-id>.jsonl*
 └── sessions/
 ```
 
@@ -169,14 +173,39 @@ stores bounded diagnostics such as decisions, payload hashes or excerpts,
 destination identity, research operations, usage, duration, and failure. It is
 not a second complete transcript or search-result store.
 
+### Concurrent writers and retention
+
+The current Guardian logger serializes all profile sessions through one
+`guardian/.guardian-log.lock` directory and waits only briefly. Simultaneous
+sessions can therefore lose diagnostic records to lock contention, while a
+crashed writer can leave a stale lock. This affects retained diagnostics, not
+Guardian's review or withholding decision.
+
+The replacement hot path has no profile-wide writer lock. Every Pi process gets
+a random run ID and is the only writer and rotator of its bounded journal
+segments. A resumed session uses a new run ID, so uncertain process overlap
+cannot create two writers for one file. Events retain run, process, and session
+identities. `/guardian-log` and `/caf-log` validate their own regular files and
+merge completed and active segments chronologically, using per-run sequence as
+a deterministic tie-breaker.
+
+Profile-wide retention cleanup uses a separate best-effort maintenance lock.
+Contention can postpone cleanup but must never block or drop journal writes.
+Per-run limits prevent one writer from growing without bound; aggregate usage
+may temporarily exceed its retention target until a later cleanup succeeds.
+Unsafe ownership, links, unexpected file types, and redirected directories fail
+closed. Activity leases and status remain process-local and never coordinate
+unrelated Pi-Run sessions through the profile filesystem.
+
 ## Profile migration
 
-A future approved increment may migrate:
+A future approved increment may migrate the old shared files into a legacy input
+set that the new runtime reads but never appends:
 
 ```text
-guardian/guardian.log   -> logs/guardian/events.jsonl
-guardian/guardian.log.1 -> logs/guardian/events.jsonl.1
-guardian/guardian.log.2 -> logs/guardian/events.jsonl.2
+guardian/guardian.log   -> logs/guardian/legacy/events.jsonl
+guardian/guardian.log.1 -> logs/guardian/legacy/events.jsonl.1
+guardian/guardian.log.2 -> logs/guardian/legacy/events.jsonl.2
 ```
 
 `guardian.md` and `guardian/config.json` remain in place. Migration creates a
