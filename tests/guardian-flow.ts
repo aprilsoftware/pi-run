@@ -76,7 +76,6 @@ async function runScenario(name: Scenario, realUI?: ExtensionUIContext, withRunt
     await writeFile(join(profile, "guardian", "guardian.md"), "Synthetic reviewer fixture; never execute actions.\n");
     const config = JSON.stringify({ schemaVersion: 1, mode: "on", model: null, thinking: "low" });
     await writeFile(join(profile, "guardian", "config.json"), config, { mode: 0o600 });
-    await writeFile(join(profile,"guardian","guardian.log"),JSON.stringify({timestamp:"2000-01-01T00:00:00.000Z",event:"legacy_fixture"})+"\n",{mode:0o600});
     const api = {
       events:{on:(channel:string,handler:(data:unknown)=>void)=>{const values=busHandlers.get(channel)??new Set();values.add(handler);busHandlers.set(channel,values);return()=>values.delete(handler);},
         emit:(channel:string,data:unknown)=>{for(const handler of busHandlers.get(channel)??[])handler(data);}},
@@ -262,9 +261,7 @@ async function runScenario(name: Scenario, realUI?: ExtensionUIContext, withRunt
     const runFiles=await readdir(join(profile,"logs","guardian","runs"));
     assert.equal(runFiles.filter(name=>name.endsWith(".jsonl")).length,1,"Guardian must write one run shard");
     assert.equal(runFiles.filter(name=>name.endsWith(".complete")).length,1,"Clean shutdown must complete the run journal");
-    assert.ok(snapshot.files.includes("guardian.log"),"Existing Guardian logs must remain visible");
     assert.ok(snapshot.files.some(name=>name.startsWith("logs/guardian/runs/")),"Run journals must be visible");
-    assert.ok(events.some(e=>e.event==="legacy_fixture"),"Legacy and run journals must merge");
     assert.ok(!(await readdir(profile,{recursive:true})).some(name=>String(name).includes(".guardian-log.lock")),"Guardian must not use the shared writer lock");
     const disposition=events.find(e=>e.toolCallId==="synthetic-1"&&["invocation_released","invocation_withheld"].includes(e.event));
     assert.equal(disposition?.event,scenario.released?"invocation_released":"invocation_withheld");
@@ -288,8 +285,6 @@ async function testAutomaticRetention():Promise<void>{
   const root=await mkdtemp(join(tmpdir(),"guardian-retention-")),activeRoot=await mkdtemp(join(tmpdir(),"guardian-retention-active-"));
   const warnings:string[]=[];
   try{
-    await mkdir(join(root,"guardian"),{mode:0o700});
-    const legacy=join(root,"guardian","guardian.log");await writeFile(legacy,"legacy remains\n",{mode:0o600});
     const paths:string[]=[];
     for(let index=0;index<3;index++){
       const logger=createLogger(root,message=>warnings.push(message),{maxBytes:1024*1024,maxRuns:1});paths.push(logger.path);
@@ -298,7 +293,7 @@ async function testAutomaticRetention():Promise<void>{
     }
     const runDir=join(root,"logs","guardian","runs"),files=await readdir(runDir);
     assert.deepEqual(files.sort(),[`${basename(paths.at(-1)!)}.complete`,basename(paths.at(-1)!)].sort(),"Only the newest completed run must remain");
-    assert.match(await readFile(paths.at(-1)!,"utf8"),/"index":2/);assert.equal(await readFile(legacy,"utf8"),"legacy remains\n");
+    assert.match(await readFile(paths.at(-1)!,"utf8"),/"index":2/);
     const active=createLogger(activeRoot,message=>warnings.push(message),{maxBytes:1024*1024,maxRuns:1});
     active.write({timestamp:"2026-01-01T00:00:00.000Z",event:"active_fixture"});await active.flush();
     const completed=createLogger(activeRoot,message=>warnings.push(message),{maxBytes:1024*1024,maxRuns:1});

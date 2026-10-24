@@ -29,8 +29,11 @@ tell the user which host command to run for profile, skill, or SSH management.
 ├── credentials/
 ├── guardian/
 │   ├── guardian.md
-│   ├── config.json
-│   └── guardian.log*
+│   └── config.json
+├── logs/
+│   └── guardian/
+│       └── runs/
+│           └── <run-id>.jsonl*
 └── sessions/
 ```
 

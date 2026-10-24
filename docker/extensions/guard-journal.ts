@@ -223,7 +223,6 @@ type ReadCandidate = { path: string; source: string; size: number; mtimeMs: numb
 const RUN_ID_PATTERN="[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
 const RUN_FILE = new RegExp(`^(${RUN_ID_PATTERN})\\.jsonl(?:\\.[1-8])?$`);
 const COMPLETE_FILE = new RegExp(`^(${RUN_ID_PATTERN})\\.jsonl\\.complete$`);
-const LEGACY_FILE = /^events\.jsonl(?:\.[1-8])?$/;
 
 async function readableDirectory(path: string): Promise<boolean> {
   try {
@@ -244,7 +243,7 @@ function readIdentity(value: Record<string, unknown>, source: string, line: numb
   const rawTimestamp = typeof value.timestamp === "string" ? value.timestamp :
     typeof journal.recordedAt === "string" ? journal.recordedAt : null;
   const time = rawTimestamp === null ? 0 : Date.parse(rawTimestamp);
-  const runId = typeof journal.runId === "string" ? journal.runId : `legacy:${source}`;
+  const runId = typeof journal.runId === "string" ? journal.runId : `source:${source}`;
   return { timestamp: Number.isFinite(time) ? rawTimestamp : null, time: Number.isFinite(time) ? time : 0,
     runId, sequence: readNumber(journal.sequence) ?? line };
 }
@@ -268,27 +267,23 @@ export async function readGuardJournal(options: GuardJournalReadOptionsV1, signa
     signal?.throwIfAborted();
     const stateStat = await lstat(stateDir), resolvedState = await realpath(stateDir);
     if (!stateStat.isDirectory() || stateStat.isSymbolicLink() || resolvedState !== stateDir) throw new Error("State directory is redirected");
-    const logs = join(stateDir,"logs"),client = join(logs, options.clientId);
-    if (!await readableDirectory(logs) || !await readableDirectory(client)) return snapshot([], []);
-    for (const [kind, pattern] of [["runs", RUN_FILE], ["legacy", LEGACY_FILE]] as const) {
-      const directory = join(client, kind);
-      if (!await readableDirectory(directory)) continue;
-      for (const entry of await readdir(directory, { withFileTypes: true })) {
-        signal?.throwIfAborted();
-        const source = `${kind}/${entry.name}`, path = join(directory, entry.name);
-        if(kind==="runs"&&COMPLETE_FILE.test(entry.name)){
-          try{if(!entry.isFile()||!await regularFile(path))throw new Error("unsafe completion marker");}
-          catch(error){notices.push(`${source}: ${errorText(error)}; omitted.`);}
-          continue;
-        }
-        if (!pattern.test(entry.name)) { notices.push(`${source}: unexpected entry omitted.`); continue; }
-        try {
-          const stat = await lstat(path);
-          if (!entry.isFile() || !stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 ||
-              !ownedByProcess(stat.uid) || (stat.mode & 0o777) !== 0o600) throw new Error("unsafe file");
-          candidates.push({ path, source, size: stat.size, mtimeMs: stat.mtimeMs, dev: stat.dev, ino: stat.ino });
-        } catch (error) { notices.push(`${source}: ${errorText(error)}; omitted.`); }
+    const logs=join(stateDir,"logs"),client=join(logs,options.clientId),directory=join(client,"runs");
+    if(!await readableDirectory(logs)||!await readableDirectory(client)||!await readableDirectory(directory))return snapshot([],[]);
+    for(const entry of await readdir(directory,{withFileTypes:true})){
+      signal?.throwIfAborted();
+      const source=`runs/${entry.name}`,path=join(directory,entry.name);
+      if(COMPLETE_FILE.test(entry.name)){
+        try{if(!entry.isFile()||!await regularFile(path))throw new Error("unsafe completion marker");}
+        catch(error){notices.push(`${source}: ${errorText(error)}; omitted.`);}
+        continue;
       }
+      if(!RUN_FILE.test(entry.name)){notices.push(`${source}: unexpected entry omitted.`);continue;}
+      try{
+        const stat=await lstat(path);
+        if(!entry.isFile()||!stat.isFile()||stat.isSymbolicLink()||stat.nlink!==1||
+            !ownedByProcess(stat.uid)||(stat.mode&0o777)!==0o600)throw new Error("unsafe file");
+        candidates.push({path,source,size:stat.size,mtimeMs:stat.mtimeMs,dev:stat.dev,ino:stat.ino});
+      }catch(error){notices.push(`${source}: ${errorText(error)}; omitted.`);}
     }
   } catch (error) {
     if (signal?.aborted) throw signal.reason;

@@ -16,7 +16,7 @@ import { connectGuardClient, type GuardActivityLeaseV1, type GuardActivityReques
 import { createGuardJournalWriter, maintainGuardJournalRetention, readGuardJournal } from "./guard-journal.ts";
 import { constants } from "node:fs";
 import { open, realpath, mkdir, lstat, rename, unlink, readdir } from "node:fs/promises";
-import { dirname, isAbsolute, join, relative, resolve, sep, basename, extname } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep, extname } from "node:path";
 import { randomUUID } from "node:crypto";
 
 const PREPARATION_TIMEOUT_MS = 15_000;
@@ -1118,7 +1118,6 @@ const ACTOR_HANDOFF=`Follow the user's authorized task and development checkpoin
 // Read-only log browser. No model, session writes, execution or approval capability.
 // All grouping and presentation below use recorded facts, never new model judgments.
 // ============================================================================
-const VIEW_FILE_BYTES = 2 * 1024 * 1024;
 const VIEW_LINE_BYTES = 96 * 1024;
 const VIEW_RECORDS = 30_000;
 export interface GuardianLogEntry {
@@ -1276,69 +1275,13 @@ export function groupGuardianLogs(entries: readonly GuardianLogEntry[]): Guardia
   });
   return [...groups.values()].filter(actualReview).sort((a, b) => lvTime(b.timestamp) - lvTime(a.timestamp) || b.events[0].order - a.events[0].order);
 }
-/** Snapshot legacy files and merge bounded per-run journals. No mkdir, lock, write, rotation or flush.
- * Readers hold legacy descriptors; both readers detect replacement/truncation.
- * Appends may continue. Every size/record limit is reported, never silently omitted. */
+/** Snapshot bounded per-run Guardian journals without writing or rotating them. */
 export async function readGuardianLogs(stateDir: string, signal?: AbortSignal): Promise<GuardianLogSnapshot> {
-  const dir = join(resolve(stateDir), "guardian");
-  const names = ["guardian.log.2", "guardian.log.1", "guardian.log"];
-  const missing = (e: unknown) => (e as NodeJS.ErrnoException)?.code === "ENOENT";
-  const merged=async(chunks:{name:string;text:string;partialStart?:boolean}[],notices:string[])=>{
-    const journal=await readGuardJournal({schemaVersion:1,stateDir,clientId:"guardian",maxRecords:VIEW_RECORDS},signal);
-    const sources=new Map<string,string[]>();
-    for(const record of journal.records){const name=`logs/guardian/${record.source}`,lines=sources.get(name)??[];lines.push(JSON.stringify(record.value));sources.set(name,lines);}
-    for(const [name,lines] of sources)chunks.push({name,text:lines.join("\n")+"\n"});
-    notices.push(...journal.notices.map(notice=>`Journal: ${notice}`));
-    return parseGuardianLogChunks(chunks,notices);
-  };
-  for (let attempt = 0; attempt < 2; attempt++) {
-    signal?.throwIfAborted();
-    const chunks: {name: string; text: string; partialStart?: boolean}[] = [], notices: string[] = [];
-    let changed = false;
-    try {
-      const resolvedState = await realpath(stateDir);
-      if (await realpath(dir) !== join(resolvedState, "guardian")) throw new Error("Refusing redirected log directory");
-      const st = await lstat(dir);
-      if (!st.isDirectory() || st.isSymbolicLink()) throw new Error("Log path is not a regular directory");
-    } catch (e) {
-      if (!missing(e)) notices.push(`Legacy logs unavailable: ${lvSafeText(errorText(e))}`);
-      return merged([],notices);
-    }
-    const identities: {path: string; dev: number; ino: number; size: number}[] = [];
-    for (const name of names) {
-      signal?.throwIfAborted();
-      const path = join(dir, name);
-      let f: Awaited<ReturnType<typeof open>> | undefined;
-      try {
-        f = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
-        const st = await f.stat();
-        if (!st.isFile() || st.nlink !== 1) throw new Error("Refusing non-regular or multiply linked log file");
-        identities.push({path, dev: st.dev, ino: st.ino, size: st.size});
-        const start = Math.max(0, st.size - VIEW_FILE_BYTES), size = st.size - start;
-        const buffer = Buffer.alloc(size); let pos = 0;
-        while (pos < size) {
-          signal?.throwIfAborted();
-          const r = await f.read(buffer, pos, Math.min(64 * 1024, size - pos), start + pos);
-          if (!r.bytesRead) { changed = true; break; }
-          pos += r.bytesRead;
-        }
-        if (start) notices.push(`${name}: only the newest ${VIEW_FILE_BYTES} bytes read; earlier history omitted.`);
-        chunks.push({name, text: buffer.subarray(0, pos).toString("utf8"), partialStart: start > 0});
-      } catch (e) { if (!missing(e)) notices.push(`${name}: ${lvSafeText(errorText(e))}`); }
-      finally { await f?.close(); }
-    }
-    for (const id of identities) {
-      try {
-        const now = await lstat(id.path);
-        if (now.dev !== id.dev || now.ino !== id.ino || now.size < id.size) changed = true;
-      } catch (e) { if (missing(e)) changed = true; else notices.push(`${basename(id.path)}: cannot verify snapshot`); }
-    }
-    if (changed && attempt === 0) continue;
-    if (changed) notices.push("Logs rotated or truncated during refresh; this snapshot may be partial. Press R to refresh.");
-    signal?.throwIfAborted();
-    return merged(chunks,notices);
-  }
-  return merged([], ["Could not read a stable log snapshot. Refresh to retry."]);
+  const journal=await readGuardJournal({schemaVersion:1,stateDir,clientId:"guardian",maxRecords:VIEW_RECORDS},signal);
+  const sources=new Map<string,string[]>(),chunks:{name:string;text:string}[]=[];
+  for(const record of journal.records){const name=`logs/guardian/${record.source}`,lines=sources.get(name)??[];lines.push(JSON.stringify(record.value));sources.set(name,lines);}
+  for(const [name,lines] of sources)chunks.push({name,text:lines.join("\n")+"\n"});
+  return parseGuardianLogChunks(chunks,journal.notices.map(notice=>`Journal: ${notice}`));
 }
 function lvLast(g: GuardianLogReview, ...names: string[]): GuardianLogEntry | undefined {
   return [...g.events].reverse().find(e => names.includes(lvEvent(e)));

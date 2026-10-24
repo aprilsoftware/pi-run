@@ -148,10 +148,8 @@ profiles/<name>/
 │   └── config.json
 ├── logs/
 │   ├── guardian/
-│   │   ├── runs/
-│   │   │   └── <run-id>.jsonl*
-│   │   └── legacy/
-│   │       └── events.jsonl*
+│   │   └── runs/
+│   │       └── <run-id>.jsonl*
 │   └── caf/
 │       └── runs/
 │           └── <run-id>.jsonl*
@@ -175,13 +173,7 @@ not a second complete transcript or search-result store.
 
 ### Concurrent writers and retention
 
-The current Guardian logger serializes all profile sessions through one
-`guardian/.guardian-log.lock` directory and waits only briefly. Simultaneous
-sessions can therefore lose diagnostic records to lock contention, while a
-crashed writer can leave a stale lock. This affects retained diagnostics, not
-Guardian's review or withholding decision.
-
-The replacement hot path has no profile-wide writer lock. Every Pi process gets
+The journal hot path has no profile-wide writer lock. Every Pi process gets
 a random run ID and is the only writer and rotator of its bounded journal
 segments. A resumed session uses a new run ID, so uncertain process overlap
 cannot create two writers for one file. Events retain run, process, and session
@@ -197,25 +189,8 @@ Unsafe ownership, links, unexpected file types, and redirected directories fail
 closed. Activity leases and status remain process-local and never coordinate
 unrelated Pi-Run sessions through the profile filesystem.
 
-## Profile migration
-
-A future approved increment may migrate the old shared files into a legacy input
-set that the new runtime reads but never appends:
-
-```text
-guardian/guardian.log   -> logs/guardian/legacy/events.jsonl
-guardian/guardian.log.1 -> logs/guardian/legacy/events.jsonl.1
-guardian/guardian.log.2 -> logs/guardian/legacy/events.jsonl.2
-```
-
-`guardian.md` and `guardian/config.json` remain in place. Migration creates a
-conservative default `caf/caf.md` only when absent.
-
-Migration covers every profile, requires affected sessions to stop, locks each
-profile, rejects redirected or unexpected files and destination collisions,
-preserves private modes, and recovers idempotently after interruption. It never
-merges independently populated journals. A directory-layout migration alone
-does not change schema 1 in `profile.json`.
+Old shared Guardian logs are non-vital diagnostics and are intentionally not
+read or migrated. The per-run layout does not change schema 1 in `profile.json`.
 
 ## CAF conversation protocol
 
@@ -310,7 +285,7 @@ Each stage requires a separate approved increment:
 1. Define the versioned Guard Runtime/client contract and tests.
 2. Extract common mechanics while preserving Guardian behavior.
 3. Register Guardian command review as an ordinary client and prove parity.
-4. Migrate definitions and namespaced logs with upgrade coverage.
+4. Use namespaced per-run logs without legacy-log migration.
 5. Add isolated CAF configuration and conversation without network calls.
 6. Add reviewed friend dialogue and `caf_ask_primary`.
 7. Add reviewed public-web research functions and bounded citations.

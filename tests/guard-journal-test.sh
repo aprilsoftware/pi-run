@@ -10,7 +10,7 @@ trap 'rm -rf "${TMP}"' EXIT
 
 node --input-type=module - "${ROOT}" "${PI_PACKAGE_DIR}" "${TMP}" <<'NODE'
 import assert from 'node:assert/strict';
-import { chmod, link, mkdir, readFile, readdir, rmdir, stat, symlink, unlink, writeFile } from 'node:fs/promises';
+import { appendFile, chmod, link, mkdir, readFile, readdir, rmdir, stat, symlink, unlink, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { basename, dirname, join } from 'node:path';
 const [root, piDir, tmp] = process.argv.slice(2);
@@ -96,15 +96,12 @@ for (let index = 0; index < retained.length; index++) {
   retained[index].write({ event: 'retention', index, payload: 'r'.repeat(300) }); await retained[index].flush();
   if (index < 3) { await retained[index].close(); await new Promise(resolve => setTimeout(resolve, 5)); }
 }
-const retentionLegacy = join(retentionState, 'logs', 'guardian', 'legacy'); await mkdir(retentionLegacy, { mode: 0o700 });
-const retainedLegacyFile = join(retentionLegacy, 'events.jsonl'); await writeFile(retainedLegacyFile, '{}\n', { mode: 0o600 });
 const sizes = await Promise.all(retained.map(writer => stat(writer.path).then(value => value.size)));
 const byteRetention = await module.maintainGuardJournalRetention({ schemaVersion: 1, stateDir: retentionState,
   clientId: 'guardian', maxBytes: sizes.reduce((sum, size) => sum + size, 0) - sizes[0], maxRuns: 10 });
 assert.equal(byteRetention.status, 'completed'); assert.equal(byteRetention.removedRuns, 1); assert.equal(byteRetention.targetMet, true);
 assert.equal(await exists(retained[0].path), false); assert.equal(await exists(`${retained[0].path}.complete`), false);
 assert.equal(await exists(retained[3].path), true); assert.equal(await exists(`${retained[3].path}.complete`), false);
-assert.equal(await readFile(retainedLegacyFile, 'utf8'), '{}\n');
 const runRetention = await module.maintainGuardJournalRetention({ schemaVersion: 1, stateDir: retentionState,
   clientId: 'guardian', maxBytes: 1024 * 1024, maxRuns: 2 });
 assert.equal(runRetention.removedRuns, 1); assert.equal(runRetention.runsAfter, 2); assert.equal(await exists(retained[1].path), false);
@@ -135,17 +132,16 @@ assert.equal(await exists(unsafeRetention.path), true);
 const readState = join(tmp, 'read-profile'); await mkdir(readState, { mode: 0o700 });
 const first = create({ schemaVersion: 1, stateDir: readState, clientId: 'guardian' });
 const second = create({ schemaVersion: 1, stateDir: readState, clientId: 'guardian' });
+const newest = create({ schemaVersion: 1, stateDir: readState, clientId: 'guardian' });
 first.write({ event: 'first-late', timestamp: '2026-01-01T00:00:03.000Z' });
 first.write({ event: 'first-early', timestamp: '2026-01-01T00:00:01.000Z' });
 first.write({ event: 'first-tie', timestamp: '2026-01-01T00:00:02.000Z' });
 second.write({ event: 'second-tie-2', timestamp: '2026-01-01T00:00:02.000Z' });
 second.write({ event: 'second-tie-1', timestamp: '2026-01-01T00:00:02.000Z' });
-await Promise.all([first.flush(), second.flush()]);
-const legacy = join(readState, 'logs', 'guardian', 'legacy'); await mkdir(legacy, { mode: 0o700 });
-await writeFile(join(legacy, 'events.jsonl.1'), JSON.stringify({ event: 'legacy-old', timestamp: '2026-01-01T00:00:00.000Z' }) + '\n', { mode: 0o600 });
-await writeFile(join(legacy, 'events.jsonl'), JSON.stringify({ event: 'legacy-new', timestamp: '2026-01-01T00:00:04.000Z' }) +
-  '\nnot-json\n{"event":"unfinished"', { mode: 0o600 });
-await writeFile(join(legacy, 'unexpected.txt'), 'ignored\n', { mode: 0o600 });
+newest.write({ event: 'newest', timestamp: '2026-01-01T00:00:04.000Z' });
+await Promise.all([first.flush(), second.flush(), newest.flush()]);
+await appendFile(newest.path, 'not-json\n{"event":"unfinished"');
+await writeFile(join(readState, 'logs', 'guardian', 'runs', 'unexpected.txt'), 'ignored\n', { mode: 0o600 });
 const outsideFile = join(tmp, 'outside-journal'); await writeFile(outsideFile, '{}\n', { mode: 0o600 });
 await symlink(outsideFile, join(readState, 'logs', 'guardian', 'runs', '11111111-1111-4111-8111-111111111111.jsonl'));
 const rotatedSnapshot = await module.readGuardJournal({ schemaVersion: 1, stateDir: state, clientId: 'rotation' });
@@ -157,15 +153,15 @@ const snapshot = await module.readGuardJournal({ schemaVersion: 1, stateDir: rea
 const expectedTies = [[first.runId, 3, 'first-tie'], [second.runId, 1, 'second-tie-2'], [second.runId, 2, 'second-tie-1']]
   .sort((a, b) => a[0].localeCompare(b[0]) || a[1] - b[1]);
 assert.deepEqual(snapshot.records.map(record => record.value.event),
-  ['legacy-old', 'first-early', ...expectedTies.map(row => row[2]), 'first-late', 'legacy-new']);
-assert.equal(snapshot.malformed, 1); assert.equal(snapshot.unstable, 0); assert.equal(snapshot.files.length, 4);
+  ['first-early', ...expectedTies.map(row => row[2]), 'first-late', 'newest']);
+assert.equal(snapshot.malformed, 1); assert.equal(snapshot.unstable, 0); assert.equal(snapshot.files.length, 3);
 assert.ok(snapshot.notices.some(notice => notice.includes('incomplete trailing record')));
 assert.ok(snapshot.notices.some(notice => notice.includes('unexpected entry omitted')));
 assert.ok(snapshot.notices.some(notice => notice.includes('unsafe file')));
 const tied = snapshot.records.filter(record => record.timestamp === '2026-01-01T00:00:02.000Z');
 assert.deepEqual(tied.map(record => [record.runId, record.sequence]), expectedTies.map(row => row.slice(0, 2)));
 const bounded = await module.readGuardJournal({ schemaVersion: 1, stateDir: readState, clientId: 'guardian', maxRecords: 2 });
-assert.deepEqual(bounded.records.map(record => record.value.event), ['first-late', 'legacy-new']);
+assert.deepEqual(bounded.records.map(record => record.value.event), ['first-late', 'newest']);
 assert.ok(bounded.notices.some(notice => notice.includes('record limit')));
 const oneFile = await module.readGuardJournal({ schemaVersion: 1, stateDir: readState, clientId: 'guardian', maxFiles: 1 });
 assert.equal(oneFile.files.length, 1); assert.ok(oneFile.notices.some(notice => notice.includes('file limit')));
