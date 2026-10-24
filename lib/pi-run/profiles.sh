@@ -113,12 +113,20 @@ validate_profile_config() {
 
 validate_profile_definition_files() {
     local profile_dir="$1"
-    local file path guardian_dir="${profile_dir}/guardian"
+    local file path guardian_dir="${profile_dir}/guardian" caf_dir="${profile_dir}/caf"
+    local -a definition_files=(profile.json AGENTS.md guardian/guardian.md)
     [[ -d "${guardian_dir}" && ! -L "${guardian_dir}" ]] \
         || fail "Guardian definition directory must be a non-symlink directory: ${guardian_dir}"
     [[ "$(realpath "${guardian_dir}")" == "${guardian_dir}" ]] \
         || fail "Guardian definition directory escapes its profile: ${guardian_dir}"
-    for file in profile.json AGENTS.md guardian/guardian.md; do
+    if [[ -e "${caf_dir}" || -L "${caf_dir}" ]]; then
+        [[ -d "${caf_dir}" && ! -L "${caf_dir}" ]] \
+            || fail "CAF definition directory must be a non-symlink directory: ${caf_dir}"
+        [[ "$(realpath "${caf_dir}")" == "${caf_dir}" ]] \
+            || fail "CAF definition directory escapes its profile: ${caf_dir}"
+        definition_files+=(caf/caf.md)
+    fi
+    for file in "${definition_files[@]}"; do
         path="${profile_dir}/${file}"
         [[ -f "${path}" && ! -L "${path}" ]] \
             || fail "profile definition must be a regular non-symlink file: ${path}"
@@ -151,6 +159,10 @@ materialize_profile_definition() {
     install -m 0600 "${source_dir}/AGENTS.md" "${staging}/AGENTS.md"
     mkdir -m 0700 "${staging}/credentials" "${staging}/sessions" "${staging}/guardian" "${staging}/skills"
     install -m 0600 "${source_dir}/guardian/guardian.md" "${staging}/guardian/guardian.md"
+    if [[ -d "${source_dir}/caf" ]]; then
+        mkdir -m 0700 "${staging}/caf"
+        install -m 0600 "${source_dir}/caf/caf.md" "${staging}/caf/caf.md"
+    fi
     cp -a "${source_dir}/skills/." "${staging}/skills/"
     chmod -R u+rwX,go-w "${staging}/skills"
     mv "${staging}" "${target}"

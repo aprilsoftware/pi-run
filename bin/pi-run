@@ -302,7 +302,8 @@ initialize_home() {
         mkdir "${staging}"
         install -m 0600 "${default_template}/profile.json" "${staging}/profile.json"
         install -m 0600 "${default_template}/AGENTS.md" "${staging}/AGENTS.md"
-        mkdir -m 0700 "${staging}/credentials" "${staging}/sessions" "${staging}/guardian" "${staging}/skills"
+        mkdir -m 0700 "${staging}/caf" "${staging}/credentials" "${staging}/sessions" "${staging}/guardian" "${staging}/skills"
+        install -m 0600 "${default_template}/caf/caf.md" "${staging}/caf/caf.md"
         install -m 0600 "${default_template}/guardian/guardian.md" "${staging}/guardian/guardian.md"
         mv "${staging}" "${default_profile}"
         trap - RETURN

@@ -110,6 +110,8 @@ profiles/<name>/
 ├── gitconfig
 ├── skills/
 ├── credentials/
+├── caf/
+│   └── caf.md
 ├── guardian/
 │   ├── guardian.md
 │   └── config.json
@@ -122,7 +124,13 @@ profiles/<name>/
 
 `profile.json`, `AGENTS.md`, and `guardian/guardian.md` must be regular,
 non-symlink, singly linked files contained by the profile. The Guardian and skill
-directories must also be ordinary contained directories.
+directories must also be ordinary contained directories. When `caf/` is
+present, it and `caf/caf.md` receive the same containment and link checks.
+
+Fresh default profiles include `caf/caf.md`, and profile creation copies it when
+the source has one. Profiles without a CAF policy remain valid and are not
+modified automatically. The file defines profile-specific external-disclosure
+priorities; it does not enable CAF or grant external access.
 
 Pi uses the selected profile as its configuration directory. Provider login,
 model configuration, settings, Git configuration, credentials, Guardian state,
