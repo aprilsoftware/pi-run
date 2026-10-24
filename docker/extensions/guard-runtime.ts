@@ -269,7 +269,7 @@ export default function guardRuntime(pi: ExtensionAPI) {
     try { statusContext?.ui.setWidget("guard-runtime", undefined, { placement: "belowEditor" }); } catch { /* UI only. */ }
     statusContext = undefined; statusActivity = undefined;
   };
-  pi.on("session_start", (_event, ctx) => {
+  const installStatus = (ctx: ExtensionContext) => {
     clearStatus();
     if (ctx.mode !== "tui") return;
     try {
@@ -280,7 +280,9 @@ export default function guardRuntime(pi: ExtensionAPI) {
       }, { placement: "belowEditor" });
       stopStatus = service.subscribeStatus(activity => { statusActivity = activity; statusRedraw?.(); });
     } catch { clearStatus(); }
-  });
+  };
+  pi.on("session_start", (_event, ctx) => installStatus(ctx));
+  pi.on("session_tree", (_event, ctx) => installStatus(ctx));
   pi.on("session_shutdown", () => {
     closed = true;
     rejectWaiting(() => true, new Error("Guard Runtime stopped"));

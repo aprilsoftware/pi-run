@@ -11,7 +11,7 @@
  */
 import type { ExtensionAPI, ExtensionContext, ToolCallEvent } from "@earendil-works/pi-coding-agent";
 import type { Api, Model } from "@earendil-works/pi-ai";
-import { Text, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { Text } from "@earendil-works/pi-tui";
 import { connectGuardClient, type GuardActivityRequestV1 } from "./guard-runtime.ts";
 import { constants } from "node:fs";
 import { open, realpath, mkdir, lstat, rename, unlink, rmdir, readdir } from "node:fs/promises";
@@ -464,38 +464,6 @@ function validBudget(raw?: { totalMs: number; slowMs: number }): { totalMs: numb
     throw new Error("Invalid reviewer time budget (maximum 600 seconds)");
   }
   return b;
-}
-
-// Quiet, neutral status row. Operational detail and completed durations belong in the log.
-type GuardianIndicator = { state: string; detail: string; right: string; redraw?: () => void };
-const guardianIndicators = new WeakMap<ExtensionContext,GuardianIndicator>();
-export function renderGuardianStatusLine(state: string, detail: string, right: string, width: number): string {
-  const names:Record<string,string>={off:"off",on:"on",reviewing:"reviewing","still reviewing":"reviewing",
-    dispute:"dispute",unavailable:"unavailable",cancelled:"on",allowed:"on","not executed":"on"};
-  const name=names[state.trim().toLowerCase()]??state.trim().toLowerCase();
-  const active=(name==="reviewing"||name==="dispute")&&detail?` · ${detail}`:"";
-  const left=`guard · ${name}${active}`,safeWidth=Math.max(1,width);
-  if(visibleWidth(left)>=safeWidth)return truncateToWidth(left,safeWidth,"…");
-  const available=safeWidth-visibleWidth(left)-2;
-  if(!right||available<12)return left;
-  const shown=truncateToWidth(right,available,"…"),padding=Math.max(2,safeWidth-visibleWidth(left)-visibleWidth(shown));
-  return left+" ".repeat(padding)+shown;
-}
-export function guardianStatus(ctx: ExtensionContext, state: string, detail = "", right = ""): void {
-  try {
-    let indicator=guardianIndicators.get(ctx);
-    if(!indicator){
-      indicator={state,detail,right};guardianIndicators.set(ctx,indicator);ctx.ui.setStatus("guardian",undefined);
-      ctx.ui.setWidget("guardian",(tui,theme)=>{
-        indicator!.redraw=()=>tui.requestRender();
-        return {render:(width:number)=>[theme.fg("muted",renderGuardianStatusLine(indicator!.state,indicator!.detail,indicator!.right,width))],invalidate(){}};
-      },{placement:"belowEditor"});
-    }else{indicator.state=state;indicator.detail=detail;indicator.right=right;}
-    indicator.redraw?.();
-  } catch { /* Presentation never changes authorization. */ }
-}
-export function clearGuardianStatus(ctx: ExtensionContext): void {
-  guardianIndicators.delete(ctx);try{ctx.ui.setStatus("guardian",undefined);ctx.ui.setWidget("guardian",undefined,{placement:"belowEditor"});}catch{}
 }
 
 // Keep prompts short without concealing a destructive suffix or other arguments.
@@ -1898,14 +1866,11 @@ export function createGuardianExtension(factory: ReviewerFactory = createPiRevie
       const names:Record<string,string>={off:"off",on:"on",reviewing:"reviewing","still reviewing":"reviewing",
         dispute:"dispute",unavailable:"unavailable",cancelled:"on",allowed:"on","not executed":"on"};
       const normalized=names[state.trim().toLowerCase()]??state.trim().toLowerCase().replace(/\s+/g,"-");
+      if(!guardConnection.connected())return;
       const right=reviewerSummary(ctx);
-      if(guardConnection.connected()){
-        const value:GuardActivityRequestV1={schemaVersion:1,state:normalized,
-          ...(detail?{detail:`· ${detail}`} : {}),...(right?{right}:{})};
-        try{guardConnection.setBaseline(value);}catch{/* Presentation cannot affect command review. */}
-        return;
-      }
-      guardianStatus(ctx,state,detail,right); // Temporary standalone fallback during migration.
+      const value:GuardActivityRequestV1={schemaVersion:1,state:normalized,
+        ...(detail?{detail:`· ${detail}`} : {}),...(right?{right}:{})};
+      try{guardConnection.setBaseline(value);}catch{/* Presentation cannot affect command review. */}
     }
     function refreshStatus(ctx: ExtensionContext): void {status(ctx,displayState,displayDetail);}
     function syncJustificationTool(ctx:ExtensionContext):void{
@@ -2074,7 +2039,7 @@ export function createGuardianExtension(factory: ReviewerFactory = createPiRevie
         const drained = await Promise.race([logger.flush().then(() => true),
           new Promise<false>(resolve => { timer = setTimeout(() => resolve(false), 1500); })]);
         if (!drained) console.error(`Guardian log shutdown incomplete: ${logger.health().pending} record(s) still pending at ${logger.path}`);
-      } finally { if (timer) clearTimeout(timer);clearGuardianStatus(ctx); }
+      } finally { if (timer) clearTimeout(timer); }
     });
     pi.on("input", (event,ctx) => {
       // Real user feedback reopens normal review, but is not authority by mere presence.

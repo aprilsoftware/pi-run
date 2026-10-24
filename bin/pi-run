@@ -1025,6 +1025,7 @@ PI_ARGS=(
     --extension /usr/local/lib/node_modules/pi-web-access/index.ts
     --extension /usr/local/lib/node_modules/pi-okf/extensions/okf.ts
     --extension /usr/local/lib/node_modules/plan-agent/plan-agent.ts
+    --extension /usr/local/lib/node_modules/guardian-agent/guard-runtime.ts
     --extension /usr/local/lib/node_modules/guardian-agent/guardian-agent.ts
     --extension /usr/local/lib/node_modules/snapshot-agent/snapshot-agent.ts
     --no-prompt-templates

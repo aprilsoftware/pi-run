@@ -123,8 +123,8 @@ async function runScenario(name: Scenario, realUI?: ExtensionUIContext, withRunt
       else process.env.PI_RUN_PROFILE_DIR = previous;
     }
     await dispatch("session_start", { type: "session_start" });
-    assert.deepEqual([...widgets.keys()],name==="no-ui"?[]:[withRuntime?"guard-runtime":"guardian"],
-      "Guardian must use the runtime's single widget or its temporary standalone fallback");
+    assert.deepEqual([...widgets.keys()],name!=="no-ui"&&withRuntime?["guard-runtime"]:[],
+      "Guardian status must use only the shared runtime widget");
     assert.ok(tools.has("guardian_justify"),"Guardian must register its structured justification tool");
     assert.ok(!activeTools.includes("guardian_justify"),"Justification must be hidden outside a dispute");
     const first = await invoke();
@@ -268,7 +268,7 @@ export async function runAutomatedTests(): Promise<void> {
     {schemaVersion:2,model:null,thinking:"low"},"Legacy profile mode must migrate out of preferences");
   for(const name of Object.keys(scenarios) as Scenario[]){await runScenario(name);console.log(`PASS guardian-flow: ${name}`);}
   await runScenario("allow",undefined,false);
-  console.log("PASS guardian-flow: runtime client, standalone status fallback, assessment, cancellation, persistence, human arbitration, and fresh review");
+  console.log("PASS guardian-flow: runtime client, unavailable presentation, assessment, cancellation, persistence, human arbitration, and fresh review");
 }
 
 /** Opt-in Pi extension; registers a command only, never a tool or live Guardian hook. */
