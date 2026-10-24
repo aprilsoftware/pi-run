@@ -139,6 +139,11 @@ model. Preferences are created lazily in private `caf/config.json`; a missing
 model remains explicitly unconfigured. Friend conversations and external calls
 are not enabled by this configuration surface.
 
+CAF conversation state is branch-local session metadata excluded from the
+primary model context. `/caf status` reconstructs only finalized CAF rounds on
+the selected branch and reports malformed state as unavailable. The current
+configuration-only implementation does not create conversation rounds.
+
 Pi uses the selected profile as its configuration directory. Provider login,
 model configuration, settings, Git configuration, credentials, Guardian state,
 and sessions therefore coexist with shareable definitions. A complete profile

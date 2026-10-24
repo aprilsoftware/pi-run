@@ -21,6 +21,18 @@ assert.deepEqual(caf.defaultCafConfig(),{schemaVersion:1,model:null,thinking:nul
 assert.deepEqual(caf.parseCafConfig(JSON.stringify(valid)),valid);
 for(const value of [null,{},[valid],{...valid,schemaVersion:2},{...valid,model:'invalid'},{...valid,thinking:'extreme'},{...valid,extra:true}])
   assert.throws(()=>caf.parseCafConfig(JSON.stringify(value)),/CAF configuration|JSON/);
+const consultationId='11111111-1111-4111-8111-111111111111';
+const questions={schemaVersion:1,consultationId,round:1,request:{message:'Please assess the public design.',purpose:'Independent design review'},
+  friend:{model:'friend/frontier',thinking:'high'},response:{kind:'questions',questions:[{question:'Which constraint matters most?',whyNeeded:'It changes the recommendation.',canProceedWithoutAnswer:true}],provisionalAnswer:'Prefer the narrower design.'}};
+const answer={schemaVersion:1,consultationId,round:2,request:{message:'Minimize disclosure.',purpose:'Answer the follow-up'},
+  friend:{model:'friend/frontier',thinking:'high'},response:{kind:'answer',text:'Use the narrow interface.'}};
+assert.deepEqual(caf.parseCafRound(answer),answer);
+assert.deepEqual(caf.restoreCafConversation([{type:'message'},{type:'custom',customType:caf.CAF_ROUND_ENTRY,data:questions},{type:'custom',customType:caf.CAF_ROUND_ENTRY,data:answer}]),[questions,answer]);
+for(const value of [{...answer,extra:true},{...answer,round:4},{...answer,request:{...answer.request,message:'é'.repeat(9000)}},
+  {...questions,response:{...questions.response,questions:[...questions.response.questions,...questions.response.questions,...questions.response.questions,...questions.response.questions]}}])
+  assert.throws(()=>caf.parseCafRound(value),/CAF/);
+assert.throws(()=>caf.restoreCafConversation([{type:'custom',customType:caf.CAF_ROUND_ENTRY,data:answer}]),/consultation sequence/);
+assert.throws(()=>caf.restoreCafConversation([{type:'custom',customType:caf.CAF_ROUND_ENTRY,data:{...questions,extra:true}}]),/CAF round/);
 const profile=join(tmp,'profile');await mkdir(profile,{mode:0o700});
 assert.deepEqual(await caf.loadCafConfig(profile),caf.defaultCafConfig());
 await caf.saveCafConfig(profile,valid);
@@ -42,21 +54,26 @@ const handlers=new Map(),commands=new Map(),notifications=[];
 const pi={events:bus,on(name,handler){const rows=handlers.get(name)??[];rows.push(handler);handlers.set(name,rows);return()=>handlers.set(name,(handlers.get(name)??[]).filter(row=>row!==handler));},registerCommand(name,command){commands.set(name,command);}};
 runtime.default(pi);caf.default(pi);assert.ok(commands.has('caf'));
 const available=[{provider:'friend',id:'frontier'},{provider:'local',id:'small'}],selections=[];
+let branch=[{type:'custom',customType:caf.CAF_ROUND_ENTRY,data:questions}];
 const ctx={mode:'json',hasUI:false,modelRegistry:{getAvailable:()=>available,find:(provider,id)=>available.find(model=>model.provider===provider&&model.id===id)},
-  ui:{notify:(text,level)=>notifications.push({text,level}),select:async()=>selections.shift()},sessionManager:{getSessionId:()=> 'session'}};
-for(const handler of handlers.get('session_start')??[])await handler({type:'session_start',reason:'startup'},ctx);
-await commands.get('caf').handler('status',ctx);assert.match(notifications.at(-1).text,/Guard Runtime: available/);assert.match(notifications.at(-1).text,/Friend calls: not enabled/);
+  ui:{notify:(text,level)=>notifications.push({text,level}),select:async()=>selections.shift()},sessionManager:{getSessionId:()=> 'session',getBranch:()=>branch}};
+const dispatch=async(name,event)=>{for(const handler of handlers.get(name)??[])await handler(event,ctx);};
+await dispatch('session_start',{type:'session_start',reason:'resume'});
+await commands.get('caf').handler('status',ctx);assert.match(notifications.at(-1).text,/Guard Runtime: available/);assert.match(notifications.at(-1).text,/Conversation: 1 completed round/);assert.match(notifications.at(-1).text,/Friend calls: not enabled/);
+branch=[];await dispatch('session_tree',{type:'session_tree'});await commands.get('caf').handler('status',ctx);assert.match(notifications.at(-1).text,/Conversation: none on this branch/);
+branch=[{type:'custom',customType:caf.CAF_ROUND_ENTRY,data:{...questions,extra:true}}];await dispatch('session_tree',{type:'session_tree'});await commands.get('caf').handler('status',ctx);assert.match(notifications.at(-1).text,/Conversation: unavailable/);
+branch=[];await dispatch('session_tree',{type:'session_tree'});
 await assert.rejects(lstat(join(commandProfile,'caf')),error=>error.code==='ENOENT');
 await commands.get('caf').handler('model friend/frontier',ctx);await commands.get('caf').handler('thinking high',ctx);
 assert.deepEqual(await caf.loadCafConfig(commandProfile),valid);
 await commands.get('caf').handler('model missing/model',ctx);assert.match(notifications.at(-1).text,/unavailable/);assert.deepEqual(await caf.loadCafConfig(commandProfile),valid);
 ctx.hasUI=true;selections.push('Thinking','default');await commands.get('caf').handler('',ctx);
 assert.deepEqual(await caf.loadCafConfig(commandProfile),{...valid,thinking:null});
-for(const handler of handlers.get('session_shutdown')??[])await handler({type:'session_shutdown',reason:'exit'},ctx);
+await dispatch('session_shutdown',{type:'session_shutdown',reason:'exit'});
 
 const dockerfile=await readFile(join(root,'docker/Dockerfile'),'utf8'),launcher=await readFile(join(root,'bin/pi-run'),'utf8');
 const guardian='/usr/local/lib/node_modules/guardian-agent/guardian-agent.ts',cafPath='/usr/local/lib/node_modules/guardian-agent/caf-agent.ts';
 assert.ok(dockerfile.includes('COPY extensions/caf-agent.ts /usr/local/lib/node_modules/guardian-agent/'));
 assert.ok(launcher.includes(`--extension ${cafPath}`));assert.ok(launcher.indexOf(guardian)<launcher.indexOf(cafPath));
-console.log('CAF configuration, Guard Runtime registration, command, path safety, and packaging tests passed');
+console.log('CAF configuration, branch-local conversation state, Guard Runtime registration, path safety, and packaging tests passed');
 NODE

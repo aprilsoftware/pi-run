@@ -10,6 +10,52 @@ const THINKING = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as 
 const CONFIG_BYTES = 16 * 1024;
 export type CafThinking = typeof THINKING[number];
 export interface CafConfig { schemaVersion: 1; model: string | null; thinking: CafThinking | null; }
+export const CAF_ROUND_ENTRY="pi-run-caf-round";
+export type CafRound={schemaVersion:1;consultationId:string;round:number;
+  request:{message:string;purpose:string};friend:{model:string;thinking:CafThinking};response:
+  {kind:"answer";text:string}|{kind:"questions";questions:{question:string;whyNeeded:string;canProceedWithoutAnswer:boolean}[];provisionalAnswer:string|null}};
+type BranchEntry={type:string;customType?:string;data?:unknown};
+
+function object(value:unknown,label:string):Record<string,unknown>{if(!value||typeof value!=="object"||Array.isArray(value))throw new Error(`Invalid ${label}`);return value as Record<string,unknown>;}
+function exact(value:Record<string,unknown>,keys:string[],label:string):void{if(Object.keys(value).sort().join(",")!==[...keys].sort().join(","))throw new Error(`Invalid ${label}`);}
+function text(value:unknown,bytes:number,label:string):string{if(typeof value!=="string"||!value.trim()||value.includes("\0")||Buffer.byteLength(value,"utf8")>bytes)throw new Error(`Invalid ${label}`);return value;}
+function freeze<T>(value:T):T{if(value&&typeof value==="object"&&!Object.isFrozen(value)){Object.freeze(value);for(const child of Object.values(value))freeze(child);}return value;}
+export function parseCafRound(input:unknown):CafRound{
+  const value=object(input,"CAF round");exact(value,["schemaVersion","consultationId","round","request","friend","response"],"CAF round");
+  if(value.schemaVersion!==1||typeof value.consultationId!=="string"||!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value.consultationId)||
+      typeof value.round!=="number"||!Number.isSafeInteger(value.round)||value.round<1||value.round>3)throw new Error("Invalid CAF round identity");
+  const request=object(value.request,"CAF request");exact(request,["message","purpose"],"CAF request");
+  const friend=object(value.friend,"CAF friend");exact(friend,["model","thinking"],"CAF friend");
+  const model=text(friend.model,512,"CAF friend model");if(!/^[^\s/]+\/[^\s]+$/.test(model)||!THINKING.includes(friend.thinking as CafThinking))throw new Error("Invalid CAF friend");
+  const response=object(value.response,"CAF response"),kind=response.kind;
+  let parsedResponse:CafRound["response"];
+  if(kind==="answer"){
+    exact(response,["kind","text"],"CAF answer");parsedResponse={kind,text:text(response.text,64*1024,"CAF answer")};
+  }else if(kind==="questions"){
+    exact(response,["kind","questions","provisionalAnswer"],"CAF questions");
+    if(!Array.isArray(response.questions)||response.questions.length<1||response.questions.length>3||
+        !(response.provisionalAnswer===null||typeof response.provisionalAnswer==="string"))throw new Error("Invalid CAF questions");
+    const questions=response.questions.map((item,index)=>{const question=object(item,`CAF question ${index+1}`);exact(question,["question","whyNeeded","canProceedWithoutAnswer"],"CAF question");
+      if(typeof question.canProceedWithoutAnswer!=="boolean")throw new Error("Invalid CAF question");
+      return {question:text(question.question,4096,"CAF question"),whyNeeded:text(question.whyNeeded,4096,"CAF question reason"),canProceedWithoutAnswer:question.canProceedWithoutAnswer};});
+    parsedResponse={kind,questions,provisionalAnswer:response.provisionalAnswer===null?null:text(response.provisionalAnswer,32*1024,"CAF provisional answer")};
+  }else throw new Error("Invalid CAF response");
+  return freeze({schemaVersion:1,consultationId:value.consultationId,round:Number(value.round),
+    request:{message:text(request.message,16*1024,"CAF message"),purpose:text(request.purpose,2048,"CAF purpose")},
+    friend:{model,thinking:friend.thinking as CafThinking},response:parsedResponse});
+}
+export function restoreCafConversation(entries:readonly BranchEntry[]):readonly CafRound[]{
+  const rounds:CafRound[]=[],seen=new Set<string>();let active:string|undefined,lastRound=0;
+  for(const entry of entries){if(entry.type!=="custom"||entry.customType!==CAF_ROUND_ENTRY)continue;
+    if(rounds.length>=256)throw new Error("CAF conversation exceeds 256 completed rounds");
+    const round=parseCafRound(entry.data);
+    if(round.round===1){if(active||seen.has(round.consultationId))throw new Error("Invalid CAF consultation sequence");active=round.consultationId;lastRound=1;seen.add(round.consultationId);}
+    else if(round.consultationId!==active||round.round!==lastRound+1)throw new Error("Invalid CAF consultation sequence");
+    else lastRound=round.round;
+    rounds.push(round);if(round.response.kind==="answer")active=undefined;
+  }
+  return Object.freeze(rounds);
+}
 
 function message(error: unknown): string { return error instanceof Error ? error.message : String(error); }
 function owned(uid: number): boolean { return typeof process.getuid !== "function" || uid === process.getuid(); }
@@ -61,13 +107,16 @@ export async function saveCafConfig(stateDir:string,value:CafConfig):Promise<Caf
 export default function cafAgent(pi:ExtensionAPI){
   const stateDir=resolve(process.env.PI_RUN_PROFILE_DIR||"/profile");
   const guard=connectGuardClient(pi,{schemaVersion:1,id:"caf",label:"Call a Friend"});
-  let config=defaultCafConfig(),configError:string|undefined;
+  let config=defaultCafConfig(),configError:string|undefined,conversation:readonly CafRound[]=[],conversationError:string|undefined;
   const tell=(ctx:ExtensionContext,text:string,level:"info"|"warning"|"error"="info")=>ctx.ui.notify(text,level);
+  const restore=(ctx:ExtensionContext,announce=false)=>{try{conversation=restoreCafConversation(ctx.sessionManager.getBranch());conversationError=undefined;}
+    catch(error){conversation=[];conversationError=message(error);if(announce)tell(ctx,`CAF conversation unavailable: ${conversationError}`,"warning");}};
   const persist=async(ctx:ExtensionContext,next:CafConfig)=>{try{config=await saveCafConfig(stateDir,next);configError=undefined;return true;}
     catch(error){tell(ctx,`CAF configuration was not changed: ${message(error)}`,"error");return false;}};
-  const status=(ctx:ExtensionContext)=>tell(ctx,["Call a Friend · configuration only",`Guard Runtime: ${guard.connected()?"available":"unavailable"}`,
+  const status=(ctx:ExtensionContext)=>tell(ctx,["Call a Friend · not enabled",`Guard Runtime: ${guard.connected()?"available":"unavailable"}`,
     `Friend model: ${config.model??"unconfigured"}`,`Thinking: ${config.thinking??"default"}`,
-    configError?`Configuration error: ${configError}`:"Friend calls: not enabled in this version"].join("\n"),configError?"warning":"info");
+    `Conversation: ${conversationError?`unavailable — ${conversationError}`:conversation.length?`${conversation.length} completed round(s) on this branch`:"none on this branch"}`,
+    configError?`Configuration error: ${configError}`:"Friend calls: not enabled in this version"].join("\n"),configError||conversationError?"warning":"info");
   const setModel=async(value:string,ctx:ExtensionContext)=>{
     if(!value){
       if(!ctx.hasUI){tell(ctx,"Usage: /caf model <provider/model>");return;}
@@ -89,7 +138,8 @@ export default function cafAgent(pi:ExtensionAPI){
     if(await persist(ctx,{...config,thinking}))tell(ctx,`CAF thinking: ${thinking??"default"} (saved).`);
   };
   pi.on("session_start",async(_event,ctx)=>{try{config=await loadCafConfig(stateDir);configError=undefined;}
-    catch(error){config=defaultCafConfig();configError=message(error);tell(ctx,`CAF configuration unavailable: ${configError}`,"warning");}});
+    catch(error){config=defaultCafConfig();configError=message(error);tell(ctx,`CAF configuration unavailable: ${configError}`,"warning");}restore(ctx,true);});
+  pi.on("session_tree",(_event,ctx)=>restore(ctx,true));
   pi.registerCommand("caf",{description:"Configure Call a Friend (friend calls are not enabled yet)",handler:async(args,ctx)=>{
     const [action="",...rest]=args.trim().split(/\s+/),value=rest.join(" ");
     if(action==="status"){status(ctx);return;}if(action==="model"){await setModel(value,ctx);return;}if(action==="thinking"){await setThinking(value,ctx);return;}
