@@ -222,18 +222,24 @@ context. Guard investigation evidence is not persisted in CAF rounds.
 
 Each stage requires separate approval and stops after validation:
 
-1. Add the shared-review contract and fake-client tests while production paths
-   remain unchanged.
-2. Extract the Guardian agent harness and evidence dispatcher; prove Guardian
-   fixture and dispute parity.
-3. Add explicit shared Guard configuration and legacy explicit-model adoption,
-   without fallback or provider calls.
-4. Add the CAF evidence profile and replace primary-model review with the shared
-   Guard agent; reject exact reviewer/friend equality.
-5. Add independent client modes, future-session defaults, and harmonized menus.
-6. Render both clients and model roles in the shared bottom widget.
-7. Update user documentation and run the complete isolated suite before any
+1. [x] Add the shared-review contract and fake-client tests while production
+   paths remain unchanged.
+2. [ ] Extract the Guardian agent harness and evidence dispatcher; prove
+   Guardian fixture and dispute parity.
+3. [ ] Add explicit shared Guard configuration and legacy explicit-model
+   adoption, without fallback or provider calls.
+4. [ ] Add the CAF evidence profile and replace primary-model review with the
+   shared Guard agent; reject exact reviewer/friend equality.
+5. [ ] Add independent client modes, future-session defaults, and harmonized
+   menus.
+6. [ ] Render both clients and model roles in the shared bottom widget.
+7. [ ] Update user documentation and run the complete isolated suite before any
    controlled real-provider candidate.
+
+Stage 1 introduced a separately versioned additive review service with immutable
+client domains, bounded frozen JSON requests, FIFO execution, cancellation,
+strict result validation, and fail-closed unavailable/error outcomes. Only fake
+reviewer clients use it; production Guardian and CAF review paths are unchanged.
 
 No stage silently enables a client, migrates credentials, changes networking,
 contacts a real provider, pushes, tags, installs, or releases.

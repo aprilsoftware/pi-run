@@ -53,12 +53,24 @@ function harness(bus) {
 function registration(id, label) {
   return { schemaVersion: 1, id, label };
 }
+function reviewRegistration(id, label, evidenceProfile = `${id}-evidence.v1`, decisionContract = `${id}-decision.v1`) {
+  return { schemaVersion: 1, id, label, evidenceProfile, decisionContract };
+}
+function reviewRequest(name) {
+  return { schemaVersion: 1, action: { kind: 'fixture', name }, policy: { source: 'fixture' } };
+}
 function activity(state, detail, right) {
   return { schemaVersion: 1, state, ...(detail ? { detail } : {}), ...(right ? { right } : {}) };
 }
 async function discover(bus) {
   let service;
   bus.emit(module.GUARD_RUNTIME_DISCOVER, { schemaVersion: 1, accept(value) { service = value; } });
+  await tick();
+  return service;
+}
+async function discoverReview(bus) {
+  let service;
+  bus.emit(module.GUARD_REVIEW_RUNTIME_DISCOVER, { schemaVersion: 1, accept(value) { service = value; } });
   await tick();
   return service;
 }
@@ -71,6 +83,10 @@ assert.equal(loadedService.kind, module.GUARD_RUNTIME_KIND);
 assert.equal(loadedService.schemaVersion, 1);
 assert.equal(typeof loadedService.status, 'function');
 assert.equal(typeof loadedService.subscribeStatus, 'function');
+const loadedReviewService = await discoverReview(loaderBus);
+assert.equal(loadedReviewService.kind, module.GUARD_REVIEW_RUNTIME_KIND);
+assert.equal(loadedReviewService.schemaVersion, 1);
+assert.equal(typeof loadedReviewService.registerClient, 'function');
 {
   const bus = createEventBus(), client = harness(bus), runtime = harness(bus);
   let connected = 0;
@@ -141,6 +157,83 @@ assert.equal(typeof loadedService.subscribeStatus, 'function');
   });
   await tick();
   assert.equal(incompatible.connected(), false);
+}
+{
+  const bus = createEventBus(), runtime = harness(bus), clientHarness = harness(bus);
+  const connection = module.connectGuardReviewClient(clientHarness.pi,
+    reviewRegistration('caf', 'Call a Friend', 'caf-disclosure.v1', 'caf-decision.v1'));
+  assert.equal(connection.connected(), false);
+  module.default(runtime.pi); await tick();
+  assert.equal(connection.connected(), true);
+  const service = connection.runtime();
+  assert.deepEqual(service.clients(), [reviewRegistration('caf', 'Call a Friend', 'caf-disclosure.v1', 'caf-decision.v1')]);
+  assert.equal(Object.isFrozen(service.clients()[0]), true);
+  const unavailable = await connection.review(reviewRequest('unavailable'));
+  assert.equal(unavailable.status, 'incomplete');
+  assert.match(unavailable.error, /backend is unavailable/);
+  let duplicateError;
+  const duplicate = module.connectGuardReviewClient(harness(bus).pi,
+    reviewRegistration('caf', 'Duplicate', 'caf-disclosure.v1', 'caf-decision.v1'),
+    { error(value) { duplicateError = value; } });
+  await tick(); assert.equal(duplicate.connected(), false); assert.match(duplicateError.message, /already registered/); duplicate.dispose();
+  for (const value of [null, {}, {...reviewRegistration('bad', 'Bad'), schemaVersion: 2},
+    {...reviewRegistration('bad', 'Bad'), evidenceProfile: 'unversioned'},
+    {...reviewRegistration('bad', 'Bad'), decisionContract: 'UPPER.v1'},
+    {...reviewRegistration('bad', 'Bad'), extra: true}]) {
+    assert.throws(() => service.registerClient(value), /Invalid Guard review client registration/);
+  }
+  connection.dispose(); assert.equal(service.clients().length, 0);
+}
+{
+  const calls = []; let releaseFirst, hangStarted;
+  const reviewer = { async review(request, signal) {
+    calls.push(request.action.name);
+    assert.equal(Object.isFrozen(request), true); assert.equal(Object.isFrozen(request.client), true);
+    assert.equal(Object.isFrozen(request.action), true); assert.equal(Object.isFrozen(request.policy), true);
+    assert.throws(() => { request.action.name = 'changed'; }, TypeError);
+    if (request.action.name === 'first') return new Promise((resolve, reject) => {
+      releaseFirst = () => resolve({schemaVersion:1,status:'completed',decision:{outcome:'ALLOW',name:request.action.name}});
+      signal.addEventListener('abort', () => reject(signal.reason), {once:true});
+    });
+    if (request.action.name === 'hang') return new Promise((_, reject) => {
+      hangStarted = true; signal.addEventListener('abort', () => reject(signal.reason), {once:true});
+    });
+    if (request.action.name === 'throw') throw new Error('fixture backend failed');
+    if (request.action.name === 'invalid') return {schemaVersion:1,status:'completed',decision:null};
+    return {schemaVersion:1,status:'completed',decision:{outcome:'ALLOW',name:request.action.name}};
+  }};
+  const bus = createEventBus(), runtime = harness(bus), guardianHarness = harness(bus), cafHarness = harness(bus);
+  module.createGuardRuntimeExtension({reviewer})(runtime.pi);
+  const guardian = module.connectGuardReviewClient(guardianHarness.pi,
+    reviewRegistration('guardian', 'Guardian', 'guardian-command.v1', 'guardian-decision.v1'));
+  const caf = module.connectGuardReviewClient(cafHarness.pi,
+    reviewRegistration('caf', 'Call a Friend', 'caf-disclosure.v1', 'caf-decision.v1'));
+  await tick(); assert.equal(guardian.runtime(), caf.runtime());
+
+  const mutable = reviewRequest('first'), first = guardian.review(mutable); mutable.action.name = 'mutated-after-submit';
+  await tick(); assert.deepEqual(calls, ['first']);
+  const cancelledController = new AbortController(), cancelled = caf.review(reviewRequest('cancelled'), cancelledController.signal);
+  const second = caf.review(reviewRequest('second')); cancelledController.abort(new Error('queued fixture cancelled'));
+  const cancelledResult = await cancelled; assert.equal(cancelledResult.status, 'incomplete'); assert.match(cancelledResult.error, /queued fixture cancelled/);
+  assert.deepEqual(calls, ['first']); releaseFirst();
+  const firstResult = await first, secondResult = await second;
+  assert.equal(firstResult.status, 'completed'); assert.equal(firstResult.decision.name, 'first'); assert.equal(Object.isFrozen(firstResult.decision), true);
+  assert.equal(secondResult.status, 'completed'); assert.deepEqual(calls, ['first', 'second']);
+
+  const invalid = await caf.review(reviewRequest('invalid')); assert.equal(invalid.status, 'incomplete'); assert.match(invalid.error, /invalid Guard review result/i);
+  const failed = await caf.review(reviewRequest('throw')); assert.equal(failed.status, 'incomplete'); assert.match(failed.error, /fixture backend failed/);
+  await assert.rejects(caf.review({...reviewRequest('extra'), extra:true}), /Invalid Guard review request/);
+  const cyclic = reviewRequest('cyclic'); cyclic.action.self = cyclic.action;
+  await assert.rejects(caf.review(cyclic), /plain JSON|structural bounds/);
+  await assert.rejects(caf.review({schemaVersion:1,action:{text:'x'.repeat(129*1024)},policy:{}}), /128 KiB/);
+
+  const activeController = new AbortController(), hanging = guardian.review(reviewRequest('hang'), activeController.signal);
+  await tick(); assert.equal(hangStarted, true); activeController.abort(new Error('active fixture cancelled'));
+  const hangingResult = await hanging; assert.equal(hangingResult.status, 'incomplete'); assert.match(hangingResult.error, /active fixture cancelled/);
+
+  hangStarted = false; const stopped = caf.review(reviewRequest('hang')); await tick(); assert.equal(hangStarted, true);
+  await runtime.shutdown(); const stoppedResult = await stopped; assert.equal(stoppedResult.status, 'incomplete'); assert.match(stoppedResult.error, /stopped/);
+  assert.equal(guardian.connected(), false); assert.equal(caf.connected(), false);
 }
 {
   const bus = createEventBus(), runtime = harness(bus), guardianHarness = harness(bus), cafHarness = harness(bus);
