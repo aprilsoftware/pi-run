@@ -226,16 +226,18 @@ Each stage requires separate approval and stops after validation:
    paths remain unchanged.
 2. [x] Extract the reusable Pi-agent model loop and private-tool dispatcher;
    preserve the Guardian domain adapter and prove reviewer/flow parity.
-3. [ ] Install the extracted harness as the runtime review backend and route
+3. [x] Add bounded, client-local review diagnostics so runtime routing can
+   preserve Guardian's review trace without putting callbacks in review JSON.
+4. [ ] Install the extracted harness as the runtime review backend and route
    Guardian through the shared contract without changing reviewer selection.
-4. [ ] Add explicit shared Guard configuration and legacy explicit-model
+5. [ ] Add explicit shared Guard configuration and legacy explicit-model
    adoption, without fallback or provider calls.
-5. [ ] Add the CAF evidence profile and replace primary-model review with the
+6. [ ] Add the CAF evidence profile and replace primary-model review with the
    shared Guard agent; reject exact reviewer/friend equality.
-6. [ ] Add independent client modes, future-session defaults, and harmonized
+7. [ ] Add independent client modes, future-session defaults, and harmonized
    menus.
-7. [ ] Render both clients and model roles in the shared bottom widget.
-8. [ ] Update user documentation and run the complete isolated suite before any
+8. [ ] Render both clients and model roles in the shared bottom widget.
+9. [ ] Update user documentation and run the complete isolated suite before any
    controlled real-provider candidate.
 
 Stage 1 introduced a separately versioned additive review service with immutable
@@ -248,6 +250,14 @@ cancellation, streaming, and decision-only lifecycle into a reusable domain-
 parameterized module. Guardian supplies its existing prompt, evidence operations,
 decision schema, and validation, and still invokes the harness directly; runtime
 routing and CAF behavior remain unchanged.
+
+Stage 3 added runtime-validated, deeply frozen diagnostic events with client
+identity, monotonic sequence, per-event and cumulative bounds, cancellation and
+completion closure, and client-local delivery. Malformed or over-budget backend
+diagnostics fail the review even if the backend catches the reporting error.
+Client presentation callbacks remain outside serialized review requests, cannot
+affect review outcomes, and cannot observe other clients. Production routing
+remains unchanged.
 
 No stage silently enables a client, migrates credentials, changes networking,
 contacts a real provider, pushes, tags, installs, or releases.

@@ -17,19 +17,26 @@ export interface GuardReviewClientRegistrationV1 extends GuardClientRegistration
   decisionContract: string;
 }
 export interface GuardReviewRequestV1 { schemaVersion: 1; action: unknown; policy: unknown; }
+export interface GuardReviewDiagnosticV1 { schemaVersion: 1; level: "INFO" | "INVESTIGATE" | "ERROR"; event: string; message: string; details?: unknown; }
+export interface GuardReviewDiagnosticSnapshotV1 extends GuardReviewDiagnosticV1 { clientId: string; sequence: number; }
+export interface GuardReviewOptionsV1 { signal?: AbortSignal; report?(event: Readonly<GuardReviewDiagnosticSnapshotV1>): void; }
 export type GuardReviewResultV1 =
   | { schemaVersion: 1; status: "completed"; decision: Readonly<Record<string, unknown>> }
   | { schemaVersion: 1; status: "incomplete"; error: string };
 export interface GuardReviewBackendRequestV1 extends GuardReviewRequestV1 {
   client: Readonly<GuardReviewClientRegistrationV1>;
 }
+export interface GuardReviewBackendContextV1 {
+  readonly signal: AbortSignal;
+  report(event: GuardReviewDiagnosticV1): void;
+}
 export interface GuardReviewBackendV1 {
-  review(request: Readonly<GuardReviewBackendRequestV1>, signal: AbortSignal): Promise<unknown>;
+  review(request: Readonly<GuardReviewBackendRequestV1>, context: Readonly<GuardReviewBackendContextV1>): Promise<unknown>;
 }
 export interface GuardReviewClientHandleV1 {
   readonly id: string;
   active(): boolean;
-  review(request: GuardReviewRequestV1, signal?: AbortSignal): Promise<Readonly<GuardReviewResultV1>>;
+  review(request: GuardReviewRequestV1, options?: GuardReviewOptionsV1): Promise<Readonly<GuardReviewResultV1>>;
   dispose(): void;
 }
 export interface GuardReviewRuntimeV1 {
@@ -41,7 +48,7 @@ export interface GuardReviewRuntimeV1 {
 export interface GuardReviewClientConnectionV1 {
   connected(): boolean;
   runtime(): GuardReviewRuntimeV1 | undefined;
-  review(request: GuardReviewRequestV1, signal?: AbortSignal): Promise<Readonly<GuardReviewResultV1>>;
+  review(request: GuardReviewRequestV1, options?: GuardReviewOptionsV1): Promise<Readonly<GuardReviewResultV1>>;
   dispose(): void;
 }
 export interface GuardRuntimeOptions { reviewer?: GuardReviewBackendV1; }
@@ -92,8 +99,12 @@ type PendingReview = {
   clientId: string;
   clientToken: symbol;
   request: Readonly<GuardReviewBackendRequestV1>;
-  signal?: AbortSignal;
+  options: Readonly<GuardReviewOptionsV1>;
   abort?: () => void;
+  diagnosticsClosed: boolean;
+  diagnosticCount: number;
+  diagnosticBytes: number;
+  diagnosticError?: Error;
   resolve(result: Readonly<GuardReviewResultV1>): void;
 };
 
@@ -140,10 +151,10 @@ function validateJson(value: unknown, depth = 0, nodes = { value: 0 }): void {
     validateJson(item, depth + 1, nodes);
   }
 }
-function frozenJson<T>(value: T): Readonly<T> {
+function frozenJson<T>(value: T, maxBytes = 128 * 1024, label = "Guard review request"): Readonly<T> {
   validateJson(value);
   const encoded = JSON.stringify(value);
-  if (Buffer.byteLength(encoded, "utf8") > 128 * 1024) throw new Error("Guard review request exceeds 128 KiB");
+  if (Buffer.byteLength(encoded, "utf8") > maxBytes) throw new Error(`${label} exceeds ${Math.floor(maxBytes / 1024)} KiB`);
   const copy = JSON.parse(encoded) as T;
   const freeze = (item: unknown): void => {
     if (!item || typeof item !== "object" || Object.isFrozen(item)) return;
@@ -157,6 +168,25 @@ function validateReviewRequest(value: GuardReviewRequestV1, client: Readonly<Gua
     throw new Error("Invalid Guard review request");
   }
   return frozenJson({ schemaVersion: 1 as const, client, action: value.action, policy: value.policy });
+}
+function validateReviewOptions(value: GuardReviewOptionsV1 | undefined): Readonly<GuardReviewOptionsV1> {
+  if (value === undefined) return Object.freeze({});
+  if (!value || typeof value !== "object" || Array.isArray(value) || Object.getPrototypeOf(value) !== Object.prototype ||
+      Object.keys(value).some(key => !["signal", "report"].includes(key)) ||
+      (value.signal !== undefined && !(value.signal instanceof AbortSignal)) ||
+      (value.report !== undefined && typeof value.report !== "function")) throw new Error("Invalid Guard review options");
+  return Object.freeze({ ...(value.signal ? { signal: value.signal } : {}), ...(value.report ? { report: value.report } : {}) });
+}
+function validateDiagnostic(value: GuardReviewDiagnosticV1, clientId: string, sequence: number): Readonly<GuardReviewDiagnosticSnapshotV1> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid Guard review diagnostic");
+  const hasDetails = Object.hasOwn(value, "details"), keys = Object.keys(value).sort().join(",");
+  if (keys !== (hasDetails ? "details,event,level,message,schemaVersion" : "event,level,message,schemaVersion") || value.schemaVersion !== 1 ||
+      !["INFO", "INVESTIGATE", "ERROR"].includes(value.level) || typeof value.event !== "string" ||
+      !/^[a-z][a-z0-9_]{0,63}$/.test(value.event) || typeof value.message !== "string" || value.message !== value.message.trim() ||
+      !value.message || value.message.length > 2400 || /[\u0000-\u001f\u007f]/.test(value.message)) throw new Error("Invalid Guard review diagnostic");
+  const details = hasDetails ? frozenJson(value.details, 16 * 1024, "Guard review diagnostic details") : undefined;
+  return Object.freeze({ schemaVersion: 1, level: value.level, event: value.event, message: value.message,
+    ...(hasDetails ? { details } : {}), clientId, sequence });
 }
 function incompleteReview(cause: unknown, fallback = "Guard reviewer unavailable"): Readonly<GuardReviewResultV1> {
   return Object.freeze({ schemaVersion: 1, status: "incomplete", error: safeError(cause, fallback) });
@@ -264,8 +294,8 @@ export function connectGuardReviewClient(
   const connection: GuardReviewClientConnectionV1 = Object.freeze({
     connected: () => !disposed && !!handle?.active(),
     runtime: () => !disposed && handle?.active() ? selected : undefined,
-    review: (request, signal) => handle?.active()
-      ? handle.review(request, signal)
+    review: (request, options) => handle?.active()
+      ? handle.review(request, options)
       : Promise.resolve(incompleteReview(new Error("Guard review runtime is unavailable"))),
     dispose() { if (disposed) return; disposed = true; handle?.dispose(); stopAvailable(); stopShutdown(); },
   });
@@ -283,7 +313,7 @@ export function createGuardRuntimeExtension(options: GuardRuntimeOptions = {}) {
   const baselines = new Map<string, { clientToken: symbol; order: number; snapshot: Readonly<GuardActivitySnapshotV1> }>();
   const activityListeners = new Set<(activity: Readonly<GuardActivitySnapshotV1> | undefined) => void>();
   const statusListeners = new Set<(status: Readonly<GuardActivitySnapshotV1> | undefined) => void>();
-  let closed = false, sequence = 0, baselineOrder = 0;
+  let closed = false, sequence = 0, baselineOrder = 0, reviewDiagnosticSequence = 0;
   let statusContext: ExtensionContext | undefined, statusRedraw: (() => void) | undefined;
   let statusActivity: Readonly<GuardActivitySnapshotV1> | undefined, stopStatus: (() => void) | undefined;
   let current: { clientToken: symbol; leaseToken: symbol; snapshot: Readonly<GuardActivitySnapshotV1> } | undefined;
@@ -412,8 +442,24 @@ export function createGuardRuntimeExtension(options: GuardRuntimeOptions = {}) {
     },
   });
   const finishReview = (pending: PendingReview, result: Readonly<GuardReviewResultV1>) => {
-    if (pending.abort && pending.signal) pending.signal.removeEventListener("abort", pending.abort);
+    pending.diagnosticsClosed = true;
+    if (pending.abort && pending.options.signal) pending.options.signal.removeEventListener("abort", pending.abort);
     pending.resolve(result);
+  };
+  const reportReviewDiagnostic = (pending: PendingReview, value: GuardReviewDiagnosticV1) => {
+    if (closed || pending.diagnosticsClosed || currentReview?.pending !== pending || currentReview.controller.signal.aborted) {
+      throw new Error("Guard review diagnostics are no longer active");
+    }
+    try {
+      if (++pending.diagnosticCount > 256) throw new Error("Guard review diagnostic count exceeded");
+      const event = validateDiagnostic(value, pending.clientId, ++reviewDiagnosticSequence);
+      pending.diagnosticBytes += Buffer.byteLength(JSON.stringify(event), "utf8");
+      if (pending.diagnosticBytes > 256 * 1024) throw new Error("Guard review diagnostics exceed 256 KiB");
+      try { pending.options.report?.(event); } catch { /* Presentation cannot affect review. */ }
+    } catch (cause) {
+      pending.diagnosticError = error(cause, "Invalid Guard review diagnostic");
+      throw pending.diagnosticError;
+    }
   };
   const removeQueuedReview = (pending: PendingReview, cause: unknown): boolean => {
     const index = reviewWaiting.indexOf(pending);
@@ -424,8 +470,8 @@ export function createGuardRuntimeExtension(options: GuardRuntimeOptions = {}) {
     if (closed || currentReview) return;
     const pending = reviewWaiting.shift();
     if (!pending) return;
-    if (pending.signal?.aborted || reviewClients.get(pending.clientId)?.token !== pending.clientToken) {
-      finishReview(pending, incompleteReview(pending.signal?.reason, "Guard review client is unavailable"));
+    if (pending.options.signal?.aborted || reviewClients.get(pending.clientId)?.token !== pending.clientToken) {
+      finishReview(pending, incompleteReview(pending.options.signal?.reason, "Guard review client is unavailable"));
       queueMicrotask(activateNextReview); return;
     }
     if (!options.reviewer) {
@@ -436,10 +482,15 @@ export function createGuardRuntimeExtension(options: GuardRuntimeOptions = {}) {
     const abortPromise = new Promise<never>((_, reject) => {
       controller.signal.addEventListener("abort", () => reject(controller.signal.reason), { once: true });
     });
-    const work = Promise.resolve().then(() => options.reviewer!.review(pending.request, controller.signal));
+    const context:Readonly<GuardReviewBackendContextV1> = Object.freeze({ signal: controller.signal,
+      report: (event: GuardReviewDiagnosticV1) => reportReviewDiagnostic(pending, event) });
+    const work = Promise.resolve().then(() => options.reviewer!.review(pending.request, context));
     work.catch(() => {});
     void Promise.race([work, abortPromise]).then(raw => {
-      try { finishReview(pending, validateReviewResult(raw)); }
+      try {
+        if (pending.diagnosticError) throw pending.diagnosticError;
+        finishReview(pending, validateReviewResult(raw));
+      }
       catch (cause) { finishReview(pending, incompleteReview(cause, "Guard reviewer returned an invalid result")); }
     }, cause => finishReview(pending, incompleteReview(cause, "Guard review cancelled"))).finally(() => {
       if (currentReview?.pending === pending) currentReview = undefined;
@@ -450,19 +501,20 @@ export function createGuardRuntimeExtension(options: GuardRuntimeOptions = {}) {
     if (removeQueuedReview(pending, cause)) return;
     if (currentReview?.pending === pending) currentReview.controller.abort(error(cause, "Guard review cancelled"));
   };
-  const review = (entry: ReviewClientEntry, value: GuardReviewRequestV1, signal?: AbortSignal) => {
-    let request: Readonly<GuardReviewBackendRequestV1>;
-    try { request = validateReviewRequest(value, entry.registration); }
+  const review = (entry: ReviewClientEntry, value: GuardReviewRequestV1, optionValue?: GuardReviewOptionsV1) => {
+    let request: Readonly<GuardReviewBackendRequestV1>, reviewOptions: Readonly<GuardReviewOptionsV1>;
+    try { request = validateReviewRequest(value, entry.registration); reviewOptions = validateReviewOptions(optionValue); }
     catch (cause) { return Promise.reject(error(cause)); }
     if (closed || reviewClients.get(entry.registration.id)?.token !== entry.token) {
       return Promise.resolve(incompleteReview(new Error("Guard review client is unavailable")));
     }
-    if (signal?.aborted) return Promise.resolve(incompleteReview(signal.reason, "Guard review cancelled"));
+    if (reviewOptions.signal?.aborted) return Promise.resolve(incompleteReview(reviewOptions.signal.reason, "Guard review cancelled"));
     return new Promise<Readonly<GuardReviewResultV1>>(resolve => {
-      const pending: PendingReview = { clientId: entry.registration.id, clientToken: entry.token, request, signal, resolve };
-      if (signal) {
-        pending.abort = () => stopPendingReview(pending, signal.reason);
-        signal.addEventListener("abort", pending.abort, { once: true });
+      const pending: PendingReview = { clientId: entry.registration.id, clientToken: entry.token, request, options: reviewOptions,
+        diagnosticsClosed: false, diagnosticCount: 0, diagnosticBytes: 0, resolve };
+      if (reviewOptions.signal) {
+        pending.abort = () => stopPendingReview(pending, reviewOptions.signal!.reason);
+        reviewOptions.signal.addEventListener("abort", pending.abort, { once: true });
       }
       reviewWaiting.push(pending); activateNextReview();
     });
@@ -489,7 +541,7 @@ export function createGuardRuntimeExtension(options: GuardRuntimeOptions = {}) {
       return Object.freeze({
         id: registration.id,
         active: () => !closed && reviewClients.get(registration.id)?.token === entry.token,
-        review: (request, signal) => review(entry, request, signal),
+        review: (request, options) => review(entry, request, options),
         dispose: () => removeReviewClient(entry),
       });
     },

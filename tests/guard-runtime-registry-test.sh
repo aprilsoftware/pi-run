@@ -185,9 +185,15 @@ assert.equal(typeof loadedReviewService.registerClient, 'function');
   connection.dispose(); assert.equal(service.clients().length, 0);
 }
 {
-  const calls = []; let releaseFirst, hangStarted;
-  const reviewer = { async review(request, signal) {
-    calls.push(request.action.name);
+  const calls = []; let releaseFirst, hangStarted, lateReport;
+  const reviewer = { async review(request, context) {
+    assert.equal(Object.isFrozen(context),true);const signal = context.signal; calls.push(request.action.name);
+    if (request.action.name === 'bad-diagnostic') try { context.report({schemaVersion:1,level:'INFO',event:'UPPER',message:'invalid'}); } catch { /* Runtime must still fail closed if the backend catches this. */ }
+    if (request.action.name === 'too-many-diagnostics') for (let index=0;index<257;index++) context.report({schemaVersion:1,level:'INFO',event:'fixture_event',message:`event ${index}`});
+    if (request.action.name === 'large-diagnostic') context.report({schemaVersion:1,level:'INFO',event:'fixture_event',message:'large',details:{text:'x'.repeat(17*1024)}});
+    if (request.action.name === 'too-many-diagnostic-bytes') for (let index=0;index<18;index++) context.report({schemaVersion:1,level:'INFO',event:'fixture_event',message:`large event ${index}`,details:{text:'x'.repeat(15*1024)}});
+    if (request.action.name === 'late-diagnostic') lateReport = context.report;
+    context.report({schemaVersion:1,level:'INFO',event:'fixture_started',message:'Fixture review started.',details:{name:request.action.name}});
     assert.equal(Object.isFrozen(request), true); assert.equal(Object.isFrozen(request.client), true);
     assert.equal(Object.isFrozen(request.action), true); assert.equal(Object.isFrozen(request.policy), true);
     assert.throws(() => { request.action.name = 'changed'; }, TypeError);
@@ -208,17 +214,29 @@ assert.equal(typeof loadedReviewService.registerClient, 'function');
     reviewRegistration('guardian', 'Guardian', 'guardian-command.v1', 'guardian-decision.v1'));
   const caf = module.connectGuardReviewClient(cafHarness.pi,
     reviewRegistration('caf', 'Call a Friend', 'caf-disclosure.v1', 'caf-decision.v1'));
+  const guardianEvents=[],cafEvents=[];
   await tick(); assert.equal(guardian.runtime(), caf.runtime());
 
-  const mutable = reviewRequest('first'), first = guardian.review(mutable); mutable.action.name = 'mutated-after-submit';
+  const mutable = reviewRequest('first'), first = guardian.review(mutable,{report:event=>{assert.equal(Object.isFrozen(event),true);assert.equal(Object.isFrozen(event.details),true);guardianEvents.push(event);}}); mutable.action.name = 'mutated-after-submit';
   await tick(); assert.deepEqual(calls, ['first']);
-  const cancelledController = new AbortController(), cancelled = caf.review(reviewRequest('cancelled'), cancelledController.signal);
-  const second = caf.review(reviewRequest('second')); cancelledController.abort(new Error('queued fixture cancelled'));
+  const cancelledController = new AbortController(), cancelled = caf.review(reviewRequest('cancelled'), {signal:cancelledController.signal,report:event=>cafEvents.push(event)});
+  const second = caf.review(reviewRequest('second'),{report:event=>cafEvents.push(event)}); cancelledController.abort(new Error('queued fixture cancelled'));
   const cancelledResult = await cancelled; assert.equal(cancelledResult.status, 'incomplete'); assert.match(cancelledResult.error, /queued fixture cancelled/);
   assert.deepEqual(calls, ['first']); releaseFirst();
   const firstResult = await first, secondResult = await second;
   assert.equal(firstResult.status, 'completed'); assert.equal(firstResult.decision.name, 'first'); assert.equal(Object.isFrozen(firstResult.decision), true);
   assert.equal(secondResult.status, 'completed'); assert.deepEqual(calls, ['first', 'second']);
+  assert.deepEqual(guardianEvents.map(event=>event.clientId),['guardian']);assert.deepEqual(cafEvents.map(event=>event.clientId),['caf']);
+  assert.ok(guardianEvents[0].sequence<cafEvents[0].sequence);assert.equal(guardianEvents[0].details.name,'first');
+  assert.equal(cafEvents.some(event=>event.details?.name==='cancelled'),false,'A cancelled queued review must not report diagnostics');
+
+  const callbackSafe=await caf.review(reviewRequest('callback-safe'),{report(){throw new Error('presentation failure');}});assert.equal(callbackSafe.status,'completed');
+  const badDiagnostic=await caf.review(reviewRequest('bad-diagnostic'));assert.equal(badDiagnostic.status,'incomplete');assert.match(badDiagnostic.error,/diagnostic/);
+  const tooMany=await caf.review(reviewRequest('too-many-diagnostics'));assert.equal(tooMany.status,'incomplete');assert.match(tooMany.error,/count exceeded/);
+  const large=await caf.review(reviewRequest('large-diagnostic'));assert.equal(large.status,'incomplete');assert.match(large.error,/details exceeds 16 KiB/);
+  const tooManyBytes=await caf.review(reviewRequest('too-many-diagnostic-bytes'));assert.equal(tooManyBytes.status,'incomplete');assert.match(tooManyBytes.error,/diagnostics exceed 256 KiB/);
+  const late=await caf.review(reviewRequest('late-diagnostic'));assert.equal(late.status,'completed');assert.throws(()=>lateReport({schemaVersion:1,level:'INFO',event:'late',message:'too late'}),/no longer active/);
+  await assert.rejects(caf.review(reviewRequest('bad-options'),{extra:true}),/Invalid Guard review options/);
 
   const invalid = await caf.review(reviewRequest('invalid')); assert.equal(invalid.status, 'incomplete'); assert.match(invalid.error, /invalid Guard review result/i);
   const failed = await caf.review(reviewRequest('throw')); assert.equal(failed.status, 'incomplete'); assert.match(failed.error, /fixture backend failed/);
@@ -227,7 +245,7 @@ assert.equal(typeof loadedReviewService.registerClient, 'function');
   await assert.rejects(caf.review(cyclic), /plain JSON|structural bounds/);
   await assert.rejects(caf.review({schemaVersion:1,action:{text:'x'.repeat(129*1024)},policy:{}}), /128 KiB/);
 
-  const activeController = new AbortController(), hanging = guardian.review(reviewRequest('hang'), activeController.signal);
+  const activeController = new AbortController(), hanging = guardian.review(reviewRequest('hang'), {signal:activeController.signal});
   await tick(); assert.equal(hangStarted, true); activeController.abort(new Error('active fixture cancelled'));
   const hangingResult = await hanging; assert.equal(hangingResult.status, 'incomplete'); assert.match(hangingResult.error, /active fixture cancelled/);
 
