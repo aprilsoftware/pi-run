@@ -14,6 +14,11 @@ import type { Api, Model } from "@earendil-works/pi-ai";
 import { Text } from "@earendil-works/pi-tui";
 import { connectGuardClient, type GuardActivityLeaseV1, type GuardActivityRequestV1 } from "./guard-runtime.ts";
 import { createGuardJournalWriter, maintainGuardJournalRetention, readGuardJournal } from "./guard-journal.ts";
+import { AgenticGuardReviewer,
+  type AgenticEvidenceDefinition, type AgenticReviewDomain, type PiInfrastructure, type ProviderStream,
+} from "./guard-reviewer-agent.ts";
+export { loadPiInfrastructure } from "./guard-reviewer-agent.ts";
+export type { NativeAgentLike, PiInfrastructure, ProviderStream } from "./guard-reviewer-agent.ts";
 import { constants } from "node:fs";
 import { open, realpath, mkdir, lstat, rename, unlink, readdir } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep, extname } from "node:path";
@@ -23,9 +28,6 @@ const PREPARATION_TIMEOUT_MS = 15_000;
 const DEFAULT_REVIEW_BUDGET = { totalMs: 210_000, slowMs: 15_000 };
 const MAX_FILE_BYTES = 256 * 1024;
 const MAX_CONTEXT_BYTES = 96 * 1024;
-const MAX_CUMULATIVE_BYTES = 320 * 1024;
-const MAX_MODEL_REQUESTS = 4;
-const MAX_EVIDENCE_CALLS = 10;
 // Evidence results become tool-result transcript content on the next request.
 // Keep their aggregate well below the request cap so a decision-only turn still fits.
 const MAX_EVIDENCE_BYTES = 32 * 1024;
@@ -260,17 +262,6 @@ function actionPreview(input: Record<string, unknown>): Record<string, unknown> 
 
 function record(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === "object" ? value as Record<string, unknown> : {};
-}
-function counter(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
-}
-function usageDetails(usage: unknown): Record<string, unknown> {
-  const u = record(usage);
-  const values = { inputTokens: counter(u.input), outputTokens: counter(u.output),
-    cacheReadTokens: counter(u.cacheRead), cacheWriteTokens: counter(u.cacheWrite) };
-  const supplied = Object.values(values).filter((n): n is number => n !== null);
-  return { ...values, usageStatus: !supplied.length ? "not_reported" :
-    supplied.every(n => n === 0) ? "reported_zero_unverified" : "reported_by_sdk" };
 }
 function toolResultDetails(value: unknown, isError: boolean, toolName: string): Record<string, unknown> {
   const result = record(value), details = record(result.details);
@@ -745,24 +736,6 @@ async function prepareReview(pi:ExtensionAPI,ctx:ExtensionContext,event:ToolCall
 }
 
 
-// Pi agent infrastructure boundary. These shapes keep provider/version plumbing local.
-// Default imports resolve to the SDK bundled with the running Pi extension loader.
-export interface NativeAgentLike {
-  state: { messages: any[]; tools?: any[]; error?: string; errorMessage?: string };
-  prompt(message: any): Promise<void>;
-  abort(): void;
-  followUp(message: any): void;
-  subscribe(fn: (event: any) => void): (()=>void);
-}
-export interface PiInfrastructure {
-  Agent: new (options: any) => NativeAgentLike;
-  ai: { createAssistantMessageEventStream(): any; streamSimple?: (...args:any[])=>any; completeSimple?: (...args:any[])=>Promise<any> };
-}
-export async function loadPiInfrastructure(): Promise<PiInfrastructure> {
-  const [core,ai]=await Promise.all([import("@earendil-works/pi-agent-core"),import("@earendil-works/pi-ai")]);
-  if(typeof core.Agent!=="function"||typeof ai.createAssistantMessageEventStream!=="function")throw new Error("This Pi installation does not expose Agent + createAssistantMessageEventStream");
-  return {Agent:core.Agent as unknown as PiInfrastructure["Agent"],ai:ai as unknown as PiInfrastructure["ai"]};
-}
 const BASIS=["standing_rules","explicit_authorization","covered_work","missing_authorization","uncertainty","user_refusal"] as const;
 export class EvidenceGap extends Error {constructor(message:string){super(message);this.name="EvidenceGap";}}
 export class EvidenceBudgetError extends Error {constructor(message:string){super(message);this.name="EvidenceBudgetError";}}
@@ -921,143 +894,35 @@ function evidenceDefinitions():Array<{name:string;operation:EvidenceOperation;de
     {name:"guardian_guide",operation:"guide_read",description:"Load a short review method for scripts, storage, or scope. Guides never grant authority.",parameters:objectSchema({id:{type:"string",enum:GUIDES.map(g=>g.id)},question:QUESTION})},
   ];
 }
-function extractDecisionJson(message:any):unknown{
-  const text=(message.content??[]).filter((b:any)=>b.type==="text").map((b:any)=>b.text).join("").trim();
-  const fenced=text.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);return JSON.parse(fenced?fenced[1]:text);
-}
-function emptyReply(model:Model<Api>,stopReason="stop",errorMessage?:string):any{return {role:"assistant",content:[],api:model.api,provider:model.provider,model:model.id,timestamp:Date.now(),stopReason,errorMessage,
-  usage:{input:0,output:0,cacheRead:0,cacheWrite:0,totalTokens:0,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}}};}
-export type ProviderStream = (model:Model<Api>,context:any,options:any)=>any;
-type ReviewerPhase="investigating"|"decision-only"|"completed"|"closed";
 export interface PiReviewerOptions {
   model:Model<Api>;thinking:Thinking;requestedThinking:Thinking;modelSource:string;thinkingSource:string;
   infrastructure?:()=>Promise<PiInfrastructure>;
   /** Resolve Pi authentication without putting credentials in the model's evidence. */
   provider(signal:AbortSignal,step:ReviewServices["step"]):Promise<{stream:ProviderStream;model:Model<Api>;options?:Json}>;
 }
-export class PiAgentReviewer implements GuardianReviewer {
-  readonly id="pi-agent";
-  readonly budget:{totalMs:number;slowMs:number};
-  constructor(readonly options:PiReviewerOptions){this.budget={totalMs:["high","xhigh","max"].includes(options.thinking)?270_000:180_000,slowMs:15_000};}
-  async review(request:ReviewRequest,services:ReviewServices):Promise<ReviewResult>{
-    const metrics:Required<ReviewMetrics>={requests:0,evidenceCalls:0,inputBytes:0},o=this.options,evidence=services.evidence;
-    let agent:NativeAgentLike|undefined,completed:Decision|undefined,lastError="Reviewer did not supply a decision",corrections=0,latestCalls:any[]=[];
-    let phase:ReviewerPhase="investigating";
-    const emit=(level:"INFO"|"INVESTIGATE"|"ERROR",event:string,message:string,details?:Json)=>services.report({level,event,message,details,metrics});
-    const onAbort=()=>agent?.abort();services.signal.addEventListener("abort",onAbort,{once:true});
-    try{
-      const infra=await services.step("load Pi reviewer infrastructure",{},()=> (o.infrastructure??loadPiInfrastructure)(),15000);
-      services.signal.throwIfAborted();
-      emit("INFO","reviewer_selected","Private Pi Agent, fresh review transcript",{model:`${o.model.provider}/${o.model.id}`,thinking:o.thinking,requestedThinking:o.requestedThinking,modelSource:o.modelSource,thinkingSource:o.thinkingSource});
-      const initial=evidence.initial();
-      const definitions=evidenceDefinitions();
-      const executeEvidence=(def:typeof definitions[number])=>async(id:string,args:Json,signal?:AbortSignal)=>{
-        services.signal.throwIfAborted();signal?.throwIfAborted();if(phase==="completed"||phase==="closed")throw new Error("Review has finished");
-        if(phase==="decision-only")throw new Error("Final request is decision-only; no new inspection is available");
-        if(++metrics.evidenceCalls>MAX_EVIDENCE_CALLS)throw new Error("Evidence call budget exhausted; decide from available evidence");
-        try {
-          const value=await evidence.call(def.operation,args);return {content:[{type:"text",text:JSON.stringify(value)}],details:{evidence:true}};
-        } catch (error) {
-          if(error instanceof EvidenceBudgetError)phase="decision-only";
-          throw error;
-        }
-      };
-      const accept=(raw:unknown)=>{
-        const d=normalizeDecision(raw,evidence);services.signal.throwIfAborted();if(phase==="completed"||phase==="closed")throw new Error("Review closed");
-        emit("INFO","decision_validated","Source identities validated; semantic judgment remains the reviewer's",{outcome:d.outcome,basis:d.basis,userMessageIds:d.userMessageIds,instructionRefs:d.instructionRefs});
-        completed=d;phase="completed";
-      };
-      const decideTool={name:"guardian_decide",label:"Review decision",description:"Final authorization decision only; no action is executed. May instead return this object as final JSON text.",parameters:DECISION_SCHEMA,
-        execute:async(_id:string,args:Json,signal?:AbortSignal)=>{services.signal.throwIfAborted();signal?.throwIfAborted();if(latestCalls.length!==1)throw new Error("A final decision must not be mixed with investigation calls");
-          try{accept(args);}catch(e){lastError=errorText(e);emit("ERROR","decision_validation_failed","Decision not accepted",{error:lastError});throw e;}
-          return {content:[{type:"text",text:"Decision accepted. Review complete."}],details:{completed:true},terminate:true};}};
-      const tools=[...definitions.map(d=>({name:d.name,label:d.name,description:d.description,parameters:d.parameters,execute:executeEvidence(d)})),decideTool];
-      // Pi owns scheduling, tool execution, validation and streamed lifecycle events.
-      // A short synthetic terminal response stops old Agent versions after the decision tool;
-      // it is NEVER sent to a provider and never counts as an extra reviewer request.
-      const streamFn=(_model:any,context:any,_options:any)=>{
-        const out=infra.ai.createAssistantMessageEventStream();
-        if(phase==="completed"||phase==="closed"||services.signal.aborted){const done=phase==="completed",m=emptyReply(o.model,done?"stop":"aborted");if(done)out.push({type:"start",partial:m});out.push(done?{type:"done",reason:"stop",message:m}:{type:"error",reason:"aborted",error:m});out.end(m);return out;}
-        void (async()=>{
-          let ended=false;
-          try{
-            if(metrics.requests>=MAX_MODEL_REQUESTS)throw new Error("Reviewer request budget exhausted");
-            const round=++metrics.requests,remaining=services.deadlineAt-Date.now();
-            const final=phase==="decision-only"||round===MAX_MODEL_REQUESTS||metrics.evidenceCalls>=MAX_EVIDENCE_CALLS||remaining<75_000;if(final)phase="decision-only";
-            const send=JSON.parse(JSON.stringify(context));
-            const currentInstructions=[...evidence.instructions.values()];
-            // Keep request context compatible with both legacy and transcript-based Pi.
-            // Never rewrite an already-issued tool-call/result pair.
-            if(send.tools && final)send.tools=send.tools.filter((t:any)=>t.name==="guardian_decide");
-            const decisionReadyUserSourceIds=evidence.decisionReadyUserSourceIds();
-            send.messages.push({role:"system",timestamp:Date.now(),content:`Harness evidence status (not user authority): only these decision-ready original user source IDs may appear in userMessageIds for ALLOW or USER_REFUSED: ${JSON.stringify(decisionReadyUserSourceIds)}. A complete older source is not decision-ready until all later user directions have been read. Do not cite an incomplete or non-ready source; omit an unnecessary old source, follow guardian_user_changes nextCursor until complete, or ASK if a material gap remains.`});
-            if(final&&send.messages?.[0]?.role==="system")send.messages.push({role:"system",timestamp:Date.now(),content:"Final review response: no further evidence tools.",toolsRemoved:definitions.map(d=>({name:d.name}))});
-            if(final)send.messages.push({role:"user",timestamp:Date.now(),content:"Harness budget: final response. Decide now from available evidence; ASK if a material gap remains. Do not investigate further."});
-            const bytes=Buffer.byteLength(JSON.stringify(send));metrics.inputBytes+=bytes;
-            if(bytes>MAX_CONTEXT_BYTES||metrics.inputBytes>MAX_CUMULATIVE_BYTES)throw new Error("Review context budget exhausted; no authority silently omitted");
-            emit("INFO","model_request","Pi reviewer request started",{round,requestBytes:bytes,cumulativeBytes:metrics.inputBytes,finalDecisionOnly:final,remainingMs:remaining,instructionSources:currentInstructions.map(i=>i.id)});
-            const requestLimit=Math.min(["high","xhigh","max"].includes(o.thinking)?120_000:60_000,Math.max(1,remaining));
-            const response=await services.step(`model request ${round}`,{round,requestBytes:bytes},async signal=>{
-              const provider=await o.provider(signal,services.step);signal.throwIfAborted();
-              const caps:Record<Thinking,number>={off:1536,minimal:3072,low:4096,medium:12288,high:24576,xhigh:32768,max:32768};
-              const source=await provider.stream(provider.model,send,{..._options,...provider.options,signal,reasoning:o.thinking==="off"?undefined:o.thinking,maxTokens:Math.min(caps[o.thinking],o.model.maxTokens),maxRetries:0});
-              const iterator=source[Symbol.asyncIterator]();let count=0,lastProgress=0;
-              try{
-                for(;;){const next=await abortable(Promise.resolve(iterator.next()),signal);if(next.done)break;signal.throwIfAborted();
-                  const event=next.value;count++;
-                  if(count===1||Date.now()-lastProgress>10000){lastProgress=Date.now();emit("INFO","model_progress","Stream activity; content not logged",{round,eventType:event.type,events:count});}
-                  if(event.type==="done"||event.type==="error")continue;out.push(event);
-                }
-                const message=await abortable(Promise.resolve(source.result()),signal);signal.throwIfAborted();return message;
-              }finally{if(signal.aborted){try{void Promise.resolve(iterator.return?.()).catch(()=>{});}catch{}}}
-            },requestLimit);
-            services.signal.throwIfAborted();
-            emit("INFO","model_response","Pi reviewer response received",{round,stopReason:response.stopReason,...usageDetails(response.usage),responseTypes:(response.content??[]).map((b:any)=>b.type)});
-            if(response.stopReason==="error"||response.stopReason==="aborted")out.push({type:"error",reason:response.stopReason,error:response});
-            else out.push({type:"done",reason:response.stopReason,message:response});
-            out.end(response);ended=true;
-          }catch(e){lastError=errorText(e);emit("ERROR","model_request_failed","Request did not produce a usable response",{error:lastError,decisionAvailable:false});
-            const m=emptyReply(o.model,services.signal.aborted?"aborted":"error",lastError);out.push({type:"error",reason:m.stopReason,error:m});out.end(m);ended=true;
-          }finally{if(!ended){const m=emptyReply(o.model,"error","Stream closed unexpectedly");out.push({type:"error",reason:"error",error:m});out.end(m);}}
-        })();return out;
-      };
-      agent=new infra.Agent({initialState:{model:o.model,thinkingLevel:o.thinking,systemPrompt:HARNESS_INSTRUCTIONS+"\n\nAPPLICABLE INSTRUCTIONS (complete text, scoped):\n"+JSON.stringify(request.instructions),tools,messages:[]},
-        streamFn,toolExecution:"sequential",
-        transformContext:async(messages:any[])=>messages,
-        beforeToolCall:async(c:any)=>{
-          if(phase==="completed"||phase==="closed"||services.signal.aborted)return {block:true,reason:"Review finished or cancelled"};
-          if(c.assistantMessage?.content?.some((b:any)=>b.type==="toolCall"&&b.name==="guardian_decide")&&c.assistantMessage.content.filter((b:any)=>b.type==="toolCall").length!==1)return {block:true,reason:"Return a final decision alone, not with evidence calls"};
-          return undefined;
-        },finishTurn:()=>phase==="completed"?{action:"end"}:undefined,
-      });
-      const unsubscribe=agent.subscribe((event:any)=>{
-        if(phase==="closed")return;
-        if(event.type==="message_end"&&event.message?.role==="assistant"){
-          const m=event.message;latestCalls=(m.content??[]).filter((b:any)=>b.type==="toolCall");
-          if(!["toolUse","stop","error","aborted"].includes(m.stopReason)){
-            lastError=`Reviewer response ended with ${String(m.stopReason)}; no complete decision accepted`;
-            phase="closed";emit("ERROR","incomplete_model_response","Truncated/deferred response cannot authorize execution",{stopReason:m.stopReason});
-          }
-          for(const c of latestCalls)emit("INFO","reviewer_function_received","Native Pi private tool call",{functionName:c.name,functionCallId:c.id,arguments:c.arguments});
-          if(phase!=="completed"&&!latestCalls.length&&m.stopReason==="stop"){
-            try{accept(extractDecisionJson(m));}
-            catch(e){lastError=errorText(e);emit("ERROR","decision_validation_failed","Final JSON not accepted",{error:lastError});
-              if(++corrections<=1&&metrics.requests<MAX_MODEL_REQUESTS)agent?.followUp({role:"user",timestamp:Date.now(),content:`Harness validation error (not user authority): ${lastError}. Correct the decision or retrieve the missing evidence. No new permission is granted.`});
-            }
-          }else if(m.stopReason==="error"||m.stopReason==="aborted"){lastError=m.errorMessage||lastError;}
-        }
-        if(event.type==="tool_execution_start")emit("INVESTIGATE","reviewer_function_started","Private function started",{functionName:event.toolName,functionCallId:event.toolCallId,arguments:event.args});
-        if(event.type==="tool_execution_end")emit(event.isError?"ERROR":"INFO","reviewer_function_finished","Private function completed",{functionName:event.toolName,functionCallId:event.toolCallId,isError:event.isError,error:event.isError?clip(messageText({content:event.result?.content}),800):undefined,contentsLogged:false});
-      });
-      try{
-        await abortable(agent.prompt({role:"user",timestamp:Date.now(),content:JSON.stringify({action:request.action,...(request.dispute?{dispute:request.dispute}:{}),environment:request.environment,toolDescription:request.toolDescription,evidence:initial})}),services.signal);
-        services.signal.throwIfAborted();
-        if(!completed)throw new Error(agent.state.errorMessage||agent.state.error||lastError);
-        return {status:"completed",decision:completed,metrics};
-      }finally{unsubscribe();}
-    }catch(e){return {status:"incomplete",error:clip(errorText(e),4000),metrics};}
-    finally{phase="closed";services.signal.removeEventListener("abort",onAbort);agent?.abort();}
-  }
+const guardianEvidenceTools:readonly AgenticEvidenceDefinition<EvidenceService>[]=evidenceDefinitions().map(definition=>({
+  name:definition.name,label:definition.name,description:definition.description,parameters:definition.parameters,
+  execute:(evidence,args)=>evidence.call(definition.operation,args),
+}));
+const guardianReviewDomain:AgenticReviewDomain<ReviewRequest,EvidenceService,Decision>={
+  id:"pi-agent",
+  systemPrompt:request=>HARNESS_INSTRUCTIONS+"\n\nAPPLICABLE INSTRUCTIONS (complete text, scoped):\n"+JSON.stringify(request.instructions),
+  evidenceTools:guardianEvidenceTools,
+  decisionTool:{name:"guardian_decide",label:"Review decision",description:"Final authorization decision only; no action is executed. May instead return this object as final JSON text.",parameters:DECISION_SCHEMA},
+  initialPrompt:(request,evidence)=>({action:request.action,...(request.dispute?{dispute:request.dispute}:{}),environment:request.environment,toolDescription:request.toolDescription,evidence:evidence.initial()}),
+  prepareContext:(context,evidence,state)=>{
+    const ready=evidence.decisionReadyUserSourceIds();
+    context.messages.push({role:"system",timestamp:Date.now(),content:`Harness evidence status (not user authority): only these decision-ready original user source IDs may appear in userMessageIds for ALLOW or USER_REFUSED: ${JSON.stringify(ready)}. A complete older source is not decision-ready until all later user directions have been read. Do not cite an incomplete or non-ready source; omit an unnecessary old source, follow guardian_user_changes nextCursor until complete, or ASK if a material gap remains.`});
+    if(state.final&&context.messages?.[0]?.role==="system")context.messages.push({role:"system",timestamp:Date.now(),content:"Final review response: no further evidence tools.",toolsRemoved:state.evidenceToolNames.map(name=>({name}))});
+    if(state.final)context.messages.push({role:"user",timestamp:Date.now(),content:"Harness budget: final response. Decide now from available evidence; ASK if a material gap remains. Do not investigate further."});
+  },
+  requestDetails:evidence=>({instructionSources:[...evidence.instructions.values()].map(instruction=>instruction.id)}),
+  normalizeDecision,
+  decisionDetails:decision=>({outcome:decision.outcome,basis:decision.basis,userMessageIds:decision.userMessageIds,instructionRefs:decision.instructionRefs}),
+  isEvidenceBudgetError:error=>error instanceof EvidenceBudgetError,
+};
+export class PiAgentReviewer extends AgenticGuardReviewer<ReviewRequest,EvidenceService,Decision> implements GuardianReviewer {
+  constructor(options:PiReviewerOptions){super({...options,domain:guardianReviewDomain});}
 }
 function supportedThinking(model:Model<Api>):Thinking[]{if(!model.reasoning)return ["off"];const map=(model as any).thinkingLevelMap;return LEVELS.filter(l=>map?.[l]!==null&&(!["xhigh","max"].includes(l)||map?.[l]!==undefined));}
 function effectiveThinking(model:Model<Api>,requested:Thinking):Thinking{const levels=supportedThinking(model);return levels.includes(requested)?requested:levels.find(l=>LEVELS.indexOf(l)>=LEVELS.indexOf(requested))??levels.at(-1)??"off";}

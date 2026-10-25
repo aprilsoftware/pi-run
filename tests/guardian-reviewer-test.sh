@@ -6,7 +6,7 @@ PI_PACKAGE_DIR="${PI_PACKAGE_DIR:-$(npm root -g)/@earendil-works/pi-coding-agent
 
 node --input-type=module - "${ROOT}" "${PI_PACKAGE_DIR}" <<'NODE'
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -22,7 +22,11 @@ const alias = {
   '@earendil-works/pi-coding-agent': join(piDir, 'dist', 'index.js'),
   '@earendil-works/pi-ai': join(piDir, 'node_modules', '@earendil-works', 'pi-ai', 'dist', 'compat.js'),
 };
-const g = await createJiti(import.meta.url, { alias, fsCache: false }).import(join(root, 'docker', 'extensions', 'guardian-agent.ts'));
+const jiti = createJiti(import.meta.url, { alias, fsCache: false });
+const g = await jiti.import(join(root, 'docker', 'extensions', 'guardian-agent.ts'));
+const shared = await jiti.import(join(root, 'docker', 'extensions', 'guard-reviewer-agent.ts'));
+const dockerfile = await readFile(join(root, 'docker', 'Dockerfile'), 'utf8');
+assert.ok(dockerfile.includes('COPY extensions/guard-reviewer-agent.ts /usr/local/lib/node_modules/guardian-agent/'));
 const core = await import(pathToFileURL(packagePath('pi-agent-core')).href);
 const ai = await import(pathToFileURL(join(piDir, 'node_modules', '@earendil-works', 'pi-ai', 'dist', 'compat.js')).href);
 
@@ -77,6 +81,7 @@ try {
       },
     }),
   });
+  assert.ok(reviewer instanceof shared.AgenticGuardReviewer, 'Guardian must use the extracted agentic review harness');
 
   const request = {
     action: { toolName: 'bash', toolCallId: 'synthetic', input: { command: 'printf test' }, cwd: workspace },

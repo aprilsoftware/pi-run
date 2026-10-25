@@ -224,22 +224,30 @@ Each stage requires separate approval and stops after validation:
 
 1. [x] Add the shared-review contract and fake-client tests while production
    paths remain unchanged.
-2. [ ] Extract the Guardian agent harness and evidence dispatcher; prove
-   Guardian fixture and dispute parity.
-3. [ ] Add explicit shared Guard configuration and legacy explicit-model
+2. [x] Extract the reusable Pi-agent model loop and private-tool dispatcher;
+   preserve the Guardian domain adapter and prove reviewer/flow parity.
+3. [ ] Install the extracted harness as the runtime review backend and route
+   Guardian through the shared contract without changing reviewer selection.
+4. [ ] Add explicit shared Guard configuration and legacy explicit-model
    adoption, without fallback or provider calls.
-4. [ ] Add the CAF evidence profile and replace primary-model review with the
+5. [ ] Add the CAF evidence profile and replace primary-model review with the
    shared Guard agent; reject exact reviewer/friend equality.
-5. [ ] Add independent client modes, future-session defaults, and harmonized
+6. [ ] Add independent client modes, future-session defaults, and harmonized
    menus.
-6. [ ] Render both clients and model roles in the shared bottom widget.
-7. [ ] Update user documentation and run the complete isolated suite before any
+7. [ ] Render both clients and model roles in the shared bottom widget.
+8. [ ] Update user documentation and run the complete isolated suite before any
    controlled real-provider candidate.
 
 Stage 1 introduced a separately versioned additive review service with immutable
 client domains, bounded frozen JSON requests, FIFO execution, cancellation,
 strict result validation, and fail-closed unavailable/error outcomes. Only fake
 reviewer clients use it; production Guardian and CAF review paths are unchanged.
+
+Stage 2 moved the Pi model loop, private evidence-tool scheduling, budgets,
+cancellation, streaming, and decision-only lifecycle into a reusable domain-
+parameterized module. Guardian supplies its existing prompt, evidence operations,
+decision schema, and validation, and still invokes the harness directly; runtime
+routing and CAF behavior remain unchanged.
 
 No stage silently enables a client, migrates credentials, changes networking,
 contacts a real provider, pushes, tags, installs, or releases.
