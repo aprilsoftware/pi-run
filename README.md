@@ -2,9 +2,9 @@
 
 Pi-Run turns [Pi](https://pi.dev/) into a durable, containerized work environment
 for software development and system administration. It combines a capable,
-versioned toolchain with profiles, sessions, Guardian command review, and
-recovery while limiting host filesystem exposure to the workspace, profile, and
-narrowly defined runtime resources.
+versioned toolchain with profiles, sessions, Guardian command review, bounded
+Call a Friend consultations, and recovery while limiting host filesystem
+exposure to the workspace, profile, and narrowly defined runtime resources.
 
 ## Why Pi-Run exists
 
@@ -75,6 +75,10 @@ resources, and other infrastructure need their own recovery mechanisms.
   reviewer checks acting-agent `bash` and `run` calls. Supported actions proceed;
   disputed invocations are cancelled and left for human direction. Guardian
   starts Off.
+- **Call a Friend:** the private primary agent can send one mandatorily
+  reviewed, minimal disclosure to a separately configured advisory model, with
+  bounded questions, continuations, and destination-reviewed public search.
+  The friend receives no automatic workspace or primary-transcript access.
 - **Continuity:** stable workspace identities and saved sessions let you leave,
   resume, move a checkout, or reconnect work after recovery.
 - **Parallel repository work:** persistent managed Git worktrees give concurrent
@@ -181,7 +185,8 @@ implementation and its exact boundaries.
 - [Getting started](docs/getting-started.md)
 - [Profiles](docs/profiles.md), [skills](docs/skills.md), and
   [workspaces and sessions](docs/workspaces-and-sessions.md)
-- [Planning](docs/planning.md) and [Guardian command review](docs/guardian.md)
+- [Planning](docs/planning.md), [Guardian command review](docs/guardian.md), and
+  [Call a Friend](docs/call-a-friend.md)
 - [SSH access](docs/ssh.md)
 - [Encrypted snapshots and recovery](docs/snapshots.md)
 - [Security and isolation](docs/security.md)

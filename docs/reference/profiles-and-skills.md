@@ -129,6 +129,9 @@ directories must also be ordinary contained directories. When `caf/` is
 present, it receives the same directory checks; an optional `caf/caf.md`
 receives the same containment and link checks as other definition files.
 
+See [Call a Friend](../call-a-friend.md) for the focused configuration,
+dialogue, public-search, diagnostic, and boundary guide.
+
 Fresh default profiles include `caf/caf.md`, and profile creation copies it when
 the source has one. Profiles without a CAF policy remain valid and are not
 modified automatically. The policy defines profile-specific external-disclosure

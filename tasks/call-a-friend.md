@@ -294,6 +294,20 @@ Each stage was implemented through a separate approved increment:
 Completion of this experimental sequence does not authorize a release,
 publication, real-provider test, or the next product increment.
 
+## Integration-readiness evidence
+
+The complete isolated shell suite was run after the implementation sequence: all
+59 scripts exited successfully. The real-Docker managed-worktree test reported
+its expected opt-in skip, and Guardian's live-provider review subcases remained
+disabled; neither is reported as passed. Fake-provider CAF lifecycle, full
+Guardian fixtures, shared journal concurrency, profile compatibility, packaging,
+network policy, snapshots, SSH, upgrade, and ordinary worktree tests completed.
+Documentation links and the complete `main...HEAD` diff were also checked.
+
+This evidence makes the branch ready for a merge or real-provider testing
+decision. It is not real-Docker validation, real-provider interoperability,
+release readiness, or publication approval.
+
 ## Remaining questions and acceptance
 
 The experiment selected a maximum of three questions and three rounds per

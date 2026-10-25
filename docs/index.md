@@ -32,6 +32,14 @@ When enabled, Guardian uses a separate evidence-aware reviewer for acting-agent
 otherwise it cancels the invocation and opens a human-arbitrated dispute. The
 agent's structured position receives an advisory reassessment but cannot grant
 itself authority or release the action. Guardian starts Off and is not a sandbox.
+
+Call a Friend lets the private primary agent request bounded advice from a
+separately configured model. Every primary-to-friend disclosure is reviewed for
+its exact purpose and destination; public-search queries receive a separate
+review. The friend receives no automatic transcript, workspace, credential, or
+general tool access. CAF is application-level context isolation, not a sandbox
+or confidentiality proof.
+
 The container narrows exposure, but selected mounts contain real host data and
 the default backend uses host networking. Explicit offline and restricted TCP
 modes narrow session networking with exact hosts, domains,
@@ -62,6 +70,7 @@ essays.
 | [Workspaces and sessions](workspaces-and-sessions.md) | Continue named conversations by stable workspace identity, find them across profiles, reconnect them after recovery, and use persistent managed Git worktrees for parallel repository sessions. |
 | [Planning](planning.md) | Investigate alternatives, refine a saved plan, and approve an exact revision before handing work back to the normal execution workflow. |
 | [Guardian](guardian.md) | Review acting-agent `bash` and `run` calls, automatically releasing supported actions and focusing human attention where judgment is needed. |
+| [Call a Friend](call-a-friend.md) | Ask a separately configured model for bounded advice through destination-specific disclosure review, constrained dialogue, and optional reviewed public search. |
 | [SSH access](ssh.md) | Give a profile a dedicated remote identity without mounting the host's entire SSH directory. |
 | [Encrypted snapshots](snapshots.md) | Protect portable Pi-Run state, automate successful-exit recovery points, move between workstations, or restore deliberately. Use Git or backups for workspace and infrastructure data. |
 
@@ -95,6 +104,8 @@ guides to understand each boundary.
   a plan without bypassing execution checkpoints.
 - [Guardian command review](guardian.md): configure review, arbitrate disputes,
   and inspect private diagnostics while understanding its limits.
+- [Call a Friend](call-a-friend.md): configure an advisory model, review exact
+  disclosures, continue bounded questions, and inspect separate diagnostics.
 - [Workspaces and sessions](workspaces-and-sessions.md): identity, continuation,
   saved-session discovery, reconnection, and managed Git worktrees for parallel
   repository sessions.
