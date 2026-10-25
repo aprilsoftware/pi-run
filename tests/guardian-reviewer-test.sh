@@ -56,7 +56,20 @@ try {
   const unselectedBinding=g.createPiReviewerBinding({pi:{getThinkingLevel:()=> 'high'},config:()=>shared.defaultGuardReviewerConfig(),
     changed(){},async updateConfig(){},tell(){},log:()=>()=>{}});
   assert.throws(()=>unselectedBinding.select({modelRegistry:{find(){throw new Error('must not resolve a conversation fallback');}}}),/model is not selected/);
-  console.log('PASS guardian-reviewer: private shared config, explicit legacy adoption, and no implicit model fallback');
+  const backendHandlers=new Map(),backendPi={on:(name,handler)=>{backendHandlers.set(name,handler);return()=>backendHandlers.delete(name);}};
+  const previousProfile=process.env.PI_RUN_PROFILE_DIR;process.env.PI_RUN_PROFILE_DIR=profile;
+  const backend=shared.createAgenticGuardReviewBackend(backendPi);
+  if(previousProfile===undefined)delete process.env.PI_RUN_PROFILE_DIR;else process.env.PI_RUN_PROFILE_DIR=previousProfile;
+  const configuredModel={id:'reviewer',provider:'trusted',api:'openai-responses',reasoning:false,contextWindow:128_000,maxTokens:4096};
+  const resolutions=[];backendHandlers.get('session_start')({}, {modelRegistry:{find:(provider,id)=>{resolutions.push(`${provider}/${id}`);return provider==='trusted'&&id==='reviewer'?configuredModel:undefined;}}});
+  let backendSelection;
+  shared.registerAgenticGuardReviewDomain(backendPi,'guardian','guardian-command.v1','guardian-decision.v1',{async review(_request,_context,_session,selection){backendSelection=selection;return {schemaVersion:1,status:'completed',decision:{outcome:'ALLOW'}};}});
+  const backendResult=await backend.review({schemaVersion:1,client:{schemaVersion:1,id:'guardian',label:'Guardian',evidenceProfile:'guardian-command.v1',decisionContract:'guardian-decision.v1'},action:{},policy:{}},
+    {signal:new AbortController().signal,report(){}});
+  assert.equal(backendResult.status,'completed');assert.deepEqual(resolutions,['trusted/reviewer']);assert.equal(backendSelection.model,configuredModel);
+  assert.equal(backendSelection.requestedThinking,'high');assert.equal(backendSelection.thinking,'off');assert.equal(backendSelection.modelSource,'guard_file');
+  assert.equal(backendSelection.thinkingSource,'guard_config');assert.equal(backendSelection.budget.totalMs,180_000);
+  console.log('PASS guardian-reviewer: private shared config, backend-owned resolution, explicit legacy adoption, and no implicit model fallback');
 
   const files = [];
   for (let i = 1; i <= 4; i++) {

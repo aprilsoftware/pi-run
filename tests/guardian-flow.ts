@@ -37,8 +37,10 @@ async function runScenario(name: Scenario, realUI?: ExtensionUIContext, withRunt
   const widgets=new Map<string,any>();
   const tui = { requestRender: () => { for(const widget of widgets.values())statusLines.push(widget.render(120)[0]); } };
   const theme = { fg: (_color:string, text:string) => text, bold:(text:string)=>text };
+  const reviewerModel={id:"reviewer",provider:"synthetic",api:"openai-responses",reasoning:false,contextWindow:128_000,maxTokens:4096};
   const ctx = {
     cwd: workspace, mode:name==="no-ui"?"print":"tui",hasUI: name !== "no-ui", hasPendingMessages: () => false,
+    model:reviewerModel,modelRegistry:{find:(provider:string,id:string)=>provider==="synthetic"&&id==="reviewer"?reviewerModel:undefined,getAvailable:()=>[reviewerModel]},
     abort: () => { aborts++; },
     sessionManager: {
       getSessionId: () => sessionId, getCwd: () => workspace,
@@ -74,7 +76,7 @@ async function runScenario(name: Scenario, realUI?: ExtensionUIContext, withRunt
     await mkdir(workspace);
     await writeFile(join(profile, "AGENTS.md"), "Synthetic profile: user direction defines authorization.\n");
     await writeFile(join(profile, "guardian", "guardian.md"), "Synthetic reviewer fixture; never execute actions.\n");
-    const config = JSON.stringify({ schemaVersion: 1, mode: "on", model: null, thinking: "low" });
+    const config = JSON.stringify({ schemaVersion: 1, mode: "on", model: "synthetic/reviewer", thinking: "low" });
     await writeFile(join(profile, "guardian", "config.json"), config, { mode: 0o600 });
     const api = {
       events:{on:(channel:string,handler:(data:unknown)=>void)=>{const values=busHandlers.get(channel)??new Set();values.add(handler);busHandlers.set(channel,values);return()=>values.delete(handler);},

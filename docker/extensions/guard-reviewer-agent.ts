@@ -22,6 +22,32 @@ export function parseGuardReviewerConfig(text: string): GuardReviewerConfig {
 export function adoptLegacyGuardReviewerConfig(legacy: { model: string | null; thinking: AgenticThinking | null }): GuardReviewerConfig {
   return legacy.model ? parseGuardReviewerConfig(JSON.stringify({ schemaVersion: 1, model: legacy.model, thinking: legacy.thinking })) : defaultGuardReviewerConfig();
 }
+export interface ResolvedGuardReviewerConfig { config: GuardReviewerConfig; source: "guard_file" | "legacy_explicit" | "default"; }
+async function loadLegacyGuardReviewerConfig(stateDir: string): Promise<GuardReviewerConfig> {
+  const state=await realpath(stateDir),directory=join(stateDir,"guardian"),metadata=await lstat(directory);
+  if(!metadata.isDirectory()||metadata.isSymbolicLink()||await realpath(directory)!==join(state,"guardian"))throw new Error("Legacy Guardian configuration directory is redirected");
+  const file=await open(join(directory,"config.json"),constants.O_RDONLY|constants.O_NOFOLLOW);
+  try{
+    const info=await file.stat();if(!info.isFile()||info.nlink!==1||info.size>GUARD_CONFIG_BYTES)throw new Error("Legacy Guardian configuration must be a bounded single-link regular file");
+    const buffer=Buffer.alloc(GUARD_CONFIG_BYTES+1);let length=0;
+    while(length<buffer.length){const read=await file.read(buffer,length,buffer.length-length,null);if(!read.bytesRead)break;length+=read.bytesRead;}
+    if(length>GUARD_CONFIG_BYTES)throw new Error("Legacy Guardian configuration exceeds 16 KiB");
+    const parsed=JSON.parse(buffer.subarray(0,length).toString("utf8"));
+    if(!parsed||typeof parsed!=="object"||Array.isArray(parsed)||Object.getPrototypeOf(parsed)!==Object.prototype)throw new Error("Invalid legacy Guardian configuration");
+    const value=parsed as Record<string,unknown>,keys=Object.keys(value).sort().join(",");
+    const current=value.schemaVersion===2&&keys==="model,schemaVersion,thinking";
+    const legacy=value?.schemaVersion===1&&keys==="mode,model,schemaVersion,thinking"&&["on","off"].includes(String(value.mode));
+    if((!current&&!legacy)||!(value.model===null||typeof value.model==="string"&&value.model.length<=512&&/^[^\s/]+\/[^\s]+$/.test(value.model))||
+      !(value.thinking===null||GUARD_THINKING.includes(value.thinking as AgenticThinking)))throw new Error("Invalid legacy Guardian configuration");
+    return adoptLegacyGuardReviewerConfig({model:value.model as string|null,thinking:value.thinking as AgenticThinking|null});
+  }finally{await file.close();}
+}
+export async function resolveGuardReviewerConfig(stateDir: string): Promise<ResolvedGuardReviewerConfig> {
+  try{return {config:await loadGuardReviewerConfig(stateDir),source:"guard_file"};}
+  catch(error){if((error as NodeJS.ErrnoException).code!=="ENOENT")throw error;}
+  try{const config=await loadLegacyGuardReviewerConfig(stateDir);return {config,source:config.model?"legacy_explicit":"default"};}
+  catch(error){if((error as NodeJS.ErrnoException).code!=="ENOENT")throw error;return {config:defaultGuardReviewerConfig(),source:"default"};}
+}
 async function guardConfigDirectory(stateDir: string, create: boolean): Promise<string> {
   const state = await realpath(stateDir), directory = join(stateDir, "guard");
   if (create) await mkdir(directory, { recursive: true, mode: 0o700 });
@@ -95,8 +121,17 @@ export interface AgenticGuardBackendContext {
   readonly signal: AbortSignal;
   report(event: { schemaVersion: 1; level: "INFO" | "INVESTIGATE" | "ERROR" | "CANCELLED"; event: string; message: string; details?: unknown }): void;
 }
+export interface AgenticGuardReviewerSelection {
+  readonly model: Model<Api>;
+  readonly thinking: AgenticThinking;
+  readonly requestedThinking: AgenticThinking;
+  readonly modelSource: ResolvedGuardReviewerConfig["source"];
+  readonly thinkingSource: "guard_config" | "guard_default" | "legacy_config";
+  readonly budget: Readonly<{ totalMs: number; slowMs: number }>;
+}
 export interface AgenticGuardReviewDomainHandler {
-  review(request: Readonly<AgenticGuardBackendRequest>, context: Readonly<AgenticGuardBackendContext>, session: ExtensionContext): Promise<unknown>;
+  review(request: Readonly<AgenticGuardBackendRequest>, context: Readonly<AgenticGuardBackendContext>, session: ExtensionContext,
+    selection: Readonly<AgenticGuardReviewerSelection>): Promise<unknown>;
 }
 type AgenticDomainRegistration = { clientId: string; evidenceProfile: string; decisionContract: string; handler: AgenticGuardReviewDomainHandler };
 const agenticDomains = new WeakMap<ExtensionAPI, Map<string, AgenticDomainRegistration>>();
@@ -113,7 +148,17 @@ export function registerAgenticGuardReviewDomain(pi: ExtensionAPI, clientId: str
   const registration = Object.freeze({ clientId, evidenceProfile, decisionContract, handler: registeredHandler }); domains.set(key, registration);
   return () => { if (domains?.get(key) === registration) domains.delete(key); };
 }
+export function supportedAgenticThinking(model:Model<Api>):AgenticThinking[]{
+  if(!model.reasoning)return ["off"];
+  const map=(model as Model<Api>&{thinkingLevelMap?:Record<string,unknown>}).thinkingLevelMap;
+  return GUARD_THINKING.filter(level=>map?.[level]!==null&&(!["xhigh","max"].includes(level)||map?.[level]!==undefined));
+}
+export function effectiveAgenticThinking(model:Model<Api>,requested:AgenticThinking):AgenticThinking{
+  const levels=supportedAgenticThinking(model);return levels.includes(requested)?requested:
+    levels.find(level=>GUARD_THINKING.indexOf(level)>=GUARD_THINKING.indexOf(requested))??levels.at(-1)??"off";
+}
 export function createAgenticGuardReviewBackend(pi: ExtensionAPI): { review(request: Readonly<AgenticGuardBackendRequest>, context: Readonly<AgenticGuardBackendContext>): Promise<unknown> } {
+  const stateDir=process.env.PI_RUN_PROFILE_DIR||"/profile";
   let session: ExtensionContext | undefined;
   pi.on("session_start", (_event, ctx) => { session = ctx; });
   pi.on("session_tree", (_event, ctx) => { session = ctx; });
@@ -124,8 +169,21 @@ export function createAgenticGuardReviewBackend(pi: ExtensionAPI): { review(requ
       const active = session; if (!active) throw new Error("Guard reviewer backend is unavailable: session context is missing");
       const registration = agenticDomains.get(pi)?.get(domainKey(request.client.id, request.client.evidenceProfile, request.client.decisionContract));
       if (!registration) throw new Error(`Unsupported Guard review domain: ${request.client.evidenceProfile} / ${request.client.decisionContract}`);
-      const result = await registration.handler.review(request, context, active);
-      context.signal.throwIfAborted(); return result;
+      const resolved=await resolveGuardReviewerConfig(stateDir),configured=resolved.config.model;
+      if(!configured)throw new Error("Guard reviewer model is not selected");
+      const split=configured.indexOf("/"),model=active.modelRegistry.find(configured.slice(0,split),configured.slice(split+1));
+      if(!model)throw new Error(`Guard reviewer model is unavailable: ${configured}`);
+      const requestedThinking=resolved.config.thinking??"low",thinking=effectiveAgenticThinking(model,requestedThinking);
+      const budget=Object.freeze({totalMs:["high","xhigh","max"].includes(thinking)?270_000:180_000,slowMs:15_000});
+      const selection:Readonly<AgenticGuardReviewerSelection>=Object.freeze({model,thinking,requestedThinking,modelSource:resolved.source,
+        thinkingSource:resolved.config.thinking?(resolved.source==="legacy_explicit"?"legacy_config":"guard_config"):"guard_default",budget});
+      const deadline=new AbortController(),signal=AbortSignal.any([context.signal,deadline.signal]);
+      const backendContext:Readonly<AgenticGuardBackendContext>=Object.freeze({signal,report:event=>context.report(event)});
+      const timer=setTimeout(()=>deadline.abort(new Error(`Guard reviewer exceeded ${budget.totalMs/1000} seconds`)),budget.totalMs);
+      try{
+        const result=await abortable(Promise.resolve(registration.handler.review(request,backendContext,active,selection)),signal);
+        signal.throwIfAborted();return result;
+      }finally{clearTimeout(timer);deadline.abort(new Error("Guard reviewer finished"));}
     },
   });
 }

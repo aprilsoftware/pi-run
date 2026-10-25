@@ -232,7 +232,7 @@ Each stage requires separate approval and stops after validation:
    Guardian through the shared contract without changing reviewer selection.
 5. [x] Add private shared Guard configuration, safe legacy explicit-model
    adoption, and no implicit conversation-model fallback.
-6. [ ] Move shared reviewer resolution fully into the runtime backend without
+6. [x] Move shared reviewer resolution fully into the runtime backend without
    changing the selected destination or contacting a provider.
 7. [ ] Add the CAF evidence profile and replace primary-model review with the
    shared Guard agent; reject exact reviewer/friend equality.
@@ -272,8 +272,16 @@ Stage 5 added lazy atomic `guard/config.json` storage with private directory/fil
 validation. An explicit legacy Guardian model may be adopted in memory while a
 legacy null model leaves review unavailable; the legacy file is never rewritten.
 Explicit Guardian model/thinking saves now target the shared file, and profile
-cloning excludes it. Reviewer construction remains in Guardian's trusted domain
-adapter until the next separately approved backend-resolution stage.
+cloning excludes it. At that stage reviewer construction remained in Guardian's
+trusted domain adapter pending the separately approved backend-resolution work.
+
+Stage 6 moved production model lookup, effective-thinking selection, and reviewer
+timeout ownership into the runtime backend. Guardian now retains only an opaque
+single-use evidence request; it constructs the domain reviewer from the backend's
+immutable selection and cannot choose a destination through review action JSON.
+Missing configuration, unavailable models, timeout, cancellation, and late
+results remain fail closed. Test-only injected reviewers remain available to
+isolated fixtures and are not the production path.
 
 No stage silently enables a client, migrates credentials, changes networking,
 contacts a real provider, pushes, tags, installs, or releases.

@@ -18,7 +18,7 @@ import { createGuardJournalWriter, maintainGuardJournalRetention, readGuardJourn
 import { AgenticGuardReviewer, adoptLegacyGuardReviewerConfig, defaultGuardReviewerConfig, loadGuardReviewerConfig,
   registerAgenticGuardReviewDomain, saveGuardReviewerConfig,
   type AgenticEvidenceDefinition, type AgenticGuardBackendContext, type AgenticGuardBackendRequest,
-  type AgenticReviewDomain, type GuardReviewerConfig, type PiInfrastructure, type ProviderStream,
+  type AgenticGuardReviewerSelection, type AgenticReviewDomain, type GuardReviewerConfig, type PiInfrastructure, type ProviderStream,
 } from "./guard-reviewer-agent.ts";
 export { loadPiInfrastructure } from "./guard-reviewer-agent.ts";
 export type { NativeAgentLike, PiInfrastructure, ProviderStream } from "./guard-reviewer-agent.ts";
@@ -1629,14 +1629,23 @@ export function createGuardianExtension(factory: ReviewerFactory = createPiRevie
 
     const binding = factory({ pi, changed: invalidate, config:()=>config, updateConfig, tell, log: ctx => sink(ctx) });
     if (!binding || typeof binding.select !== "function") throw new Error("Reviewer factory must provide select(ctx)");
-    type PendingRuntimeReview={request:ReviewRequest;reviewer:GuardianReviewer;reviewerId:string;deadlineAt:number;stats:Stats;
+    const productionReviewer=factory===createPiReviewerBinding;
+    type PendingRuntimeReview={request:ReviewRequest;reviewer?:GuardianReviewer;reviewerId:string;startedAt:number;deadlineAt:number;stats:Stats;
       sessionId:string;cwd:string;claimed:boolean};
     const pendingRuntimeReviews=new Map<string,PendingRuntimeReview>();
+    function reviewerDispatch(ctx:ExtensionContext):{reviewer?:GuardianReviewer;reviewerId:string;budget:{totalMs:number;slowMs:number}}{
+      if(productionReviewer)return {reviewerId:"pi-agent",budget:{totalMs:270_000,slowMs:15_000}};
+      const reviewer=binding.select(ctx);
+      if(!reviewer||typeof reviewer.review!=="function"||typeof reviewer.id!=="string"||!reviewer.id.trim()||reviewer.id.length>128)
+        throw new Error("Invalid reviewer implementation");
+      return {reviewer,reviewerId:reviewer.id,budget:validBudget(reviewer.budget)};
+    }
     const diagnosticLevel=(level:LogLevel):"INFO"|"INVESTIGATE"|"ERROR"|"CANCELLED"=>
       level==="INVESTIGATE"?"INVESTIGATE":level==="ERROR"?"ERROR":level==="CANCELLED"?"CANCELLED":"INFO";
     const wireCopy=<T,>(value:T):T=>JSON.parse(JSON.stringify(value)) as T;
     registerAgenticGuardReviewDomain(pi,"guardian","guardian-command.v1","guardian-decision.v1",{
-      async review(backendRequest:Readonly<AgenticGuardBackendRequest>,backendContext:Readonly<AgenticGuardBackendContext>,sessionContext:ExtensionContext):Promise<unknown>{
+      async review(backendRequest:Readonly<AgenticGuardBackendRequest>,backendContext:Readonly<AgenticGuardBackendContext>,sessionContext:ExtensionContext,
+        selection:Readonly<AgenticGuardReviewerSelection>):Promise<unknown>{
         const action=plain(backendRequest.action),policy=plain(backendRequest.policy);
         if(Object.keys(action).sort().join(",")!=="requestId,schemaVersion"||action.schemaVersion!==1||
           typeof action.requestId!=="string"||!/^[0-9a-f-]{36}$/.test(action.requestId)||
@@ -1648,23 +1657,30 @@ export function createGuardianExtension(factory: ReviewerFactory = createPiRevie
           throw new Error("Guardian runtime review context changed before dispatch");
         const emit:LogSink=(level,event,message,details)=>backendContext.report({schemaVersion:1,level:diagnosticLevel(level),event,message,
           ...(details===undefined?{}:{details:wireCopy(details)})});
-        const trace=new ReviewTrace(emit,backendContext.signal,pending.deadlineAt,stage=>{pending.stats.stage=stage;});
+        const reviewer=pending.reviewer??new PiAgentReviewer({model:selection.model,thinking:selection.thinking as Thinking,
+          requestedThinking:selection.requestedThinking as Thinking,modelSource:selection.modelSource,thinkingSource:selection.thinkingSource,
+          provider:(signal,step)=>resolveProvider(sessionContext,selection.model,signal,step)});
+        if(reviewer.id!==pending.reviewerId)throw new Error("Guardian runtime reviewer identity changed before dispatch");
+        const deadlineAt=pending.reviewer?pending.deadlineAt:pending.startedAt+selection.budget.totalMs,deadline=new AbortController();
+        const reviewSignal=AbortSignal.any([backendContext.signal,deadline.signal]);
+        const timer=setTimeout(()=>deadline.abort(new ReviewTimeoutError(`Review exceeded ${selection.budget.totalMs/1000} seconds`,"reviewer assessment")),Math.max(1,deadlineAt-Date.now()));
+        const trace=new ReviewTrace(emit,reviewSignal,deadlineAt,stage=>{pending.stats.stage=stage;});
         let failure:unknown;
         try{
-          const services=reviewServices(pending.request,backendContext.signal,emit,pending.stats,trace);
-          const raw=await trace.step("reviewer assessment",{reviewerId:pending.reviewerId},()=>pending.reviewer.review(pending.request,services));
-          backendContext.signal.throwIfAborted();
+          const services=reviewServices(pending.request,reviewSignal,emit,pending.stats,trace);
+          const raw=await trace.step("reviewer assessment",{reviewerId:pending.reviewerId},()=>reviewer.review(pending.request,services));
+          reviewSignal.throwIfAborted();
           const result=validateReviewResult(raw,pending.request);
           if(result.metrics?.requests!==undefined)pending.stats.requests=result.metrics.requests;
           if(result.status==="incomplete")return {schemaVersion:1,status:"incomplete",error:result.error};
           return {schemaVersion:1,status:"completed",decision:wireCopy({schemaVersion:1,reviewerId:pending.reviewerId,reviewResult:result})};
         }catch(error){failure=error;throw error;}
-        finally{trace.close(failure);}
+        finally{clearTimeout(timer);deadline.abort(failure??new Error("Review finished"));trace.close(failure);}
       },
     });
-    async function dispatchRuntimeReview(request:ReviewRequest,reviewer:GuardianReviewer,deadlineAt:number,signal:AbortSignal,
+    async function dispatchRuntimeReview(request:ReviewRequest,reviewer:GuardianReviewer|undefined,reviewerId:string,startedAt:number,deadlineAt:number,signal:AbortSignal,
       emit:LogSink,stats:Stats,ctx:ExtensionContext):Promise<ReviewResult>{
-      const requestId=randomUUID(),pending:PendingRuntimeReview={request,reviewer,reviewerId:reviewer.id,deadlineAt,stats,
+      const requestId=randomUUID(),pending:PendingRuntimeReview={request,...(reviewer?{reviewer}:{}),reviewerId,startedAt,deadlineAt,stats,
         sessionId:ctx.sessionManager.getSessionId(),cwd:ctx.cwd,claimed:false};
       pendingRuntimeReviews.set(requestId,pending);
       try{
@@ -1673,7 +1689,7 @@ export function createGuardianExtension(factory: ReviewerFactory = createPiRevie
             emit(event.level,event.event,event.message,event.details as Record<string,unknown>|undefined)});
         if(raw.status==="incomplete")return {status:"incomplete",error:raw.error};
         const envelope=plain(raw.decision);
-        if(Object.keys(envelope).sort().join(",")!=="reviewResult,reviewerId,schemaVersion"||envelope.schemaVersion!==1||envelope.reviewerId!==reviewer.id)
+        if(Object.keys(envelope).sort().join(",")!=="reviewResult,reviewerId,schemaVersion"||envelope.schemaVersion!==1||envelope.reviewerId!==reviewerId)
           throw new Error("Invalid Guardian runtime review envelope");
         return validateReviewResult(envelope.reviewResult,request);
       }finally{pendingRuntimeReviews.delete(requestId);}
@@ -1769,9 +1785,7 @@ export function createGuardianExtension(factory: ReviewerFactory = createPiRevie
         });
         emit("INFO","review_started","Reviewing a structured dispute justification",{reviewScope:"dispute_assessment",
           action:snapshot.action?actionPreview(snapshot.action.input as Json):{},disputeId:snapshot.id});
-        const reviewer=binding.select(ctx);
-        if(!reviewer||typeof reviewer.review!=="function"||typeof reviewer.id!=="string"||!reviewer.id.trim()||reviewer.id.length>128)throw new Error("Invalid reviewer implementation");
-        const budget=validBudget(reviewer.budget),deadlineAt=Date.now()+budget.totalMs;
+        const {reviewer,reviewerId,budget}=reviewerDispatch(ctx),deadlineAt=Date.now()+budget.totalMs;
         trace=new ReviewTrace(emit,signal,deadlineAt,stage=>{stats.stage=stage;});
         timer=setTimeout(()=>{timedOut=true;deadline.abort(new ReviewTimeoutError(`Dispute assessment exceeded ${budget.totalMs/1000} seconds`,trace?.stage()??"assessment"));},budget.totalMs);
         const event={type:"tool_call",toolName:snapshot.action.toolName,toolCallId:snapshot.action.toolCallId,
@@ -1779,8 +1793,8 @@ export function createGuardianExtension(factory: ReviewerFactory = createPiRevie
         const base=await trace.step("prepare dispute assessment",{},child=>prepareReview(pi,ctx,event,stateDir,child,emit,store),PREPARATION_TIMEOUT_MS);
         const request=freeze({...base,action:snapshot.action,
           dispute:{guardianReason:snapshot.reason,...(snapshot.originalOutcome?{originalOutcome:snapshot.originalOutcome}:{}),justification}}) as ReviewRequest;
-        const raw=await trace.step("review dispute justification",{reviewerId:reviewer.id},
-          ()=>dispatchRuntimeReview(request,reviewer,deadlineAt,signal,emit,stats,ctx));
+        const raw=await trace.step("review dispute justification",{reviewerId},
+          ()=>dispatchRuntimeReview(request,reviewer,reviewerId,started,deadlineAt,signal,emit,stats,ctx));
         signal.throwIfAborted();
         const result=validateReviewResult(raw,request);if(result.status==="incomplete")throw new Error(result.error);
         if(generation!==revision||session!==ctx.sessionManager.getSessionId()||cwd!==ctx.cwd||dispute?.id!==snapshot.id||ctx.hasPendingMessages())
@@ -1791,7 +1805,7 @@ export function createGuardianExtension(factory: ReviewerFactory = createPiRevie
         const level=decision.outcome==="ALLOW"?"ALLOW":decision.outcome==="ASK"?"ASK":"BLOCK";
         emit(level,"dispute_assessment_decision",assessment.reason,{disputeId:snapshot.id,outcome:decision.outcome,basis:decision.basis??null,
           userMessageIds:decision.userMessageIds??[],authorizationGranted:false,pendingInvocationReleased:false});
-        emit(level,"review_decision",assessment.reason,{reviewerId:reviewer.id,outcome:decision.outcome,reason:assessment.reason,basis:decision.basis??null,
+        emit(level,"review_decision",assessment.reason,{reviewerId,outcome:decision.outcome,reason:assessment.reason,basis:decision.basis??null,
           effects:decision.effects??null,instructionRefs:decision.instructionRefs??[],explanationSource:decision.reason?"reviewer":"extension_fallback",
           userMessageIds:decision.userMessageIds??[],decisionAvailable:true,assessment:true,authorizationGranted:false,pendingInvocationReleased:false});
         return assessment;
@@ -2009,11 +2023,9 @@ export function createGuardianExtension(factory: ReviewerFactory = createPiRevie
         let timer: ReturnType<typeof setTimeout> | undefined, pulse: ReturnType<typeof setInterval> | undefined;
         let runTrace: ReviewTrace | undefined, failureError: unknown;
         try {
-          const reviewer = binding.select(ctx);
-          if (!reviewer || typeof reviewer.review !== "function" || typeof reviewer.id !== "string" || !reviewer.id.trim() || reviewer.id.length > 128) throw new Error("Invalid reviewer implementation");
-          const budget = validBudget(reviewer.budget);
+          const {reviewer,reviewerId,budget}=reviewerDispatch(ctx);
           const deadlineAt = Date.now() + budget.totalMs;
-          trace.reviewerId = reviewer.id;
+          trace.reviewerId = reviewerId;
           runTrace = new ReviewTrace(emit, reviewSignal, deadlineAt, stage => { stats.stage = stage; });
           timer = setTimeout(() => {
             const pending = runTrace!.pending();
@@ -2033,19 +2045,19 @@ export function createGuardianExtension(factory: ReviewerFactory = createPiRevie
               }); lastProgress = Date.now();
             }
           }, 1000);
-          emit("INFO", "reviewer_dispatched", "Selected reviewer implementation and bounded time budget", { reviewerId: reviewer.id, ...budget });
+          emit("INFO", "reviewer_dispatched", "Selected reviewer implementation and bounded time budget", { reviewerId, ...budget });
           const request = await runTrace.step("prepare review", {}, child => prepareReview(pi, ctx, structuredClone(event), stateDir, child, emit, store), PREPARATION_TIMEOUT_MS);
           reviewSignal.throwIfAborted();
-          const rawResult = await runTrace.step("shared review dispatch", { reviewerId: reviewer.id },
-            async () => dispatchRuntimeReview(request,reviewer,deadlineAt,reviewSignal,emit,stats,ctx));
+          const rawResult = await runTrace.step("shared review dispatch", { reviewerId },
+            async () => dispatchRuntimeReview(request,reviewer,reviewerId,started,deadlineAt,reviewSignal,emit,stats,ctx));
           reviewSignal.throwIfAborted();
-          const result = await runTrace.step("validate reviewer result", { reviewerId: reviewer.id }, async () => validateReviewResult(rawResult, request));
+          const result = await runTrace.step("validate reviewer result", { reviewerId }, async () => validateReviewResult(rawResult, request));
           if (result.metrics?.requests !== undefined) stats.requests = result.metrics.requests;
           if (result.status === "incomplete") throw new Error(result.error);
           found = { ...result.decision, userMessageIds: [...(result.decision.userMessageIds ?? [])] };
           stats.result = found.outcome; stats.reason = decisionExplanation(found); trace.decision = found;
           emit(found.outcome === "USER_REFUSED" ? "BLOCK" : found.outcome, "review_decision", decisionExplanation(found), {
-            reviewerId: reviewer.id, outcome: found.outcome, reason: found.reason ?? null, reasonCode: found.reasonCode ?? null,
+            reviewerId, outcome: found.outcome, reason: found.reason ?? null, reasonCode: found.reasonCode ?? null,
             basis: found.basis ?? null, effects: found.effects ?? null, instructionRefs: found.instructionRefs ?? [],
             explanationSource: found.reason ? "reviewer" : "extension_fallback", userMessageIds: found.userMessageIds, decisionAvailable: true,
             durationMs: Date.now() - started, requests: stats.requests,
