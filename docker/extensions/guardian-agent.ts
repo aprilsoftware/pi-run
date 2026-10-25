@@ -12,10 +12,12 @@
 import type { ExtensionAPI, ExtensionContext, ToolCallEvent } from "@earendil-works/pi-coding-agent";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { Text } from "@earendil-works/pi-tui";
-import { connectGuardClient, type GuardActivityLeaseV1, type GuardActivityRequestV1 } from "./guard-runtime.ts";
+import { connectGuardClient, connectGuardReviewClient, type GuardActivityLeaseV1, type GuardActivityRequestV1,
+  type GuardReviewDiagnosticSnapshotV1, type GuardReviewResultV1 } from "./guard-runtime.ts";
 import { createGuardJournalWriter, maintainGuardJournalRetention, readGuardJournal } from "./guard-journal.ts";
-import { AgenticGuardReviewer,
-  type AgenticEvidenceDefinition, type AgenticReviewDomain, type PiInfrastructure, type ProviderStream,
+import { AgenticGuardReviewer, registerAgenticGuardReviewDomain,
+  type AgenticEvidenceDefinition, type AgenticGuardBackendContext, type AgenticGuardBackendRequest,
+  type AgenticReviewDomain, type PiInfrastructure, type ProviderStream,
 } from "./guard-reviewer-agent.ts";
 export { loadPiInfrastructure } from "./guard-reviewer-agent.ts";
 export type { NativeAgentLike, PiInfrastructure, ProviderStream } from "./guard-reviewer-agent.ts";
@@ -1573,6 +1575,8 @@ export function createGuardianExtension(factory: ReviewerFactory = createPiRevie
   return function guardian(pi: ExtensionAPI) {
     const stateDir = resolve(process.env.PI_RUN_PROFILE_DIR || "/profile");
     const guardConnection = connectGuardClient(pi, { schemaVersion: 1, id: "guardian", label: "Guardian" });
+    const guardReviewConnection = connectGuardReviewClient(pi, { schemaVersion: 1, id: "guardian", label: "Guardian",
+      evidenceProfile: "guardian-command.v1", decisionContract: "guardian-decision.v1" });
     let revision = 0, statusOwner = 0, last: Stats | undefined;
     let dispute:GuardianDispute|undefined;
     const store = new ConversationStore();
@@ -1622,6 +1626,55 @@ export function createGuardianExtension(factory: ReviewerFactory = createPiRevie
 
     const binding = factory({ pi, changed: invalidate, config:()=>config, updateConfig, tell, log: ctx => sink(ctx) });
     if (!binding || typeof binding.select !== "function") throw new Error("Reviewer factory must provide select(ctx)");
+    type PendingRuntimeReview={request:ReviewRequest;reviewer:GuardianReviewer;reviewerId:string;deadlineAt:number;stats:Stats;
+      sessionId:string;cwd:string;claimed:boolean};
+    const pendingRuntimeReviews=new Map<string,PendingRuntimeReview>();
+    const diagnosticLevel=(level:LogLevel):"INFO"|"INVESTIGATE"|"ERROR"|"CANCELLED"=>
+      level==="INVESTIGATE"?"INVESTIGATE":level==="ERROR"?"ERROR":level==="CANCELLED"?"CANCELLED":"INFO";
+    const wireCopy=<T,>(value:T):T=>JSON.parse(JSON.stringify(value)) as T;
+    registerAgenticGuardReviewDomain(pi,"guardian","guardian-command.v1","guardian-decision.v1",{
+      async review(backendRequest:Readonly<AgenticGuardBackendRequest>,backendContext:Readonly<AgenticGuardBackendContext>,sessionContext:ExtensionContext):Promise<unknown>{
+        const action=plain(backendRequest.action),policy=plain(backendRequest.policy);
+        if(Object.keys(action).sort().join(",")!=="requestId,schemaVersion"||action.schemaVersion!==1||
+          typeof action.requestId!=="string"||!/^[0-9a-f-]{36}$/.test(action.requestId)||
+          Object.keys(policy).sort().join(",")!=="schemaVersion"||policy.schemaVersion!==1)throw new Error("Invalid Guardian runtime review request");
+        const pending=pendingRuntimeReviews.get(action.requestId);
+        if(!pending||pending.claimed)throw new Error("Guardian runtime review request is unavailable");
+        pending.claimed=true;
+        if(sessionContext.sessionManager.getSessionId()!==pending.sessionId||sessionContext.cwd!==pending.cwd)
+          throw new Error("Guardian runtime review context changed before dispatch");
+        const emit:LogSink=(level,event,message,details)=>backendContext.report({schemaVersion:1,level:diagnosticLevel(level),event,message,
+          ...(details===undefined?{}:{details:wireCopy(details)})});
+        const trace=new ReviewTrace(emit,backendContext.signal,pending.deadlineAt,stage=>{pending.stats.stage=stage;});
+        let failure:unknown;
+        try{
+          const services=reviewServices(pending.request,backendContext.signal,emit,pending.stats,trace);
+          const raw=await trace.step("reviewer assessment",{reviewerId:pending.reviewerId},()=>pending.reviewer.review(pending.request,services));
+          backendContext.signal.throwIfAborted();
+          const result=validateReviewResult(raw,pending.request);
+          if(result.metrics?.requests!==undefined)pending.stats.requests=result.metrics.requests;
+          if(result.status==="incomplete")return {schemaVersion:1,status:"incomplete",error:result.error};
+          return {schemaVersion:1,status:"completed",decision:wireCopy({schemaVersion:1,reviewerId:pending.reviewerId,reviewResult:result})};
+        }catch(error){failure=error;throw error;}
+        finally{trace.close(failure);}
+      },
+    });
+    async function dispatchRuntimeReview(request:ReviewRequest,reviewer:GuardianReviewer,deadlineAt:number,signal:AbortSignal,
+      emit:LogSink,stats:Stats,ctx:ExtensionContext):Promise<ReviewResult>{
+      const requestId=randomUUID(),pending:PendingRuntimeReview={request,reviewer,reviewerId:reviewer.id,deadlineAt,stats,
+        sessionId:ctx.sessionManager.getSessionId(),cwd:ctx.cwd,claimed:false};
+      pendingRuntimeReviews.set(requestId,pending);
+      try{
+        const raw:Readonly<GuardReviewResultV1>=await guardReviewConnection.review({schemaVersion:1,
+          action:{schemaVersion:1,requestId},policy:{schemaVersion:1}}, {signal,report:(event:Readonly<GuardReviewDiagnosticSnapshotV1>)=>
+            emit(event.level,event.event,event.message,event.details as Record<string,unknown>|undefined)});
+        if(raw.status==="incomplete")return {status:"incomplete",error:raw.error};
+        const envelope=plain(raw.decision);
+        if(Object.keys(envelope).sort().join(",")!=="reviewResult,reviewerId,schemaVersion"||envelope.schemaVersion!==1||envelope.reviewerId!==reviewer.id)
+          throw new Error("Invalid Guardian runtime review envelope");
+        return validateReviewResult(envelope.reviewResult,request);
+      }finally{pendingRuntimeReviews.delete(requestId);}
+    }
     function reviewerSummary(ctx: ExtensionContext): string {
       let description:readonly string[]=[];try{description=binding.describe?.(ctx)??[];}catch{return "reviewer unavailable";}
       const model=description.find(line=>line.startsWith("Model: "))?.slice(7)??"";
@@ -1723,8 +1776,8 @@ export function createGuardianExtension(factory: ReviewerFactory = createPiRevie
         const base=await trace.step("prepare dispute assessment",{},child=>prepareReview(pi,ctx,event,stateDir,child,emit,store),PREPARATION_TIMEOUT_MS);
         const request=freeze({...base,action:snapshot.action,
           dispute:{guardianReason:snapshot.reason,...(snapshot.originalOutcome?{originalOutcome:snapshot.originalOutcome}:{}),justification}}) as ReviewRequest;
-        const services=reviewServices(request,signal,emit,stats,trace);
-        const raw=await trace.step("review dispute justification",{reviewerId:reviewer.id},()=>reviewer.review(request,services));
+        const raw=await trace.step("review dispute justification",{reviewerId:reviewer.id},
+          ()=>dispatchRuntimeReview(request,reviewer,deadlineAt,signal,emit,stats,ctx));
         signal.throwIfAborted();
         const result=validateReviewResult(raw,request);if(result.status==="incomplete")throw new Error(result.error);
         if(generation!==revision||session!==ctx.sessionManager.getSessionId()||cwd!==ctx.cwd||dispute?.id!==snapshot.id||ctx.hasPendingMessages())
@@ -1971,8 +2024,8 @@ export function createGuardianExtension(factory: ReviewerFactory = createPiRevie
           emit("INFO", "reviewer_dispatched", "Selected reviewer implementation and bounded time budget", { reviewerId: reviewer.id, ...budget });
           const request = await runTrace.step("prepare review", {}, child => prepareReview(pi, ctx, structuredClone(event), stateDir, child, emit, store), PREPARATION_TIMEOUT_MS);
           reviewSignal.throwIfAborted();
-          const services = reviewServices(request, reviewSignal, emit, stats, runTrace);
-          const rawResult = await runTrace.step("reviewer assessment", { reviewerId: reviewer.id }, async () => reviewer.review(request, services));
+          const rawResult = await runTrace.step("shared review dispatch", { reviewerId: reviewer.id },
+            async () => dispatchRuntimeReview(request,reviewer,deadlineAt,reviewSignal,emit,stats,ctx));
           reviewSignal.throwIfAborted();
           const result = await runTrace.step("validate reviewer result", { reviewerId: reviewer.id }, async () => validateReviewResult(rawResult, request));
           if (result.metrics?.requests !== undefined) stats.requests = result.metrics.requests;

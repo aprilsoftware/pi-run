@@ -228,7 +228,7 @@ Each stage requires separate approval and stops after validation:
    preserve the Guardian domain adapter and prove reviewer/flow parity.
 3. [x] Add bounded, client-local review diagnostics so runtime routing can
    preserve Guardian's review trace without putting callbacks in review JSON.
-4. [ ] Install the extracted harness as the runtime review backend and route
+4. [x] Install the extracted harness as the runtime review backend and route
    Guardian through the shared contract without changing reviewer selection.
 5. [ ] Add explicit shared Guard configuration and legacy explicit-model
    adoption, without fallback or provider calls.
@@ -256,8 +256,16 @@ identity, monotonic sequence, per-event and cumulative bounds, cancellation and
 completion closure, and client-local delivery. Malformed or over-budget backend
 diagnostics fail the review even if the backend catches the reporting error.
 Client presentation callbacks remain outside serialized review requests, cannot
-affect review outcomes, and cannot observe other clients. Production routing
-remains unchanged.
+affect review outcomes, and cannot observe other clients.
+
+Stage 4 installed the shared agentic backend dispatcher and routed Guardian
+command reviews and dispute reassessments through the runtime FIFO contract.
+Guardian retains its existing model selection and static domain implementation;
+its full evidence state and reviewer binding stay in an opaque, single-use local
+request record rather than serialized action JSON. Runtime absence, unsupported
+domains, cancellation, malformed envelopes, or incomplete reviews fail closed
+without direct-review fallback. CAF routing and shared reviewer configuration
+remain unchanged.
 
 No stage silently enables a client, migrates credentials, changes networking,
 contacts a real provider, pushes, tags, installs, or releases.

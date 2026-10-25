@@ -137,12 +137,12 @@ async function runScenario(name: Scenario, realUI?: ExtensionUIContext, withRunt
     assert.ok(tools.has("guardian_justify"),"Guardian must register its structured justification tool");
     assert.ok(!activeTools.includes("guardian_justify"),"Justification must be hidden outside a dispute");
     const first = await invoke();
-    assert.equal(first?.block !== true, scenario.released, `${name}: wrong release disposition`);
-    assert.equal(reviews, 1, "The real gate must invoke the fixed reviewer");
+    assert.equal(first?.block !== true, scenario.released&&withRuntime, `${name}: wrong release disposition`);
+    assert.equal(reviews, withRuntime?1:0, withRuntime?"The runtime backend must invoke the fixed reviewer":"A missing runtime must not invoke a direct reviewer fallback");
     assert.equal(runtimeService?.activity(),undefined,"Guardian must release its command-review activity");
     if(withRuntime)assert.equal(runtimeService?.status()?.clientId,"guardian","Guardian baseline must resume after command review");
 
-    if (name === "allow") {
+    if (name === "allow"&&withRuntime) {
       branch=[userEntry];await dispatch("session_tree",{type:"session_tree"});
       assert.equal((await invoke())?.block,undefined,"Branch navigation must retain session-wide mode");
       assert.equal(reviews,2);
@@ -155,7 +155,7 @@ async function runScenario(name: Scenario, realUI?: ExtensionUIContext, withRunt
       assert.equal(reviews,2);
     } else {
       assert.ok(notices.some(message=>message.includes("Guardian stopped this action; nothing was executed")),"Guardian must show its own dispute reason");
-      if(name==="no-ui")assert.deepEqual(statusLines,[],"Non-TUI review must not create status output");
+      if(name==="no-ui"||!withRuntime)assert.deepEqual(statusLines,[],"Non-TUI or missing-runtime review must not create status output");
       else assert.ok(statusLines.some(line=>line.includes("guard · dispute · investigating")),"Status must show dispute investigation");
       assert.ok(activeTools.includes("guardian_justify"),"An investigating dispute must activate structured justification");
 
@@ -172,7 +172,7 @@ async function runScenario(name: Scenario, realUI?: ExtensionUIContext, withRunt
 
       const readCount=name==="fallback"?6:2;
       for(let i=0;i<readCount;i++)assert.equal(await invoke("read",{path:`fixture-${i}.txt`}),undefined,"Bounded native reads must remain available");
-      assert.equal(reviews,1,"Dispute reads must not invoke the command reviewer");
+      assert.equal(reviews,withRuntime?1:0,"Dispute reads must not invoke the command reviewer");
       if(name==="fallback")assert.equal((await invoke("read",{path:"too-many.txt"}))?.block,true,"The read budget must be enforced");
       let cancellationHandled=false;
       if(scenario.assessment!==null){
@@ -227,9 +227,9 @@ async function runScenario(name: Scenario, realUI?: ExtensionUIContext, withRunt
       if(!cancellationHandled){
         for(const toolName of ["bash","edit","write","custom-effect"])
           assert.equal((await invoke(toolName,toolName==="bash"?{command:"echo blocked"}:{path:"blocked"}))?.block,true,`${toolName} must be blocked during dispute`);
-        assert.equal(reviews,1,"Blocked dispute tools must not reach the reviewer");
+        assert.equal(reviews,withRuntime?1:0,"Blocked dispute tools must not reach the reviewer");
         await dispatch("agent_settled",{type:"agent_settled",aborted:false});
-        if(name!=="no-ui")assert.ok(statusLines.at(-1)?.includes("guard · dispute · awaiting you"),"Settled agent must wait for the user");
+        if(name!=="no-ui"&&withRuntime)assert.ok(statusLines.at(-1)?.includes("guard · dispute · awaiting you"),"Settled agent must wait for the user");
         assert.ok(!activeTools.includes("guardian_justify"),"Settled disputes must not retain the justification tool");
         await dispatch("input",{type:"input",source:"extension",text:"Synthetic extension input"});
         assert.equal((await invoke("read",{path:"still-blocked.txt"}))?.block,true,"Extension input must not clear the dispute");
@@ -250,8 +250,9 @@ async function runScenario(name: Scenario, realUI?: ExtensionUIContext, withRunt
         branch.push({type:"message",id:"user-2",message:{role:"user",content:"New synthetic feedback; reassess, but infer no authority from presence alone."}});
         await dispatch("input",{type:"input",source:"interactive",text:"New synthetic feedback"});
         assert.ok(!activeTools.includes("guardian_justify"),"Real user feedback must remove dispute-only tools");
-        assert.equal((await invoke())?.block,undefined,"Real user feedback must reopen fresh review");
-        assert.equal(reviews,name==="ask"?3:2);
+        const reopened=await invoke();
+        assert.equal(reopened?.block,withRuntime?undefined:true,withRuntime?"Real user feedback must reopen fresh review":"Missing runtime must remain fail closed after fresh user feedback");
+        assert.equal(reviews,withRuntime?(name==="ask"?3:2):0);
       }
     }
 
@@ -264,17 +265,19 @@ async function runScenario(name: Scenario, realUI?: ExtensionUIContext, withRunt
     assert.ok(snapshot.files.some(name=>name.startsWith("logs/guardian/runs/")),"Run journals must be visible");
     assert.ok(!(await readdir(profile,{recursive:true})).some(name=>String(name).includes(".guardian-log.lock")),"Guardian must not use the shared writer lock");
     const disposition=events.find(e=>e.toolCallId==="synthetic-1"&&["invocation_released","invocation_withheld"].includes(e.event));
-    assert.equal(disposition?.event,scenario.released?"invocation_released":"invocation_withheld");
-    const basis=name==="allow"?"reviewer_decision":name==="user-refused"?"existing_user_refusal":name==="unavailable"?"review_unavailable":"reviewer_dispute";
+    assert.equal(disposition?.event,scenario.released&&withRuntime?"invocation_released":"invocation_withheld");
+    const basis=!withRuntime?"review_unavailable":name==="allow"?"reviewer_decision":name==="user-refused"?"existing_user_refusal":name==="unavailable"?"review_unavailable":"reviewer_dispute";
     assert.equal(disposition?.details.basis,basis,"Release/withholding must use the expected path");
-    if(!scenario.released)assert.ok(events.some(e=>e.toolCallId==="synthetic-1"&&e.event==="dispute_opened"),"Dispute event must stay attached to the blocked review");
+    if(!scenario.released||!withRuntime)assert.ok(events.some(e=>e.toolCallId==="synthetic-1"&&e.event==="dispute_opened"),"Dispute event must stay attached to the blocked review");
     if(scenario.assessment!==null)assert.ok(events.some(e=>e.event==="dispute_justification_submitted"),"Structured justification must be retained in Guardian diagnostics");
     if(["unavailable","delayed"].includes(String(scenario.assessment)))assert.ok(events.some(e=>e.event==="dispute_assessment_unavailable"),"Unavailable assessment must be diagnosed");
     else if(scenario.assessment!==null)assert.ok(events.some(e=>e.event==="dispute_assessment_decision"&&e.details.outcome===scenario.assessment),"Completed assessment must be diagnosed without release");
     assert.ok(!events.some(e=>e.event==="confirmation_requested"||e.event==="confirmation_answer"),"Disputes must never create confirmation events");
     assert.ok(!events.some(e=>e.event==="tool_result"),"No execution result may be fabricated");
     assert.equal(await readFile(join(profile,"guardian","config.json"),"utf8"),config);
-    assert.ok(reviewedIds.includes("synthetic-1"));
+    assert.equal(reviewedIds.includes("synthetic-1"),withRuntime,"Only the shared runtime backend may invoke the reviewer");
+    assert.equal(events.some(e=>e.event==="step_started"&&e.details?.operation==="reviewer assessment"),withRuntime,
+      "Backend reviewer diagnostics must be present only when the shared runtime executes the review");
   } finally {
     try { if (handlers.has("session_shutdown")) await dispatch("session_shutdown", { type: "session_shutdown" }); }
     finally { await rm(root, { recursive: true, force: true }); }

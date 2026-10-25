@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 import type { Api, Model } from "@earendil-works/pi-ai";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 export type AgenticThinking = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 export type AgenticJson = Record<string, unknown>;
@@ -26,6 +27,50 @@ export async function loadPiInfrastructure(): Promise<PiInfrastructure> {
   return { Agent: core.Agent as unknown as PiInfrastructure["Agent"], ai: ai as unknown as PiInfrastructure["ai"] };
 }
 export type ProviderStream = (model: Model<Api>, context: any, options: any) => any;
+export interface AgenticGuardBackendRequest {
+  schemaVersion: 1;
+  client: Readonly<{ schemaVersion: 1; id: string; label: string; evidenceProfile: string; decisionContract: string }>;
+  action: unknown;
+  policy: unknown;
+}
+export interface AgenticGuardBackendContext {
+  readonly signal: AbortSignal;
+  report(event: { schemaVersion: 1; level: "INFO" | "INVESTIGATE" | "ERROR" | "CANCELLED"; event: string; message: string; details?: unknown }): void;
+}
+export interface AgenticGuardReviewDomainHandler {
+  review(request: Readonly<AgenticGuardBackendRequest>, context: Readonly<AgenticGuardBackendContext>, session: ExtensionContext): Promise<unknown>;
+}
+type AgenticDomainRegistration = { clientId: string; evidenceProfile: string; decisionContract: string; handler: AgenticGuardReviewDomainHandler };
+const agenticDomains = new WeakMap<ExtensionAPI, Map<string, AgenticDomainRegistration>>();
+const domainKey = (clientId: string, evidenceProfile: string, decisionContract: string) => `${clientId}\u0000${evidenceProfile}\u0000${decisionContract}`;
+export function registerAgenticGuardReviewDomain(pi: ExtensionAPI, clientId: string, evidenceProfile: string, decisionContract: string,
+  handler: AgenticGuardReviewDomainHandler): () => void {
+  const identifier = (value: string) => /^[a-z][a-z0-9-]{0,63}(?:\.[a-z][a-z0-9-]{0,63})*\.v[1-9][0-9]*$/.test(value);
+  if (!/^[a-z][a-z0-9-]{0,63}$/.test(clientId) || !identifier(evidenceProfile) || !identifier(decisionContract) ||
+      !handler || typeof handler.review !== "function") throw new Error("Invalid agentic Guard review domain");
+  let domains = agenticDomains.get(pi); if (!domains) { domains = new Map(); agenticDomains.set(pi, domains); }
+  const key = domainKey(clientId, evidenceProfile, decisionContract);
+  if (domains.has(key)) throw new Error(`Agentic Guard review domain already registered: ${clientId} / ${evidenceProfile} / ${decisionContract}`);
+  const registeredHandler = Object.freeze({ review: handler.review.bind(handler) });
+  const registration = Object.freeze({ clientId, evidenceProfile, decisionContract, handler: registeredHandler }); domains.set(key, registration);
+  return () => { if (domains?.get(key) === registration) domains.delete(key); };
+}
+export function createAgenticGuardReviewBackend(pi: ExtensionAPI): { review(request: Readonly<AgenticGuardBackendRequest>, context: Readonly<AgenticGuardBackendContext>): Promise<unknown> } {
+  let session: ExtensionContext | undefined;
+  pi.on("session_start", (_event, ctx) => { session = ctx; });
+  pi.on("session_tree", (_event, ctx) => { session = ctx; });
+  pi.on("session_shutdown", () => { session = undefined; });
+  return Object.freeze({
+    async review(request, context) {
+      context.signal.throwIfAborted();
+      const active = session; if (!active) throw new Error("Guard reviewer backend is unavailable: session context is missing");
+      const registration = agenticDomains.get(pi)?.get(domainKey(request.client.id, request.client.evidenceProfile, request.client.decisionContract));
+      if (!registration) throw new Error(`Unsupported Guard review domain: ${request.client.evidenceProfile} / ${request.client.decisionContract}`);
+      const result = await registration.handler.review(request, context, active);
+      context.signal.throwIfAborted(); return result;
+    },
+  });
+}
 export interface AgenticEvidenceDefinition<Evidence> {
   name: string;
   label?: string;

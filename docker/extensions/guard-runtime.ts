@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { createAgenticGuardReviewBackend } from "./guard-reviewer-agent.ts";
 
 export const GUARD_RUNTIME_KIND = "pi-run.guard-runtime";
 export const GUARD_RUNTIME_VERSION = 1 as const;
@@ -17,7 +18,7 @@ export interface GuardReviewClientRegistrationV1 extends GuardClientRegistration
   decisionContract: string;
 }
 export interface GuardReviewRequestV1 { schemaVersion: 1; action: unknown; policy: unknown; }
-export interface GuardReviewDiagnosticV1 { schemaVersion: 1; level: "INFO" | "INVESTIGATE" | "ERROR"; event: string; message: string; details?: unknown; }
+export interface GuardReviewDiagnosticV1 { schemaVersion: 1; level: "INFO" | "INVESTIGATE" | "ERROR" | "CANCELLED"; event: string; message: string; details?: unknown; }
 export interface GuardReviewDiagnosticSnapshotV1 extends GuardReviewDiagnosticV1 { clientId: string; sequence: number; }
 export interface GuardReviewOptionsV1 { signal?: AbortSignal; report?(event: Readonly<GuardReviewDiagnosticSnapshotV1>): void; }
 export type GuardReviewResultV1 =
@@ -181,7 +182,7 @@ function validateDiagnostic(value: GuardReviewDiagnosticV1, clientId: string, se
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid Guard review diagnostic");
   const hasDetails = Object.hasOwn(value, "details"), keys = Object.keys(value).sort().join(",");
   if (keys !== (hasDetails ? "details,event,level,message,schemaVersion" : "event,level,message,schemaVersion") || value.schemaVersion !== 1 ||
-      !["INFO", "INVESTIGATE", "ERROR"].includes(value.level) || typeof value.event !== "string" ||
+      !["INFO", "INVESTIGATE", "ERROR", "CANCELLED"].includes(value.level) || typeof value.event !== "string" ||
       !/^[a-z][a-z0-9_]{0,63}$/.test(value.event) || typeof value.message !== "string" || value.message !== value.message.trim() ||
       !value.message || value.message.length > 2400 || /[\u0000-\u001f\u007f]/.test(value.message)) throw new Error("Invalid Guard review diagnostic");
   const details = hasDetails ? frozenJson(value.details, 16 * 1024, "Guard review diagnostic details") : undefined;
@@ -588,4 +589,6 @@ export function createGuardRuntimeExtension(options: GuardRuntimeOptions = {}) {
   };
 }
 
-export default createGuardRuntimeExtension();
+export default function guardRuntime(pi: ExtensionAPI): void {
+  createGuardRuntimeExtension({ reviewer: createAgenticGuardReviewBackend(pi) })(pi);
+}
