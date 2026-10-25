@@ -36,15 +36,16 @@ profiles stay outside the container, but everything in the selected profile is
 available to the run. Credentials stored in the workspace or optional shared
 mount, and access offered by reachable services, are outside this boundary.
 
-Guardian adds another layer without requiring human interaction for every covered
-command. When enabled, a separate evidence-aware Pi reviewer examines acting-agent
-`bash` and `run` calls against the current request and applicable instructions. It
-releases supported actions; otherwise it permanently cancels the invocation and
-opens a dispute. The acting agent can inspect bounded file evidence and submit a
-structured position, which Guardian reassesses without granting authority or
-releasing the action. The human provides the final direction. Reviewer preferences
-and policy are profile-configurable; activation is session-scoped and every new
-session starts Off.
+Guard adds an optional review layer without requiring human interaction for
+every covered action. When Guard review is On, one explicitly selected,
+evidence-aware Pi reviewer examines Guardian-covered `bash` and `run` calls and
+CAF disclosures against the current request and applicable instructions.
+Guardian releases supported commands; otherwise it permanently cancels the
+invocation and opens a dispute. The acting agent can inspect bounded file
+evidence and submit a structured position, which Guard reassesses without
+granting authority or releasing the action. The human provides the final
+direction. Guard review is session-scoped and starts Off unless the profile's
+new-session default was deliberately changed.
 
 Guardian is not a sandbox or an infallible security decision-maker. The temporary
 container narrows filesystem exposure, but selected mounts contain real host
@@ -71,14 +72,17 @@ resources, and other infrastructure need their own recovery mechanisms.
 - **Purpose-specific exposure:** only the selected profile is mounted, providing
   its instructions, provider access, credentials, settings, skills, Guardian
   policy, and conversations while leaving other profiles out of view.
-- **Guardian command review:** an optional, session-scoped evidence-aware
-  reviewer checks acting-agent `bash` and `run` calls. Supported actions proceed;
-  disputed invocations are cancelled and left for human direction. Guardian
-  starts Off.
-- **Call a Friend:** the private primary agent can send one mandatorily
-  reviewed, minimal disclosure to a separately configured advisory model, with
-  bounded questions, continuations, and destination-reviewed public search.
-  The friend receives no automatic workspace or primary-transcript access.
+- **Shared Guard review:** one explicitly configured reviewer can check
+  acting-agent `bash` and `run` calls plus Call a Friend disclosures. Supported
+  commands proceed; disputed invocations are cancelled and left for human
+  direction. Guard review starts Off, and an enabled CAF makes no reviewer call
+  while it remains Off.
+- **Call a Friend:** the private primary agent can send one bounded disclosure
+  to a separately configured advisory model, with constrained questions,
+  continuations, and optional public search. Guard reviews each destination
+  while Guard is On; while Guard is explicitly Off, CAF sends the same bounded
+  actions without independent disclosure judgment. The friend receives no
+  automatic workspace or primary-transcript access.
 - **Continuity:** stable workspace identities and saved sessions let you leave,
   resume, move a checkout, or reconnect work after recovery.
 - **Parallel repository work:** persistent managed Git worktrees give concurrent

@@ -41,17 +41,24 @@ internal evidence.
 - **Guardian** owns command policy, command actions, decision validation,
   enforcement, and dispute handling.
 - **CAF** owns disclosure policy, disclosure/search actions, decision validation,
-  friend interaction, and withholding.
+  friend interaction, and withholding while Guard review is On; while Guard is
+  Off it sends the same bounded actions directly without a reviewer decision.
 - **Primary agent** proposes work and CAF payloads but cannot approve its own
-  disclosure merely by proposing it.
-- **Friend agent** receives only a separately allowed CAF payload and approved
-  bounded public research. It never receives Guard investigation evidence.
+  disclosure while Guard review is On. With Guard Off, its bounded CAF payload
+  is intentionally sent without independent review.
+- **Friend agent** receives only the bounded CAF payload and bounded public
+  research. It never receives Guard investigation evidence.
 
-Guardian and CAF are equal ordinary runtime clients. They share a reviewer agent
-and mechanisms, not policy, activation, decisions, journals, or effects. Their
-modes remain independent. The reviewer is never selected implicitly from the
-primary or friend model. Missing, invalid, unavailable, cancelled, timed-out,
-truncated, or incomplete review fails closed with no fallback.
+Guardian and CAF are ordinary runtime clients. They share a reviewer agent and
+mechanisms, not policy, CAF activation, decisions, journals, or effects. The
+Guardian session mode is the shared Guard review-layer mode; CAF keeps a separate
+availability mode. Guard On applies review to Guardian commands and CAF
+friend/search disclosures. Guard Off skips command review and lets an enabled
+CAF use its direct path. The reviewer is never selected implicitly from the
+primary or friend model. While Guard is On, missing, invalid, unavailable,
+cancelled, timed-out, truncated, or incomplete review fails closed with no
+fallback to direct execution. Only an explicit Guard Off state selects direct
+CAF behavior.
 
 ## Runtime review contract
 
@@ -130,28 +137,34 @@ shell, network, databases, services, and friend tools. Reads remain inside
 validated roots and reject links, special files, oversized content, and
 unreported truncation.
 
-The result remains destination-specific `ALLOW`, `ASK`, or `USER_REFUSED`.
-`ALLOW` requires complete user authority and a minimized exact payload, purpose,
-history, and destination. Findings and excerpts are never appended to the friend
-payload. A non-allowing or incomplete result ends CAF only; it does not open
-Guardian's command-dispute latch. Public-search queries receive a fresh review;
-friend approval never authorizes a search provider.
+While Guard is On, the result remains destination-specific `ALLOW`, `ASK`, or
+`USER_REFUSED`. `ALLOW` requires complete user authority and a minimized exact
+payload, purpose, history, and destination. Findings and excerpts are never
+appended to the friend payload. A non-allowing or incomplete result ends CAF
+only; it does not open Guardian's command-dispute latch. Public-search queries
+receive a fresh review; friend approval never authorizes a search provider.
+While Guard is Off, CAF validates the same bounded action schemas but makes no
+reviewer request and sends friend messages and friend-generated search queries
+directly to their configured destinations.
 
 ## Reviewer and friend separation
 
-The profile visibly identifies both destinations. Exact Guard reviewer and CAF
-friend model equality is rejected while CAF is enabled. This catches the most
+The profile visibly identifies both destinations. While Guard is On, exact
+Guard reviewer and CAF friend model equality is rejected. This catches the most
 obvious collapse but cannot prove separation: distinct identifiers can still
 reach the same operator, endpoint, logs, or confidentiality domain.
 
-Same-provider configurations produce a persistent warning in CAF status and
-menus. Pi-Run cannot infer trust from provider identifiers. Network policy and
-credentials remain independent capability boundaries, not confidentiality
-proofs.
+While Guard is On, same-provider configurations produce a persistent warning in
+CAF status and menus. Those checks do not apply to direct CAF because no Guard
+provider request occurs. Pi-Run cannot infer trust from provider identifiers.
+Network policy and credentials remain independent capability boundaries, not
+confidentiality proofs.
 
 No reviewer evidence, prompt, policy, rationale, authorization source, or tool
-result is sent to the friend. Only the reviewed CAF action, previously reviewed
-consultation history, and separately approved bounded research may cross.
+result is sent to the friend. In guarded mode only the reviewed CAF action,
+previously reviewed consultation history, and separately approved bounded
+research may cross. In direct mode the bounded action, bounded consultation
+history, and bounded public research cross without Guard review.
 
 ## Configuration and compatibility
 
@@ -166,11 +179,14 @@ Existing `guardian/config.json` remains readable during transition:
 - the first explicit save writes `guard/config.json` atomically; and
 - adoption never copies credentials, changes modes, or contacts a provider.
 
-Guardian retains command policy and activation preferences. CAF retains friend
-model/thinking, disclosure policy, and activation preferences. Both are Off for
-fresh profiles and genuinely new sessions unless their profile-specific default
-is deliberately changed. Resumed sessions restore recorded modes. Changing a
-future-session default does not alter existing sessions.
+Guardian retains command policy and the shared Guard review-mode preference.
+CAF retains friend model/thinking, disclosure policy, and its separate
+availability preference. Guard and CAF are both Off for fresh profiles and
+genuinely new sessions unless their profile-specific default is deliberately
+changed. Resumed sessions restore recorded modes. Changing a future-session
+default does not alter existing sessions. Guard Runtime begins each session in
+an unknown state; Guardian publishes the restored explicit mode before clients
+may choose guarded or direct behavior.
 
 ## Menus and commands
 
@@ -188,18 +204,22 @@ provider call.
 
 ## Shared status surface
 
-Guard Runtime keeps one bottom widget but may render multiple client lines:
+Guard Runtime keeps one bottom widget with two role-specific lines. The shared
+Guard reviewer appears once and the CAF line shows the friend model. Guard state
+already determines whether an enabled CAF is reviewed, so the compact CAF line
+does not repeat derived `direct` or `guarded` labels:
 
 ```text
-guardian · on                 guard qwen3.8-flash-next · low
-caf · on                      guard qwen → friend gpt-5.6-sol
+guard · off                    qwen3.8-flash-next · low
+caf · on                       gpt-5.6-sol · high
 ```
 
-During activity, the relevant line changes while the other baseline remains:
+During guarded activity, the relevant line changes while the other baseline
+remains:
 
 ```text
-guardian · reviewing          qwen3.8-flash-next · low
-caf · asking friend           gpt-5.6-sol · high
+guard · reviewing CAF disclosure   qwen3.8-flash-next · low
+caf · on                            gpt-5.6-sol · high
 ```
 
 Narrow rendering preserves client and state before model details. Presentation
@@ -234,12 +254,14 @@ Each stage requires separate approval and stops after validation:
    adoption, and no implicit conversation-model fallback.
 6. [x] Move shared reviewer resolution fully into the runtime backend without
    changing the selected destination or contacting a provider.
-7. [ ] Add the CAF evidence profile and replace primary-model review with the
-   shared Guard agent; reject exact reviewer/friend equality.
-8. [ ] Add independent client modes, future-session defaults, and harmonized
-   menus.
-9. [ ] Render both clients and model roles in the shared bottom widget.
-10. [ ] Update user documentation and run the complete isolated suite before any
+7. [x] Define and validate the bounded CAF evidence profile and privacy-filtered
+   diagnostics while leaving production review routing unchanged.
+8. [x] Replace primary-model CAF review with the shared Guard agent and reject
+   exact reviewer/friend equality.
+9. [x] Add the shared Guard review-layer mode, independent CAF availability,
+   future-session defaults, direct CAF routing, and harmonized menus.
+10. [x] Render both clients and model roles in the shared bottom widget.
+11. [x] Update user documentation and run the complete isolated suite before any
    controlled real-provider candidate.
 
 Stage 1 introduced a separately versioned additive review service with immutable
@@ -283,6 +305,54 @@ Missing configuration, unavailable models, timeout, cancellation, and late
 results remain fail closed. Test-only injected reviewers remain available to
 isolated fixtures and are not the production path.
 
+Stage 7 added the CAF-specific Guard domain and evidence adapter without routing
+production calls to it. The profile carries only the exact candidate, policy,
+bounded current-branch user authority, explicitly supplied instructions, and
+validated non-secret evidence roots. Its tools provide bounded history, file,
+search, listing, and guidance operations; links, special files, secret paths,
+profile-state roots, oversized inputs, and incomplete authority are rejected.
+CAF-facing diagnostic sanitization drops payloads, policy, authorization text,
+paths, queries, evidence, and errors. The friend receives none of this evidence.
+
+Stage 8 registered that profile through the shared runtime and removed the
+primary conversation model from production CAF review. Friend messages and
+public-search destinations now receive separate agentic Guard decisions through
+opaque, single-use local request records. Exact reviewer/friend model equality
+fails before either provider request. Missing selection, unavailable review,
+incomplete authority, malformed output, cancellation, or runtime loss withholds
+the disclosure. Reviewer usage remains included in CAF aggregate usage when the
+provider reports it, while private review inputs and diagnostics remain absent
+from friend payloads, finalized rounds, and CAF journals.
+
+Stage 9 made Guardian's session mode the shared Guard review-layer state and
+kept CAF activation independent, with private per-profile defaults for genuinely
+new sessions. Missing defaults, old sessions without mode metadata, fresh
+profiles, and profile clones remain Off. Changing a default does not alter the
+current session. Guard Off keeps Guardian's documented skip-review behavior and
+routes enabled CAF friend/search actions directly with zero reviewer requests.
+Guard On requires completed review and never downgrades to direct because of an
+error. CAF Off disables friend calls. Changes to either current mode cancel
+active CAF work without retry. `/guardian` and `/caf` provide parallel menu-first
+controls while dedicated mode, default, model, thinking, and log commands remain
+available. CAF status shows the Guard mode without repeating a derived label on
+the CAF state; exact equality blocking and same-provider warnings apply only
+while Guard is On and do not claim identifiers prove separation.
+
+Stage 10 replaced the latest-baseline-only display with one Guard Runtime-owned
+two-row widget. The Guard row shows the single shared reviewer and command or CAF
+review activity; the CAF row shows the friend model and friend/search activity.
+Guard state already determines review behavior, so the compact CAF line does not
+repeat `direct` or `guarded`. Presentation remains outside authorization and
+transmission decisions.
+
+Stage 11 aligned the overview, user guides, security guidance, behavior
+references, profile-management skill, profile layout, and launcher diagnostic
+with the implemented shared mode, explicit reviewer selection, bounded
+unreviewed CAF path, private defaults, and two-row display. All 59 isolated shell
+test scripts passed. Live Guardian provider fixtures and the opt-in real-Docker
+worktree end-to-end case remained explicitly skipped; no real provider was
+contacted.
+
 No stage silently enables a client, migrates credentials, changes networking,
 contacts a real provider, pushes, tags, installs, or releases.
 
@@ -290,16 +360,23 @@ contacts a real provider, pushes, tags, installs, or releases.
 
 The correction is complete only when tests demonstrate:
 
-- both clients use the configured Guard reviewer service;
+- both clients use the configured Guard reviewer service while Guard is On;
 - either client can be absent without breaking the runtime or other client;
 - Guardian parity for allowed, disputed, unavailable, cancelled, resumed, and
   logged command reviews;
 - bounded CAF investigation and refusal of secret, linked, special, oversized,
   out-of-root, forbidden-profile, or incomplete evidence;
 - no Guard evidence or rationale in friend requests or CAF round state;
-- reviewer failure has no fallback and starts no friend request;
-- exact Guard/friend equality prevents CAF use;
-- independent modes/defaults begin Off and restore correctly;
+- reviewer failure while Guard is On has no direct fallback and starts no friend
+  request;
+- Guard Off makes enabled CAF use bounded direct friend/search actions with zero
+  reviewer requests;
+- Guard mode changes cancel active CAF work without retrying it under the new
+  mode;
+- exact Guard/friend equality prevents guarded CAF use but is irrelevant to the
+  direct path;
+- Guard review and CAF availability modes/defaults begin Off and restore
+  correctly;
 - the widget shows both baselines and active model roles without enforcement
   effects;
 - separate journals preserve privacy and concurrency; and

@@ -27,16 +27,19 @@ the selected profile is available to that run. Credentials in the workspace or
 optional shared mount, and access offered by reachable services, remain outside
 this profile boundary.
 
-When enabled, Guardian uses a separate evidence-aware reviewer for acting-agent
-`bash` and `run` calls. It releases supported actions without interruption;
-otherwise it cancels the invocation and opens a human-arbitrated dispute. The
-agent's structured position receives an advisory reassessment but cannot grant
-itself authority or release the action. Guardian starts Off and is not a sandbox.
+Guard is an optional shared review layer. While it is On, one explicitly
+selected evidence-aware reviewer handles Guardian-covered `bash` and `run` calls
+and Call a Friend disclosures. Guardian releases supported commands without
+interruption; otherwise it cancels the invocation and opens a human-arbitrated
+dispute. The agent's structured position receives an advisory reassessment but
+cannot grant itself authority or release the action. Guard review starts Off and
+is not a sandbox.
 
 Call a Friend lets the private primary agent request bounded advice from a
-separately configured model. Every primary-to-friend disclosure is reviewed for
-its exact purpose and destination; public-search queries receive a separate
-review. The friend receives no automatic transcript, workspace, credential, or
+separately configured model. While Guard is On, each primary-to-friend
+disclosure and public-search destination receives its own review. While Guard is
+explicitly Off, enabled CAF sends the same bounded actions without a reviewer
+request. The friend receives no automatic transcript, workspace, credential, or
 general tool access. CAF is application-level context isolation, not a sandbox
 or confidentiality proof.
 
@@ -69,8 +72,8 @@ essays.
 | [Skills](skills.md) and [shared files](security.md#treat-mounted-data-as-exposed) | Reuse reviewed expertise and supporting material across tasks without copying it into every request or every profile. |
 | [Workspaces and sessions](workspaces-and-sessions.md) | Continue named conversations by stable workspace identity, find them across profiles, reconnect them after recovery, and use persistent managed Git worktrees for parallel repository sessions. |
 | [Planning](planning.md) | Investigate alternatives, refine a saved plan, and approve an exact revision before handing work back to the normal execution workflow. |
-| [Guardian](guardian.md) | Review acting-agent `bash` and `run` calls, automatically releasing supported actions and focusing human attention where judgment is needed. |
-| [Call a Friend](call-a-friend.md) | Ask a separately configured model for bounded advice through destination-specific disclosure review, constrained dialogue, and optional reviewed public search. |
+| [Guardian](guardian.md) | Control the shared Guard review layer, review acting-agent `bash` and `run` calls, and focus human attention where judgment is needed. |
+| [Call a Friend](call-a-friend.md) | Ask a separately configured model for bounded advice through constrained dialogue and optional public search, with destination-specific review whenever Guard is On. |
 | [SSH access](ssh.md) | Give a profile a dedicated remote identity without mounting the host's entire SSH directory. |
 | [Encrypted snapshots](snapshots.md) | Protect portable Pi-Run state, automate successful-exit recovery points, move between workstations, or restore deliberately. Use Git or backups for workspace and infrastructure data. |
 
@@ -102,10 +105,12 @@ guides to understand each boundary.
 
 - [Planning inside Pi](planning.md): discuss, save, inspect, export, and approve
   a plan without bypassing execution checkpoints.
-- [Guardian command review](guardian.md): configure review, arbitrate disputes,
-  and inspect private diagnostics while understanding its limits.
-- [Call a Friend](call-a-friend.md): configure an advisory model, review exact
-  disclosures, continue bounded questions, and inspect separate diagnostics.
+- [Guardian and shared Guard review](guardian.md): configure review, arbitrate
+  command disputes, and inspect private diagnostics while understanding its
+  limits.
+- [Call a Friend](call-a-friend.md): configure an advisory model, understand
+  Guard-reviewed and unreviewed operation, continue bounded questions, and
+  inspect separate diagnostics.
 - [Workspaces and sessions](workspaces-and-sessions.md): identity, continuation,
   saved-session discovery, reconnection, and managed Git worktrees for parallel
   repository sessions.

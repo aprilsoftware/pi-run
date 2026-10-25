@@ -145,7 +145,7 @@ pi-run: network=<docker-host|docker-offline|docker-restricted>
 pi-run: model-tcp=<count> provider targets on port 443      # restricted only
 pi-run: ssh-tcp=<count> managed targets on port 22           # restricted only
 pi-run: manual-tcp=<selector>=<destination>:<ports>[...]    # restricted only
-pi-run: Guardian loaded; review mode starts Off
+pi-run: Guardian and CAF loaded; session modes resolve inside Pi
 ```
 
 It also reports `/shared` when that optional resource is mounted. Stop if the

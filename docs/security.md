@@ -200,9 +200,17 @@ access. See [Pi's security guidance](https://pi.dev/docs/latest/security/).
 - Instructions define expected authorization and workflow; they do not reduce
   operating-system access.
 - Planning changes the objective, not tool permissions, and is not read-only.
-- Guardian normally reviews acting-agent calls named `bash` and `run`; while a
-  dispute is open, it withholds every acting-agent tool except bounded native
-  reads and its structured justification handoff. It is not a sandbox.
+- Guard review is optional session state, not a sandbox. While On, the shared
+  reviewer handles Guardian-covered `bash`/`run` calls and CAF disclosures;
+  reviewer-provider requests can contain bounded internal evidence. While Off,
+  covered commands skip review and an enabled CAF sends its bounded friend/search
+  actions without independent disclosure judgment.
+- A Guardian dispute withholds every acting-agent tool except bounded native
+  reads and its structured justification handoff. Turning Guard Off clears the
+  latch but never replays the cancelled invocation.
+- CAF limits implicit context and friend tools; it is application-level
+  orchestration in the same Pi process, not an OS or provider-confidentiality
+  boundary. Guard On never falls back to unreviewed CAF because review failed.
 - Project trust does not constrain tool access after startup.
 - A visible or successful command result is not independent verification.
 - Available credentials, clients, skills, and network paths are not permission to

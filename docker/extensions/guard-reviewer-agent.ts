@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-import type { Api, Model } from "@earendil-works/pi-ai";
+import type { Api, Model, Usage } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { constants } from "node:fs";
 import { lstat, mkdir, open, realpath, rename, unlink } from "node:fs/promises";
@@ -88,7 +88,7 @@ export async function saveGuardReviewerConfig(stateDir: string, config: GuardRev
   } catch (error) { if (file) await file.close().catch(() => {}); await unlink(temporary).catch(() => {}); throw error; }
 }
 export type AgenticJson = Record<string, unknown>;
-export interface AgenticReviewMetrics { requests?: number; evidenceCalls?: number; inputBytes?: number; }
+export interface AgenticReviewMetrics { requests?: number; evidenceCalls?: number; inputBytes?: number; usage?: Usage; }
 export type AgenticReviewResult<Decision> =
   | { status: "completed"; decision: Decision; metrics?: AgenticReviewMetrics }
   | { status: "incomplete"; error: string; metrics?: AgenticReviewMetrics };
@@ -134,6 +134,7 @@ export interface AgenticGuardReviewDomainHandler {
     selection: Readonly<AgenticGuardReviewerSelection>): Promise<unknown>;
 }
 type AgenticDomainRegistration = { clientId: string; evidenceProfile: string; decisionContract: string; handler: AgenticGuardReviewDomainHandler };
+const AGENTIC_GUARD_DOMAIN_AVAILABLE="pi-run:agentic-guard-domain:v1:available",AGENTIC_GUARD_DOMAIN_DISCOVER="pi-run:agentic-guard-domain:v1:discover";
 const agenticDomains = new WeakMap<ExtensionAPI, Map<string, AgenticDomainRegistration>>();
 const domainKey = (clientId: string, evidenceProfile: string, decisionContract: string) => `${clientId}\u0000${evidenceProfile}\u0000${decisionContract}`;
 export function registerAgenticGuardReviewDomain(pi: ExtensionAPI, clientId: string, evidenceProfile: string, decisionContract: string,
@@ -146,7 +147,11 @@ export function registerAgenticGuardReviewDomain(pi: ExtensionAPI, clientId: str
   if (domains.has(key)) throw new Error(`Agentic Guard review domain already registered: ${clientId} / ${evidenceProfile} / ${decisionContract}`);
   const registeredHandler = Object.freeze({ review: handler.review.bind(handler) });
   const registration = Object.freeze({ clientId, evidenceProfile, decisionContract, handler: registeredHandler }); domains.set(key, registration);
-  return () => { if (domains?.get(key) === registration) domains.delete(key); };
+  const events=(pi as ExtensionAPI&{events?:ExtensionAPI["events"]}).events;
+  const stop=events?.on(AGENTIC_GUARD_DOMAIN_DISCOVER,value=>{const discovery=value as {schemaVersion?:unknown;accept?:unknown};
+    if(discovery?.schemaVersion===1&&typeof discovery.accept==="function")(discovery.accept as (registration:AgenticDomainRegistration)=>void)(registration);});
+  events?.emit(AGENTIC_GUARD_DOMAIN_AVAILABLE,registration);
+  return () => { stop?.();if (domains?.get(key) === registration) domains.delete(key); };
 }
 export function supportedAgenticThinking(model:Model<Api>):AgenticThinking[]{
   if(!model.reasoning)return ["off"];
@@ -158,16 +163,25 @@ export function effectiveAgenticThinking(model:Model<Api>,requested:AgenticThink
     levels.find(level=>GUARD_THINKING.indexOf(level)>=GUARD_THINKING.indexOf(requested))??levels.at(-1)??"off";
 }
 export function createAgenticGuardReviewBackend(pi: ExtensionAPI): { review(request: Readonly<AgenticGuardBackendRequest>, context: Readonly<AgenticGuardBackendContext>): Promise<unknown> } {
-  const stateDir=process.env.PI_RUN_PROFILE_DIR||"/profile";
+  const stateDir=process.env.PI_RUN_PROFILE_DIR||"/profile",discoveredDomains=new Map<string,AgenticDomainRegistration>();
+  const acceptDomain=(value:unknown)=>{const registration=value as Partial<AgenticDomainRegistration>|null;
+    if(!registration||typeof registration.clientId!=="string"||typeof registration.evidenceProfile!=="string"||typeof registration.decisionContract!=="string"||typeof registration.handler?.review!=="function")return;
+    const key=domainKey(registration.clientId,registration.evidenceProfile,registration.decisionContract),current=discoveredDomains.get(key);
+    if(current&&current!==registration)throw new Error(`Agentic Guard review domain already registered: ${registration.clientId} / ${registration.evidenceProfile} / ${registration.decisionContract}`);
+    discoveredDomains.set(key,registration as AgenticDomainRegistration);
+  };
+  const events=(pi as ExtensionAPI&{events?:ExtensionAPI["events"]}).events,stopDomainEvents=events?.on(AGENTIC_GUARD_DOMAIN_AVAILABLE,acceptDomain);
+  events?.emit(AGENTIC_GUARD_DOMAIN_DISCOVER,{schemaVersion:1,accept:acceptDomain});
   let session: ExtensionContext | undefined;
   pi.on("session_start", (_event, ctx) => { session = ctx; });
   pi.on("session_tree", (_event, ctx) => { session = ctx; });
-  pi.on("session_shutdown", () => { session = undefined; });
+  pi.on("session_shutdown", () => { session = undefined;discoveredDomains.clear();stopDomainEvents?.(); });
   return Object.freeze({
     async review(request, context) {
       context.signal.throwIfAborted();
       const active = session; if (!active) throw new Error("Guard reviewer backend is unavailable: session context is missing");
-      const registration = agenticDomains.get(pi)?.get(domainKey(request.client.id, request.client.evidenceProfile, request.client.decisionContract));
+      const registration = discoveredDomains.get(domainKey(request.client.id,request.client.evidenceProfile,request.client.decisionContract))??
+        agenticDomains.get(pi)?.get(domainKey(request.client.id, request.client.evidenceProfile, request.client.decisionContract));
       if (!registration) throw new Error(`Unsupported Guard review domain: ${request.client.evidenceProfile} / ${request.client.decisionContract}`);
       const resolved=await resolveGuardReviewerConfig(stateDir),configured=resolved.config.model;
       if(!configured)throw new Error("Guard reviewer model is not selected");
@@ -259,6 +273,14 @@ function usageDetails(usage: unknown): AgenticJson {
   const supplied = Object.values(values).filter((number): number is number => number !== null);
   return { ...values, usageStatus: !supplied.length ? "not_reported" : supplied.every(number => number === 0) ? "reported_zero_unverified" : "reported_by_sdk" };
 }
+function combinedUsage(current:Usage|undefined,next:Usage|undefined):Usage|undefined{
+  if(!next)return current;const values=current?[current,next]:[next],sum=(read:(value:Usage)=>number)=>values.reduce((total,value)=>total+read(value),0);
+  const optional=(read:(value:Usage)=>number|undefined)=>values.some(value=>read(value)!==undefined)?values.reduce((total,value)=>total+(read(value)??0),0):undefined;
+  return {input:sum(value=>value.input),output:sum(value=>value.output),cacheRead:sum(value=>value.cacheRead),cacheWrite:sum(value=>value.cacheWrite),
+    ...(optional(value=>value.cacheWrite1h)===undefined?{}:{cacheWrite1h:optional(value=>value.cacheWrite1h)}),
+    ...(optional(value=>value.reasoning)===undefined?{}:{reasoning:optional(value=>value.reasoning)}),totalTokens:sum(value=>value.totalTokens),
+    cost:{input:sum(value=>value.cost.input),output:sum(value=>value.cost.output),cacheRead:sum(value=>value.cost.cacheRead),cacheWrite:sum(value=>value.cost.cacheWrite),total:sum(value=>value.cost.total)}};
+}
 function extractDecisionJson(message: any): unknown {
   const text = (message.content ?? []).filter((part: any) => part.type === "text").map((part: any) => part.text).join("").trim();
   const fenced = text.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i); return JSON.parse(fenced ? fenced[1] : text);
@@ -276,10 +298,11 @@ export class AgenticGuardReviewer<Request, Evidence, Decision> {
     this.budget = { totalMs: ["high", "xhigh", "max"].includes(options.thinking) ? 270_000 : 180_000, slowMs: 15_000 };
   }
   async review(request: Request, services: AgenticReviewServices<Evidence>): Promise<AgenticReviewResult<Decision>> {
-    const metrics: Required<AgenticReviewMetrics> = { requests: 0, evidenceCalls: 0, inputBytes: 0 };
+    const metrics: AgenticReviewMetrics & Required<Pick<AgenticReviewMetrics,"requests"|"evidenceCalls"|"inputBytes">> = { requests: 0, evidenceCalls: 0, inputBytes: 0 };
     const options = this.options, domain = options.domain, evidence = services.evidence;
     let agent: NativeAgentLike | undefined, completed: Decision | undefined;
     let lastError = "Reviewer did not supply a decision", corrections = 0, latestCalls: any[] = [];
+    const providerRuns=new Set<Promise<void>>();
     let phase: ReviewerPhase = "investigating";
     const emit = (level: "INFO" | "INVESTIGATE" | "ERROR", event: string, message: string, details?: AgenticJson) =>
       services.report({ level, event, message, details, metrics });
@@ -329,7 +352,7 @@ export class AgenticGuardReviewer<Request, Evidence, Decision> {
           if (done) output.push({ type: "start", partial: reply });
           output.push(done ? { type: "done", reason: "stop", message: reply } : { type: "error", reason: "aborted", error: reply }); output.end(reply); return output;
         }
-        void (async () => {
+        const providerRun=(async () => {
           let ended = false;
           try {
             if (metrics.requests >= MAX_MODEL_REQUESTS) throw new Error("Reviewer request budget exhausted");
@@ -362,7 +385,7 @@ export class AgenticGuardReviewer<Request, Evidence, Decision> {
                 const message = await abortable(Promise.resolve(source.result()), signal); signal.throwIfAborted(); return message;
               } finally { if (signal.aborted) try { void Promise.resolve(iterator.return?.()).catch(() => {}); } catch {} }
             }, requestLimit);
-            services.signal.throwIfAborted();
+            services.signal.throwIfAborted();metrics.usage=combinedUsage(metrics.usage,response.usage as Usage|undefined);
             emit("INFO", "model_response", "Pi reviewer response received", { round, stopReason: response.stopReason,
               ...usageDetails(response.usage), responseTypes: (response.content ?? []).map((block: any) => block.type) });
             if (response.stopReason === "error" || response.stopReason === "aborted") output.push({ type: "error", reason: response.stopReason, error: response });
@@ -375,7 +398,7 @@ export class AgenticGuardReviewer<Request, Evidence, Decision> {
           } finally {
             if (!ended) { const reply = emptyReply(options.model, "error", "Stream closed unexpectedly"); output.push({ type: "error", reason: "error", error: reply }); output.end(reply); }
           }
-        })(); return output;
+        })();providerRuns.add(providerRun);void providerRun.finally(()=>providerRuns.delete(providerRun)).catch(()=>{});return output;
       };
       agent = new infrastructure.Agent({ initialState: { model: options.model, thinkingLevel: options.thinking,
         systemPrompt: domain.systemPrompt(request), tools, messages: [] }, streamFn, toolExecution: "sequential",
@@ -412,7 +435,7 @@ export class AgenticGuardReviewer<Request, Evidence, Decision> {
       });
       try {
         await abortable(agent.prompt({ role: "user", timestamp: Date.now(), content: JSON.stringify(domain.initialPrompt(request, evidence)) }), services.signal);
-        services.signal.throwIfAborted();
+        await abortable(Promise.all([...providerRuns]).then(()=>{}),services.signal);services.signal.throwIfAborted();
         if (!completed) throw new Error(agent.state.errorMessage || agent.state.error || lastError);
         return { status: "completed", decision: completed, metrics };
       } finally { unsubscribe(); }

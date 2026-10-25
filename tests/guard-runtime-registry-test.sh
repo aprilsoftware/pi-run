@@ -59,8 +59,8 @@ function reviewRegistration(id, label, evidenceProfile = `${id}-evidence.v1`, de
 function reviewRequest(name) {
   return { schemaVersion: 1, action: { kind: 'fixture', name }, policy: { source: 'fixture' } };
 }
-function activity(state, detail, right) {
-  return { schemaVersion: 1, state, ...(detail ? { detail } : {}), ...(right ? { right } : {}) };
+function activity(state, detail, right, surface) {
+  return { schemaVersion: 1, state, ...(detail ? { detail } : {}), ...(right ? { right } : {}), ...(surface ? { surface } : {}) };
 }
 async function discover(bus) {
   let service;
@@ -83,6 +83,9 @@ assert.equal(loadedService.kind, module.GUARD_RUNTIME_KIND);
 assert.equal(loadedService.schemaVersion, 1);
 assert.equal(typeof loadedService.status, 'function');
 assert.equal(typeof loadedService.subscribeStatus, 'function');
+assert.equal(loadedService.reviewMode(), 'unknown');
+assert.equal(typeof loadedService.setReviewMode, 'function');
+assert.equal(typeof loadedService.subscribeReviewMode, 'function');
 const loadedReviewService = await discoverReview(loaderBus);
 assert.equal(loadedReviewService.kind, module.GUARD_REVIEW_RUNTIME_KIND);
 assert.equal(loadedReviewService.schemaVersion, 1);
@@ -165,6 +168,7 @@ assert.equal(typeof loadedReviewService.registerClient, 'function');
   assert.equal(connection.connected(), false);
   module.default(runtime.pi); await tick();
   assert.equal(connection.connected(), true);
+  const modeService = await discover(bus);modeService.setReviewMode('on');
   const service = connection.runtime();
   assert.deepEqual(service.clients(), [reviewRegistration('caf', 'Call a Friend', 'caf-disclosure.v1', 'caf-decision.v1')]);
   assert.equal(Object.isFrozen(service.clients()[0]), true);
@@ -210,6 +214,10 @@ assert.equal(typeof loadedReviewService.registerClient, 'function');
   }};
   const bus = createEventBus(), runtime = harness(bus), guardianHarness = harness(bus), cafHarness = harness(bus);
   module.createGuardRuntimeExtension({reviewer})(runtime.pi);
+  const modeService=await discover(bus),modeChanges=[];modeService.subscribeReviewMode(mode=>modeChanges.push(mode));assert.deepEqual(modeChanges,['unknown']);
+  const disabled=module.connectGuardReviewClient(harness(bus).pi,reviewRegistration('disabled','Disabled'));
+  const disabledResult=await disabled.review(reviewRequest('must-not-run'));assert.equal(disabledResult.status,'incomplete');assert.match(disabledResult.error,/unknown/);assert.deepEqual(calls,[]);disabled.dispose();
+  modeService.setReviewMode('on');assert.deepEqual(modeChanges,['unknown','on']);assert.throws(()=>modeService.setReviewMode('invalid'),/Invalid Guard review mode/);
   const guardian = module.connectGuardReviewClient(guardianHarness.pi,
     reviewRegistration('guardian', 'Guardian', 'guardian-command.v1', 'guardian-decision.v1'));
   const caf = module.connectGuardReviewClient(cafHarness.pi,
@@ -249,6 +257,9 @@ assert.equal(typeof loadedReviewService.registerClient, 'function');
   await tick(); assert.equal(hangStarted, true); activeController.abort(new Error('active fixture cancelled'));
   const hangingResult = await hanging; assert.equal(hangingResult.status, 'incomplete'); assert.match(hangingResult.error, /active fixture cancelled/);
 
+  hangStarted=false;const modeCancelled=caf.review(reviewRequest('hang'));await tick();assert.equal(hangStarted,true);modeService.setReviewMode('off');
+  const modeCancelledResult=await modeCancelled;assert.equal(modeCancelledResult.status,'incomplete');assert.match(modeCancelledResult.error,/Guard review is off/);assert.deepEqual(modeChanges,['unknown','on','off']);
+  const offResult=await caf.review(reviewRequest('must-not-run-off'));assert.equal(offResult.status,'incomplete');assert.match(offResult.error,/Guard review is off/);assert.equal(calls.includes('must-not-run-off'),false);modeService.setReviewMode('on');
   hangStarted = false; const stopped = caf.review(reviewRequest('hang')); await tick(); assert.equal(hangStarted, true);
   await runtime.shutdown(); const stoppedResult = await stopped; assert.equal(stoppedResult.status, 'incomplete'); assert.match(stoppedResult.error, /stopped/);
   assert.equal(guardian.connected(), false); assert.equal(caf.connected(), false);
@@ -308,7 +319,7 @@ assert.equal(typeof loadedReviewService.registerClient, 'function');
   assert.equal(heldByGuardian.active(), false);
   assert.equal(service.activity().clientId, 'caf');
   for (const invalid of [null, {}, activity('UPPER'), { ...activity('valid'), detail: ' bad' },
-    { ...activity('valid'), right: 'bad\nright' }, { ...activity('valid'), extra: true }]) {
+    { ...activity('valid'), right: 'bad\nright' }, { ...activity('valid'), surface:'other' }, { ...activity('valid'), extra: true }]) {
     await assert.rejects(caf.acquireActivity(invalid), /Invalid Guard Runtime activity/);
   }
   const transient = module.connectGuardClient(harness(bus).pi, registration('transient', 'Transient'));
@@ -357,39 +368,33 @@ assert.equal(typeof loadedReviewService.registerClient, 'function');
   assert.deepEqual(component.render(80), ['<muted>guard · ready</muted>']);
   const guardian = module.connectGuardClient(clientHarness.pi, registration('guardian', 'Guardian'));
   const service = guardian.runtime();
-  guardian.setBaseline(activity('on'));
+  guardian.setBaseline(activity('on',undefined,'reviewer-model · low'));
   assert.equal(service.activity(), undefined, 'A baseline must not acquire the activity lease');
-  assert.deepEqual(component.render(80), ['<muted>guard · on</muted>']);
+  assert.match(component.render(80)[0],/^<muted>guard · on\s+reviewer-model · low<\/muted>$/);
   let caf = module.connectGuardClient(harness(bus).pi, registration('caf', 'Call a Friend'));
-  caf.setBaseline(activity('caf-ready'));
-  assert.deepEqual(component.render(80), ['<muted>guard · caf ready</muted>']);
+  caf.setBaseline(activity('on',undefined,'friend-model · high'));
+  let rendered=component.render(80);assert.equal(rendered.length,2);assert.match(rendered[0],/^<muted>guard · on\s+reviewer-model · low<\/muted>$/);assert.match(rendered[1],/^<muted>caf · on\s+friend-model · high<\/muted>$/);
   caf.dispose();
-  assert.deepEqual(component.render(80), ['<muted>guard · on</muted>'], 'Disposal restores the previous baseline');
-  caf = module.connectGuardClient(harness(bus).pi, registration('caf', 'Call a Friend'));
+  assert.equal(component.render(80).length,1,'Disposal removes only the disposed client row');
+  caf = module.connectGuardClient(harness(bus).pi, registration('caf', 'Call a Friend'));caf.setBaseline(activity('on',undefined,'friend-model · high'));
   assert.throws(() => caf.setBaseline(activity('UPPER')), /Invalid Guard Runtime activity/);
 
   const first = await guardian.acquireActivity(activity('reviewing', 'command'));
-  assert.deepEqual(component.render(80), ['<muted>guard · reviewing command</muted>']);
-  guardian.setBaseline(activity('off'));
-  assert.deepEqual(component.render(80), ['<muted>guard · reviewing command</muted>'],
-    'A changed baseline stays hidden under active work');
-  first.update(activity('researching', 'étude 2/4', 'friend-model · high'));
-  assert.match(component.render(80)[0], /^<muted>guard · researching étude 2\/4\s+friend-model · high<\/muted>$/);
-  const narrow = module.renderGuardStatus(first.snapshot(), 14);
-  assert.ok(visibleWidth(narrow) <= 14);
-  assert.ok(narrow.includes('…'));
-  first.update(activity('asking-primary'));
-  assert.deepEqual(component.render(80), ['<muted>guard · asking primary</muted>']);
-  const nextActivity = caf.acquireActivity(activity('researching', '2/4'));
+  rendered=component.render(80);assert.equal(rendered.length,2);assert.match(rendered[0],/^<muted>guard · reviewing command\s+reviewer-model · low<\/muted>$/);assert.match(rendered[1],/^<muted>caf · on\s+friend-model · high<\/muted>$/);
+  guardian.setBaseline(activity('off',undefined,'reviewer-model · low'));
+  assert.match(component.render(80)[0],/guard · reviewing command/,'A changed baseline stays hidden under active work');
+  first.update(activity('researching', 'étude 2/4'));
+  assert.match(component.render(80)[0], /^<muted>guard · researching étude 2\/4\s+reviewer-model · low<\/muted>$/);
+  const narrow = module.renderGuardStatusRows([{id:'guardian',activity:first.snapshot()},{id:'caf',activity:{...first.snapshot(),clientId:'caf',state:'on',right:'friend-model · high'}}],14);
+  assert.equal(narrow.length,2);assert.ok(narrow.every(line=>visibleWidth(line)<=14&&line.includes('…')));
+  const nextActivity = caf.acquireActivity(activity('reviewing-disclosure','call friend',undefined,'guard'));
   first.end();
   const second = await nextActivity;
-  assert.deepEqual(component.render(80), ['<muted>guard · researching 2/4</muted>']);
-  second.end();
-  assert.deepEqual(component.render(80), ['<muted>guard · off</muted>']);
-  guardian.setBaseline(undefined);
-  assert.deepEqual(component.render(80), ['<muted>guard · ready</muted>']);
-  caf.setBaseline(activity('caf-ready'));
-  assert.deepEqual(component.render(80), ['<muted>guard · caf ready</muted>']);
+  rendered=component.render(80);assert.match(rendered[0],/^<muted>guard · reviewing disclosure call friend\s+reviewer-model · low<\/muted>$/);assert.match(rendered[1],/^<muted>caf · on\s+friend-model · high<\/muted>$/);
+  second.update(activity('asking-friend','one round',undefined,'client'));rendered=component.render(80);assert.match(rendered[0],/^<muted>guard · off\s+reviewer-model · low<\/muted>$/);assert.match(rendered[1],/^<muted>caf · asking friend one round\s+friend-model · high<\/muted>$/);
+  second.end();rendered=component.render(80);assert.match(rendered[0],/guard · off/);assert.match(rendered[1],/caf · on/);
+  guardian.setBaseline(undefined);rendered=component.render(80);assert.equal(rendered.length,1);assert.match(rendered[0],/^<muted>caf · on\s+friend-model · high<\/muted>$/);
+  caf.setBaseline(undefined);assert.deepEqual(component.render(80),['<muted>guard · ready</muted>']);
   assert.ok(tui.redraws >= 10, 'Every visible status transition requests a redraw');
   await runtime.shutdown();
   assert.equal(service.status(), undefined, 'Shutdown clears passive client status');

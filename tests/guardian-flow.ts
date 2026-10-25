@@ -1,11 +1,11 @@
 /** Test-only: real Guardian gate, fixed reviewer, synthetic context, NO executor. */
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, writeFile, readFile, readdir, rm } from "node:fs/promises";
+import { chmod, lstat, mkdtemp, mkdir, writeFile, readFile, readdir, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import type { ExtensionAPI, ExtensionContext, ExtensionUIContext, ToolCallEventResult } from "@earendil-works/pi-coding-agent";
 import guardRuntime, { GUARD_RUNTIME_DISCOVER, type GuardRuntimeV1 } from "../docker/extensions/guard-runtime.ts";
-import { createGuardianExtension, createLogger, parseGuardianConfig, readGuardianLogs, type ReviewDecision } from "../docker/extensions/guardian-agent.ts";
+import { createGuardianExtension, createLogger, loadGuardianModeConfig, parseGuardianConfig, parseGuardianModeConfig, readGuardianLogs, saveGuardianModeConfig, type ReviewDecision } from "../docker/extensions/guardian-agent.ts";
 
 type Outcome = ReviewDecision["outcome"] | "unavailable";
 type Handler = (event: any, ctx: ExtensionContext) => unknown | Promise<unknown>;
@@ -32,7 +32,7 @@ async function runScenario(name: Scenario, realUI?: ExtensionUIContext, withRunt
   let outcome: Outcome = scenario.outcome, sessionId = "guardian-flow-test", reviews = 0, assessmentReviews=0, aborts = 0;
   let runtimeService:GuardRuntimeV1|undefined;
   const userEntry = { type: "message", id: "user-1", message: { role: "user", content: "Synthetic test direction; no action may execute." } };
-  const entries:any[] = [{ type: "custom", id: "mode-1", customType: "guardian-mode", data: { mode: "on" } }, userEntry];
+  const entries:any[] = [{ type: "custom", id: "caf-mode-ignored", customType: "pi-run-caf-mode", data: { mode: "off" } },{ type: "custom", id: "mode-1", customType: "guardian-mode", data: { mode: "on" } }, userEntry];
   let branch:any[] = entries;
   const widgets=new Map<string,any>();
   const tui = { requestRender: () => { for(const widget of widgets.values())statusLines.push(widget.render(120)[0]); } };
@@ -134,6 +134,7 @@ async function runScenario(name: Scenario, realUI?: ExtensionUIContext, withRunt
       else process.env.PI_RUN_PROFILE_DIR = previous;
     }
     await dispatch("session_start", { type: "session_start" });
+    if(withRuntime)assert.equal(runtimeService?.reviewMode(),"on","Guardian session mode must publish the shared Guard review mode");
     assert.deepEqual([...widgets.keys()],name!=="no-ui"&&withRuntime?["guard-runtime"]:[],
       "Guardian status must use only the shared runtime widget");
     assert.ok(tools.has("guardian_justify"),"Guardian must register its structured justification tool");
@@ -145,16 +146,21 @@ async function runScenario(name: Scenario, realUI?: ExtensionUIContext, withRunt
     if(withRuntime)assert.equal(runtimeService?.status()?.clientId,"guardian","Guardian baseline must resume after command review");
 
     if (name === "allow"&&withRuntime) {
+      assert.ok(commands.has("guardian-default"),"Guardian must expose a dedicated new-session default command");
+      (ctx.ui as any).select=async(title:string,choices:string[])=>{assert.match(title,/Guard review — On/);for(const label of ["Current session — On (turn Off)","New sessions — Off","Logs","Close"])assert.ok(choices.includes(label),label);return "Close";};
+      await commands.get("guardian")!.handler("",ctx);
       branch=[userEntry];await dispatch("session_tree",{type:"session_tree"});
       assert.equal((await invoke())?.block,undefined,"Branch navigation must retain session-wide mode");
       assert.equal(reviews,2);
-      await commands.get("guardian-mode")!.handler("off",ctx);
+      await commands.get("guardian-mode")!.handler("off",ctx);assert.equal(runtimeService?.reviewMode(),"off");
       assert.equal(await invoke(),undefined,"Turning Guardian off must bypass review in this session");
-      await commands.get("guardian-mode")!.handler("on",ctx);
-      entries.splice(0,entries.length,userEntry);branch=entries;sessionId="guardian-flow-new-session";
-      await dispatch("session_start",{type:"session_start"});
-      assert.equal(await invoke(),undefined,"A new session must start Off despite legacy profile mode");
-      assert.equal(reviews,2);
+      await commands.get("guardian-mode")!.handler("on",ctx);assert.equal(runtimeService?.reviewMode(),"on");
+      await commands.get("guardian-default")!.handler("on",ctx);assert.equal((await loadGuardianModeConfig(profile)).defaultMode,"on");
+      entries.splice(0,entries.length);branch=entries;sessionId="guardian-flow-new-session";await dispatch("session_start",{type:"session_start"});entries.push(userEntry);
+      assert.equal((await invoke())?.block,undefined,"A genuinely new session must use the saved On default");assert.equal(reviews,3);
+      await commands.get("guardian-default")!.handler("off",ctx);assert.equal((await invoke())?.block,undefined,"Changing the future default must not alter the current On session");assert.equal(reviews,4);
+      await commands.get("guardian-default")!.handler("on",ctx);entries.splice(0,entries.length,userEntry);branch=entries;sessionId="guardian-flow-legacy-session";
+      await dispatch("session_start",{type:"session_start"});assert.equal(runtimeService?.reviewMode(),"off");assert.equal(await invoke(),undefined,"An existing session without mode metadata must remain Off");assert.equal(reviews,4);
     } else {
       assert.ok(notices.some(message=>message.includes("Guardian stopped this action; nothing was executed")),"Guardian must show its own dispute reason");
       if(name==="no-ui"||!withRuntime)assert.deepEqual(statusLines,[],"Non-TUI or missing-runtime review must not create status output");
@@ -309,12 +315,23 @@ async function testAutomaticRetention():Promise<void>{
   }finally{await rm(root,{recursive:true,force:true});await rm(activeRoot,{recursive:true,force:true});}
 }
 
+async function testGuardianModeConfig():Promise<void>{
+  const root=await mkdtemp(join(tmpdir(),"guardian-mode-")),profile=join(root,"profile");try{await mkdir(join(profile,"guardian"),{recursive:true,mode:0o700});
+    assert.deepEqual(await loadGuardianModeConfig(profile),{schemaVersion:1,defaultMode:"off"});assert.deepEqual(parseGuardianModeConfig('{"schemaVersion":1,"defaultMode":"on"}'),{schemaVersion:1,defaultMode:"on"});
+    for(const value of [{schemaVersion:2,defaultMode:"off"},{schemaVersion:1,defaultMode:"invalid"},{schemaVersion:1,defaultMode:"off",extra:true}])assert.throws(()=>parseGuardianModeConfig(JSON.stringify(value)),/mode configuration/);
+    await saveGuardianModeConfig(profile,{schemaVersion:1,defaultMode:"on"});const path=join(profile,"guardian","mode.json"),first=(await lstat(path)).ino;
+    assert.equal((await lstat(path)).mode&0o777,0o600);await saveGuardianModeConfig(profile,{schemaVersion:1,defaultMode:"off"});assert.notEqual((await lstat(path)).ino,first);
+    await chmod(path,0o644);await assert.rejects(loadGuardianModeConfig(profile),/private single-link/);await chmod(path,0o600);const outside=join(root,"outside");await writeFile(outside,'{}\n',{mode:0o600});await rm(path);await symlink(outside,path);
+    await assert.rejects(saveGuardianModeConfig(profile,{schemaVersion:1,defaultMode:"on"}),/private single-link/);
+  }finally{await rm(root,{recursive:true,force:true});}
+}
+
 export async function runAutomatedTests(): Promise<void> {
   assert.deepEqual(parseGuardianConfig(JSON.stringify({schemaVersion:1,mode:"on",model:null,thinking:"low"})),
     {schemaVersion:2,model:null,thinking:"low"},"Legacy profile mode must migrate out of preferences");
   for(const name of Object.keys(scenarios) as Scenario[]){await runScenario(name);console.log(`PASS guardian-flow: ${name}`);}
   await runScenario("allow",undefined,false);
-  await testAutomaticRetention();
+  await testGuardianModeConfig();await testAutomaticRetention();
   console.log("PASS guardian-flow: runtime client, journal retention, unavailable presentation, assessment, cancellation, persistence, human arbitration, and fresh review");
 }
 

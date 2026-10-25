@@ -6,72 +6,77 @@ and retained-log behavior. For normal setup and decisions, start with the
 
 ## Preferences and startup
 
-Guardian is loaded for every Pi-Run profile. Saved preferences live in the
-selected profile's private `guardian/config.json` and include only the optional
-reviewer model and thinking level. Those preferences apply to later sessions.
-Legacy schema-1 files remain readable, but their saved mode is ignored and is
-removed when preferences are next written.
+Guardian is loaded for every Pi-Run profile. Shared reviewer model and thinking
+preferences live in private `guard/config.json`. The current session's Guard
+mode is private extension metadata, while the profile-specific default for
+genuinely new sessions is stored in private `guardian/mode.json`. The editable
+command-review policy remains `guardian/guardian.md`.
 
-Activation is session-scoped. Every new session starts Off. `/guardian-mode on`
-or `off` appends private extension state to the current session; it is not sent
-to the model. Resuming that session restores the latest mode. Mode is operational
-session state rather than conversational authority, so branch navigation retains
-the latest setting from anywhere in that session. Another session using the same
-profile still starts Off.
+An explicit model in legacy `guardian/config.json` may be adopted in memory when
+`guard/config.json` is absent, but the legacy file is never rewritten as a
+migration. A missing or null selection never becomes a conversation-model
+fallback. The first explicit reviewer save writes `guard/config.json`.
 
-An unreadable or invalid preference file produces a warning and uses default
-reviewer preferences without changing session mode. A failed preference write
-leaves the previous model and thinking settings in effect. Profile creation does
-not copy Guardian preferences, even though it copies the profile's review policy.
+Activation is session-scoped. Fresh profiles, genuinely new sessions, and older
+sessions without mode metadata default Off unless `guardian/mode.json` was
+deliberately changed. `/guardian-mode on|off` appends private extension state to
+the current session; it is not sent to either model. Resuming restores the
+latest mode, and branch navigation retains it. `/guardian-default on|off`
+changes only future genuinely new sessions.
 
-Use `/guardian status` to inspect effective mode, reviewer, thinking, and log
-path. `/guardian` opens the settings menu. `/guardian-mode`, with no argument,
-opens a selector; `on` and `off` change the current session. `/guardian on` and
-`/guardian off` are aliases.
+Profile creation copies the Guardian policy but not reviewer preferences, mode
+defaults, sessions, or logs. Invalid private configuration is reported rather
+than silently rewritten.
+
+Use `/guardian status` to inspect current mode, future default, reviewer,
+thinking, and log path. `/guardian` opens the settings menu. `/guardian-mode`,
+with no argument, opens a selector; `/guardian on` and `/guardian off` remain
+aliases.
 
 ## Reviewer model and thinking
 
-With no model override, Guardian uses the conversation model. Select an available
-configured model through:
+Guard review requires one explicitly selected model. It never silently uses the
+conversation model or CAF friend. Select an available configured model through:
 
 ```text
 /guardian-model
 ```
 
-A direct `/guardian-model <provider>/<model-id>` requires the exact configured
-identifier. Return to the conversation model with:
-
-```text
-/guardian-model default
-```
-
-Select reviewer thinking with `/guardian-thinking`. `default` follows the
-conversation setting; an explicit supported value overrides it. The effective
-level may be adjusted when the selected model does not support the requested
-level.
+A direct `/guardian-model <provider>/<model-id>` requires the exact locally
+registered identifier. Model resolution and selectors contact no provider.
+`/guardian-thinking` selects a supported explicit level; `default` clears the
+stored override. Guard Runtime requests `low` when no explicit level is stored
+and clamps it to a level supported by the selected model.
 
 **Thinking Off does not disable command review.** `/guardian-thinking off`
 controls reviewer reasoning effort; `/guardian-mode off` disables the gate.
 Model and thinking selectors do not invoke the conversation agent merely by
 opening them.
 
-A fixed reviewer is independent of the acting model. Reviewer requests use Pi's
-configured provider access and can incur separate latency and cost. Context sent
-to the provider can include instructions, command arguments, conversation
-excerpts, and bounded file evidence.
+The shared reviewer is independent of the acting model and CAF friend. Reviewer
+requests use Pi's configured provider access and can incur separate latency and
+cost. Context sent to the provider can include instructions, command arguments,
+CAF candidate disclosures, conversation excerpts, and bounded file evidence.
 
-## Status row
+## Status rows
 
-Guardian owns a muted row below Pi's editor, for example:
+Guard Runtime owns one muted two-line widget below Pi's editor, for example:
 
 ```text
-guard · reviewing · 4s                       reviewer-model · high
+guard · off                                  reviewer-model · low
+caf · on                                     friend-model · high
 ```
 
-The left side reports Off, On, Reviewing, Dispute, or a temporary interruption
-state. The right side reports reviewer model and effective thinking, or that the
-reviewer is unavailable. Elapsed time appears only during active review;
-completed durations remain in retained logs.
+The Guard row reports Off, On, Reviewing, Dispute, or a temporary interruption
+state and shows the single shared reviewer. The CAF row reports CAF availability
+or friend/search activity and shows only the friend model. Guard state already
+determines whether an enabled CAF receives review, so the compact CAF row does
+not repeat a derived label. During CAF disclosure review, activity appears on
+the Guard row; during friend or search calls, it appears on the CAF row.
+
+Narrow rendering preserves role and state before model details. Non-TUI modes
+install no widget. Presentation failure cannot alter mode, review, enforcement,
+or transmission. Completed durations remain in retained logs.
 
 Dispute reports `investigating` while the acting agent may make bounded native
 file reads, `assessing` during automatic justification review, or `awaiting you`
@@ -81,11 +86,13 @@ by clearing the latch.
 
 ## Review scope and evidence
 
-During normal operation, only acting-agent calls whose tool name is exactly
-`bash` or `run` are reviewed. Aliases, shell-looking arguments to another tool,
-and host-terminal commands do not extend normal coverage. When mode is Off,
-those calls skip assessment, but the agent's instructions and authorization
-obligations still apply.
+During normal Guardian operation, only acting-agent calls whose tool name is
+exactly `bash` or `run` are reviewed. Aliases, shell-looking arguments to another
+tool, and host-terminal commands do not extend normal command coverage. Guard
+mode also controls CAF disclosure review: On requires a completed decision for
+each friend/search destination; Off skips command assessment and makes enabled
+CAF send its bounded actions without reviewer calls. In either mode, the agent's
+instructions and authorization obligations still apply.
 
 An open dispute is a separate stop state. It permits at most six direct native
 `read` calls during the same agent run and withholds every other acting-agent
@@ -148,8 +155,9 @@ reconstruct that branch's state; Guardian mode itself remains session-wide.
 A later genuine user message resolves the latch before starting a fresh turn.
 `/guardian-resume` also resolves it, but deliberately contributes no authority
 and triggers no model turn. Earlier restrictions still apply unless the user
-actually changes them. Turning Guardian Off resolves the latch and disables
-future review, but never replays the cancelled invocation.
+actually changes them. Turning Guard Off resolves the latch, disables future command and CAF disclosure
+review, and cancels active CAF work without retry, but never replays the cancelled
+invocation.
 
 ## Unavailable and interrupted review
 

@@ -212,6 +212,34 @@ export async function saveGuardianConfig(stateDir: string, config: GuardianConfi
   }catch(e){if(file)await file.close().catch(()=>{});await unlink(temporary).catch(()=>{});throw e;}
 }
 
+export type GuardianDefaultMode="on"|"off";
+export interface GuardianModeConfig{schemaVersion:1;defaultMode:GuardianDefaultMode;}
+export function parseGuardianModeConfig(value:string):GuardianModeConfig{const row=plain(JSON.parse(value));
+  if(Object.keys(row).sort().join(",")!=="defaultMode,schemaVersion"||row.schemaVersion!==1||!['on','off'].includes(String(row.defaultMode)))throw new Error("Invalid Guardian mode configuration");
+  return {schemaVersion:1,defaultMode:row.defaultMode as GuardianDefaultMode};}
+async function guardianModeDirectory(stateDir:string,create:boolean):Promise<string>{
+  const state=resolve(stateDir),stateStat=await lstat(state),resolvedState=await realpath(state),directory=join(state,"guardian");
+  if(!stateStat.isDirectory()||stateStat.isSymbolicLink()||resolvedState!==state)throw new Error("Guardian state directory is redirected");
+  if(create)await mkdir(directory,{recursive:true,mode:0o700});
+  const stat=await lstat(directory);if(!stat.isDirectory()||stat.isSymbolicLink()||(stat.mode&0o777)!==0o700||
+    (typeof process.getuid==="function"&&stat.uid!==process.getuid())||await realpath(directory)!==join(resolvedState,"guardian"))throw new Error("Guardian mode directory must be private, owned, and unredirected");
+  return directory;
+}
+export async function loadGuardianModeConfig(stateDir:string):Promise<GuardianModeConfig>{
+  let directory:string;try{directory=await guardianModeDirectory(stateDir,false);}catch(error){if((error as NodeJS.ErrnoException).code==="ENOENT")return {schemaVersion:1,defaultMode:"off"};throw error;}
+  let file:Awaited<ReturnType<typeof open>>|undefined;try{file=await open(join(directory,"mode.json"),constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);const stat=await file.stat();
+    if(!stat.isFile()||stat.nlink!==1||(stat.mode&0o777)!==0o600||(typeof process.getuid==="function"&&stat.uid!==process.getuid())||stat.size>1024)throw new Error("Guardian mode configuration must be a private single-link regular file");
+    const data=await file.readFile();if(data.length>1024||data.includes(0))throw new Error("Invalid Guardian mode configuration");return parseGuardianModeConfig(data.toString("utf8"));
+  }catch(error){if((error as NodeJS.ErrnoException).code==="ENOENT")return {schemaVersion:1,defaultMode:"off"};throw error;}finally{await file?.close();}
+}
+export async function saveGuardianModeConfig(stateDir:string,value:GuardianModeConfig):Promise<void>{
+  const config=parseGuardianModeConfig(JSON.stringify(value)),directory=await guardianModeDirectory(stateDir,true),path=join(directory,"mode.json");
+  try{const stat=await lstat(path);if(!stat.isFile()||stat.isSymbolicLink()||stat.nlink!==1||(stat.mode&0o777)!==0o600||(typeof process.getuid==="function"&&stat.uid!==process.getuid()))throw new Error("Guardian mode configuration must be a private single-link regular file");}
+  catch(error){if((error as NodeJS.ErrnoException).code!=="ENOENT")throw error;}
+  const temporary=join(directory,`.mode.json.tmp.${randomUUID()}`);let file:Awaited<ReturnType<typeof open>>|undefined;
+  try{file=await open(temporary,constants.O_WRONLY|constants.O_CREAT|constants.O_EXCL|constants.O_NOFOLLOW,0o600);await file.writeFile(JSON.stringify(config)+"\n");await file.sync();await file.close();file=undefined;await rename(temporary,path);}
+  catch(error){await file?.close().catch(()=>{});await unlink(temporary).catch(()=>{});throw error;}
+}
 
 const MAX_LOG_BYTES = 1024 * 1024;
 const LOG_BACKUPS = 2;
@@ -1546,9 +1574,9 @@ function justificationPanel(details:JustificationDetails):string{
     "","This assessment is advisory. The original invocation remains cancelled and human feedback is required.");
   return lines.join("\n");
 }
-function restoredGuardianMode(ctx:ExtensionContext):{mode:GuardianSessionMode;source:"default"|"session"}{
-  let mode:GuardianSessionMode="off",source:"default"|"session"="default";
-  for(const entry of ctx.sessionManager.getEntries())if(entry.type==="custom"&&entry.customType===GUARDIAN_MODE_ENTRY){
+function restoredGuardianMode(ctx:ExtensionContext,profileDefault:GuardianDefaultMode):{mode:GuardianSessionMode;source:"profile-default"|"legacy-default"|"session"}{
+  const entries=ctx.sessionManager.getEntries();let mode:GuardianSessionMode=entries.length?"off":profileDefault,source:"profile-default"|"legacy-default"|"session"=entries.length?"legacy-default":"profile-default";
+  for(const entry of entries)if(entry.type==="custom"&&entry.customType===GUARDIAN_MODE_ENTRY){
     const candidate=(entry.data as {mode?:unknown}|undefined)?.mode;
     if(candidate==="on"||candidate==="off"){mode=candidate;source="session";}
   }
@@ -1584,12 +1612,12 @@ export function createGuardianExtension(factory: ReviewerFactory = createPiRevie
     let dispute:GuardianDispute|undefined;
     const store = new ConversationStore();
     let config:GuardReviewerConfig = defaultGuardReviewerConfig(), configNeedsWrite = true;
-    let enabled = false, displayState = "Off", displayDetail = ""; // Never inferred from model output.
+    let enabled = false,modeRecorded=false,defaultMode:GuardianDefaultMode="off",defaultModeError:string|undefined,displayState = "Off", displayDetail = ""; // Never inferred from model output.
     // Viewer lifecycle is independent of review/cancellation/permission state.
     let logViewer: AbortController | undefined;
     function closeLogViewer(): void { const current = logViewer; logViewer = undefined; current?.abort(new Error("Log viewer closed")); }
     async function logsCommand(args: string, ctx: ExtensionContext): Promise<void> {
-      if (logViewer) return; // Never stack multiple instances of the browser.
+      pinSessionMode(ctx);if (logViewer) return; // Never stack multiple instances of the browser.
       const controller = new AbortController(); logViewer = controller;
       try { await openGuardianLogViewer(ctx, stateDir, controller.signal, args.trim().slice(0, 300)); }
       catch (e) { if (!controller.signal.aborted) ctx.ui.notify(oneLine(`Cannot open guardian log: ${errorText(e)}`, 240), "warning"); }
@@ -1620,6 +1648,8 @@ export function createGuardianExtension(factory: ReviewerFactory = createPiRevie
     };
     const block = (reason: string) => ({ block: true as const, reason });
     const tell = (ctx: ExtensionContext, message: string, kind: "info" | "warning" | "error" = "info") => ctx.ui.notify(visible(message), kind);
+    function publishGuardMode(ctx:ExtensionContext):void{try{guardConnection.setReviewMode(enabled?"on":"off");}
+      catch(error){tell(ctx,`Shared Guard mode is unavailable: ${oneLine(errorText(error),180)}`,"warning");}}
     async function updateConfig(ctx: ExtensionContext, patch: GuardianConfigPatch): Promise<void> {
       const candidate:GuardReviewerConfig={...config,...patch,schemaVersion:1};
       if(!configNeedsWrite&&JSON.stringify(candidate)===JSON.stringify(config))return;
@@ -1870,17 +1900,21 @@ export function createGuardianExtension(factory: ReviewerFactory = createPiRevie
           configSource="invalid_guard_config";
         }
       }
-      const restored=restoredGuardianMode(ctx);enabled=restored.mode==="on";dispute=enabled?restoredGuardianDispute(ctx):undefined;syncJustificationTool(ctx);
+      try{defaultMode=(await loadGuardianModeConfig(stateDir)).defaultMode;defaultModeError=undefined;}
+      catch(error){defaultMode="off";defaultModeError=errorText(error);tell(ctx,`Guardian new-session default unavailable; using Off: ${defaultModeError}`,"warning");}
+      const restored=restoredGuardianMode(ctx,defaultMode);modeRecorded=restored.source==="session";
+      enabled=restored.mode==="on";publishGuardMode(ctx);dispute=enabled?restoredGuardianDispute(ctx):undefined;syncJustificationTool(ctx);
       statusOwner++;status(ctx,dispute?"Dispute":enabled?"On":"Off",dispute?(dispute.phase==="awaiting-user"?"awaiting you":"investigating"):"");
       sink(ctx)("SESSION_START", "session_started", "Guardian ready; logs are diagnostic only", {
         logPath: logger.path, maxBytes: MAX_LOG_BYTES, backups: LOG_BACKUPS,
         configPath:join(stateDir,"guard","config.json"),legacyConfigPath:join(stateDir,"guardian","config.json"),configSource,
-        mode:restored.mode,modeSource:restored.source,model:config.model??"not_selected",thinking:config.thinking??"low",
+        mode:restored.mode,modeSource:restored.source,newSessionDefault:defaultMode,defaultModeAvailable:!defaultModeError,model:config.model??"not_selected",thinking:config.thinking??"low",
         reviewScope: "command_execution", toolNames: [...GUARDED_COMMAND_TOOLS],
       });
     });
-    pi.on("session_tree", (_e, ctx) => { invalidate();store.clear();const restored=restoredGuardianMode(ctx);enabled=restored.mode==="on";
-      dispute=enabled?restoredGuardianDispute(ctx):undefined;syncJustificationTool(ctx);statusOwner++;last=undefined;
+    pi.on("session_tree", (_e, ctx) => { invalidate();store.clear();const restored=restoredGuardianMode(ctx,defaultMode);
+      if(restored.source==="session"){modeRecorded=true;enabled=restored.mode==="on";}
+      publishGuardMode(ctx);dispute=enabled?restoredGuardianDispute(ctx):undefined;syncJustificationTool(ctx);statusOwner++;last=undefined;
       status(ctx,dispute?"Dispute":enabled?"On":"Off",dispute?(dispute.phase==="awaiting-user"?"awaiting you":"investigating"):""); });
     pi.on("model_select", (_e,ctx)=>refreshStatus(ctx));
     pi.on("thinking_level_select", (_e,ctx)=>refreshStatus(ctx));
@@ -1903,7 +1937,7 @@ export function createGuardianExtension(factory: ReviewerFactory = createPiRevie
     });
     pi.on("input", (event,ctx) => {
       // Real user feedback reopens normal review, but is not authority by mere presence.
-      invalidate();
+      pinSessionMode(ctx);invalidate();
       if(event.source!=="extension"){
         if(dispute)resolveDispute(ctx,"user_input");else status(ctx,enabled?"On":"Off");
       }
@@ -1928,6 +1962,7 @@ export function createGuardianExtension(factory: ReviewerFactory = createPiRevie
     });
 
     pi.on("tool_call", async (event, ctx) => {
+      pinSessionMode(ctx);
       // Normal coverage remains bash/run. An open dispute is a separate stop state:
       // only a small number of direct native file reads may support the agent's explanation.
       if(dispute){
@@ -2140,71 +2175,89 @@ export function createGuardianExtension(factory: ReviewerFactory = createPiRevie
       }
     });
 
+    function pinSessionMode(ctx:ExtensionContext):void{if(modeRecorded)return;try{pi.appendEntry(GUARDIAN_MODE_ENTRY,{mode:enabled?"on":"off"});modeRecorded=true;}
+      catch(error){tell(ctx,`Guardian could not record this session's mode: ${errorText(error)}`,"warning");}}
     async function setMode(ctx: ExtensionContext, next: boolean): Promise<void> {
       try{
         const previous=enabled,interrupted=active.size;
         if(!next&&dispute)resolveDispute(ctx,"mode_off");
-        if(previous!==next){pi.appendEntry(GUARDIAN_MODE_ENTRY,{mode:next?"on":"off"});invalidate();enabled=next;statusOwner++;last=undefined;
-          sink(ctx)("INFO","mode_changed","User changed Guardian mode for this session",{
+        if(previous!==next||!modeRecorded){pi.appendEntry(GUARDIAN_MODE_ENTRY,{mode:next?"on":"off"});modeRecorded=true;}
+        if(previous!==next){invalidate();enabled=next;publishGuardMode(ctx);statusOwner++;last=undefined;
+          sink(ctx)("INFO","mode_changed","User changed shared Guard review mode for this session",{
             previous:previous?"on":"off",mode:enabled?"on":"off",interruptedReviews:interrupted,pendingInvocationReleased:false,
           });
-        }
-        status(ctx,enabled?"On":"Off");tell(ctx,`Guardian: ${enabled?"On":"Off"} (this session).`);
+        }else publishGuardMode(ctx);
+        status(ctx,enabled?"On":"Off");tell(ctx,`Guard review: ${enabled?"On":"Off"} (this session).`);
       }catch(e){tell(ctx,oneLine(`Guardian session mode was not changed: ${errorText(e)}`,240),"error");}
     }
     async function modeCommand(args: string, ctx: ExtensionContext): Promise<void> {
       let value = args.trim().toLowerCase();
       if (!value) {
-        if (!ctx.hasUI) { tell(ctx, `Guardian: ${enabled ? "On" : "Off"}. /guardian-mode on|off`); return; }
+        if (!ctx.hasUI) { tell(ctx, `Guard review: ${enabled ? "On" : "Off"}. /guardian-mode on|off`); return; }
         const choices = [
-          { value: "on", label: `On — review commands${enabled ? " [current]" : ""}` },
-          { value: "off", label: `Off — skip review${!enabled ? " [current]" : ""}` },
+          { value: "on", label: `On — review commands and CAF disclosures${enabled ? " [current]" : ""}` },
+          { value: "off", label: `Off — commands and enabled CAF use direct paths${!enabled ? " [current]" : ""}` },
         ];
         const contextRevision = revision, contextSession = ctx.sessionManager.getSessionId();
-        const selected = await ctx.ui.select("Guardian mode", choices.map(c => c.label));
+        const selected = await ctx.ui.select("Shared Guard review mode", choices.map(c => c.label));
         if (selected === undefined || revision !== contextRevision || ctx.sessionManager.getSessionId() !== contextSession) return;
         value = choices.find(c => c.label === selected)?.value ?? "";
       }
       if (!["on", "off"].includes(value)) { tell(ctx, "Usage: /guardian-mode on|off"); return; }
       await setMode(ctx, value === "on");
     }
+    async function defaultModeCommand(args:string,ctx:ExtensionContext):Promise<void>{
+      let value=args.trim().toLowerCase();
+      if(!value){if(!ctx.hasUI){tell(ctx,`Guard review new-session default: ${defaultMode}. /guardian-default on|off`);return;}
+        const choices=[`On — review commands and CAF disclosures${defaultMode==="on"?" [current]":""}`,`Off — use direct client paths${defaultMode==="off"?" [current]":""}`],selected=await ctx.ui.select("Guard review default for new sessions",choices);
+        if(selected===undefined)return;value=selected.startsWith("On")?"on":"off";}
+      if(!["on","off"].includes(value)){tell(ctx,"Usage: /guardian-default on|off");return;}
+      try{pinSessionMode(ctx);await saveGuardianModeConfig(stateDir,{schemaVersion:1,defaultMode:value as GuardianDefaultMode});defaultMode=value as GuardianDefaultMode;defaultModeError=undefined;
+        sink(ctx)("INFO","default_mode_changed","Guard review default for new sessions changed; current session is unchanged",{defaultMode,currentMode:enabled?"on":"off"});
+        tell(ctx,`Guard review new-session default: ${defaultMode} (saved; current session remains ${enabled?"On":"Off"}).`);
+      }catch(error){tell(ctx,`Guard review new-session default was not changed: ${errorText(error)}`,"error");}
+    }
     async function resumeCommand(_args:string,ctx:ExtensionContext):Promise<void>{
-      if(!dispute){tell(ctx,"Guardian: no dispute is open.");return;}
+      pinSessionMode(ctx);if(!dispute){tell(ctx,"Guardian: no dispute is open.");return;}
       invalidate();resolveDispute(ctx,"guardian_resume");
       tell(ctx,"Guardian dispute cleared. No action was authorized or replayed; future commands receive fresh review.");
     }
     function shortStatus(ctx: ExtensionContext): void {
-      let description: readonly string[] = [];
+      pinSessionMode(ctx);let description: readonly string[] = [];
       try { description = binding.describe?.(ctx) ?? []; } catch { /* Mode is usable even with no model. */ }
       const fields = description.filter(line => /^(Model|Thinking):/.test(line));
       const health = logger.health();
-      tell(ctx, [`Guardian · ${enabled ? "On" : "Off"} · bash/run${dispute?` · dispute ${dispute.phase}`:""}`, ...fields,
+      tell(ctx, [`Guard review · ${enabled ? "On" : "Off"} · Guardian bash/run · CAF ${enabled?"guarded":"direct"}${dispute?` · dispute ${dispute.phase}`:""}`,`New sessions: ${defaultMode}${defaultModeError?` — unavailable (${defaultModeError})`:""}`, ...fields,
         `Log: ${logger.path}${health.lastError ? " (unavailable)" : ""}`].join("\n"));
     }
-    pi.registerCommand("guardian-mode", { description: "Turn guardian review on/off (no argument: selector)", handler: modeCommand });
+    pi.registerCommand("guardian-mode", { description: "Turn shared Guard review on/off for this session", handler: modeCommand });
+    pi.registerCommand("guardian-default", { description: "Set shared Guard review for genuinely new sessions", handler: defaultModeCommand });
     pi.registerCommand("guardian-resume", { description: "Clear the current dispute without authorizing an action", handler: resumeCommand });
     pi.registerCommand("guardian-log", { description: "Browse recorded guardian reviews (read-only)", handler: logsCommand });
-    pi.registerCommand("guardian", { description: "Guardian menu: mode, model, thinking and logs", handler: async (args, ctx) => {
-      try {
+    pi.registerCommand("guardian", { description: "Guard menu: review mode, model, thinking and logs", handler: async (args, ctx) => {
+      try {pinSessionMode(ctx);
         const value = args.trim().toLowerCase();
         if (["on", "off"].includes(value)) { await setMode(ctx, value === "on"); return; }
+        if(value.startsWith("default ")){await defaultModeCommand(value.slice(8),ctx);return;}
         if (value === "log" || value === "logs") { await logsCommand("", ctx); return; }
         if (value === "status" || !ctx.hasUI) { shortStatus(ctx); return; }
-        if (value) { tell(ctx, "Usage: /guardian [on|off|status|log]"); return; }
+        if (value) { tell(ctx, "Usage: /guardian [on|off|default on|off|status|log]"); return; }
         // No status dump, trace counts or last-error wall of text. The first menu
         // item can always toggle reviewing, even if the selected model is invalid.
         const choices = [
-          { id: enabled ? "mode-off" : "mode-on", label: enabled ? "Turn off — skip review" : "Turn on — review commands" },
+          { id: enabled ? "mode-off" : "mode-on", label: `Current session — ${enabled?"On (turn Off)":"Off (turn On)"}` },
+          {id:"guardian-default",label:`New sessions — ${defaultMode==="on"?"On":"Off"}`},
           ...(dispute?[{id:"guardian-resume",label:"Resume — clear dispute without authorization"}]:[]),
           ...(binding.controls ?? []).map(c => ({ id: c.name, label: c.label ?? c.name.replace(/^guardian-/, "") })),
           { id: "guardian-log", label: "Logs" },
           { id: "close", label: "Close" },
         ];
         const contextRevision = revision, contextSession = ctx.sessionManager.getSessionId();
-        const selected = await ctx.ui.select(`Guardian — ${enabled ? "On" : "Off"}`, choices.map(c => c.label));
+        const selected = await ctx.ui.select(`Guard review — ${enabled ? "On" : "Off"}`, choices.map(c => c.label));
         if (revision !== contextRevision || ctx.sessionManager.getSessionId() !== contextSession) return;
         const id = choices.find(c => c.label === selected)?.id;
         if (id === "mode-on" || id === "mode-off") { await setMode(ctx, id === "mode-on"); return; }
+        if(id==="guardian-default"){await defaultModeCommand("",ctx);return;}
         if (id === "guardian-resume") { await resumeCommand("",ctx); return; }
         if (id === "guardian-log") { await logsCommand("", ctx); return; }
         const control = binding.controls?.find(c => c.name === id);
@@ -2213,11 +2266,11 @@ export function createGuardianExtension(factory: ReviewerFactory = createPiRevie
     }});
     // Only the active implementation contributes settings. A specialized reviewer
     // can expose no settings at all; the execution gate remains identical.
-    const commandNames = new Set(["guardian", "guardian-mode", "guardian-resume", "guardian-log"]);
+    const commandNames = new Set(["guardian", "guardian-mode", "guardian-default", "guardian-resume", "guardian-log"]);
     for (const control of binding.controls ?? []) {
       if (!/^guardian-[a-z][a-z0-9-]*$/.test(control.name) || commandNames.has(control.name)) throw new Error("Invalid or duplicate reviewer control");
       commandNames.add(control.name);
-      pi.registerCommand(control.name, { description: control.description, handler: control.handler });
+      pi.registerCommand(control.name, { description: control.description, handler:async(args,ctx)=>{pinSessionMode(ctx);await control.handler(args,ctx);} });
     }
   };
 }

@@ -1082,7 +1082,7 @@ if [[ "${NETWORK_BACKEND}" == docker-restricted ]]; then
     echo "pi-run: ssh-tcp=${SSH_RULES_DISPLAY}" >&2
     echo "pi-run: manual-tcp=${MANUAL_RULES_DISPLAY}" >&2
 fi
-echo "pi-run: Guardian loaded; review mode starts Off" >&2
+echo "pi-run: Guardian and CAF loaded; session modes resolve inside Pi" >&2
 [[ "${SHARED_MODE}" == "read-write" ]] && echo "pi-run: shared=/shared (read-write)" >&2
 
 if [[ "${NETWORK_BACKEND}" == docker-restricted ]]; then

@@ -1,9 +1,10 @@
-# Guardian command review
+# Guardian and shared Guard review
 
-Guardian adds an evidence-aware review between the acting agent and shell
-execution. It checks whether a proposed command fits your current request and
-applicable instructions, then either releases it or opens a human-arbitrated
-dispute that withholds the action.
+Guardian applies the shared evidence-aware Guard review layer to acting-agent
+shell execution. When Guard is On, it checks whether a proposed command fits
+your current request and applicable instructions, then either releases it or
+opens a human-arbitrated dispute that withholds the action. The same configured
+Guard reviewer also checks Call a Friend disclosures while Guard is On.
 
 This is useful when an ordinary-looking command could target the wrong path,
 expand beyond an approved increment, affect persistent data, or reach a real
@@ -32,8 +33,10 @@ it does not replace them.
 
 ## Check and enable review
 
-Guardian is loaded for every profile, and every new session starts with review
-**Off**. Check the current mode and reviewer:
+Guardian is loaded for every profile. Fresh profiles, genuinely new sessions,
+and older sessions without mode metadata start with Guard review **Off** unless
+the selected profile's new-session default was deliberately changed. Check the
+current mode and reviewer:
 
 ```text
 /guardian status
@@ -45,29 +48,38 @@ Open the complete settings menu:
 /guardian
 ```
 
-Enable command review directly:
+Enable shared review directly:
 
 ```text
 /guardian-mode on
 ```
 
 Mode belongs to the current session. Resuming that session restores its mode,
-and branch navigation keeps the same session-wide setting. Every new session
-starts Off, even when another session in the selected profile has Guardian On.
-Use `/guardian-mode off` when you deliberately want covered commands in the
-current session to proceed without Guardian review. Turning it Off also clears
-an open dispute; it never replays the withheld invocation.
+and branch navigation keeps the same session-wide setting. Change the default
+for genuinely new sessions separately:
 
-By default, Guardian follows the conversation model and thinking level. The menu
-can select a different configured reviewer model or thinking level; those
-preferences are saved in the profile and apply to later sessions. Reviewer
-calls can add latency and provider cost, and may send commands, instructions,
-selected conversation context, and inspected file excerpts to that provider.
-Choose settings appropriate for the workspace's privacy requirements.
+```text
+/guardian-default on|off
+```
 
-The status row below Pi's editor shows whether Guardian is Off, On, Reviewing,
-or in a Dispute while the agent investigates or waits for you. Detailed model,
-thinking, and status behavior is in the [Guardian reference](reference/guardian.md).
+Changing the default does not alter the current session. Use
+`/guardian-mode off` when you deliberately want covered commands to proceed
+without Guard review. Turning it Off also makes an enabled CAF use its bounded
+unreviewed path, cancels active Guard/CAF work without retry, and clears an open
+Guardian dispute; it never replays a withheld invocation.
+
+The Guard reviewer must be explicitly selected; Pi-Run does not silently use
+the conversation model or CAF friend. The menu and `/guardian-model` and
+`/guardian-thinking` commands save the shared reviewer preferences in private
+`guard/config.json`. Reviewer calls can add latency and provider cost, and may
+send commands, CAF disclosures, instructions, selected conversation context,
+and inspected file excerpts to that provider. Choose a trusted destination
+appropriate for the workspace's privacy requirements.
+
+Guard Runtime shows two rows below Pi's editor: the Guard row with reviewer model
+and activity, and the CAF row with friend model and activity. Detailed model,
+thinking, mode, and status behavior is in the
+[Guardian reference](reference/guardian.md).
 
 ## Arbitrate a dispute
 
@@ -117,11 +129,12 @@ saved plan does not automatically authorize every command; see
 
 ### If review is unavailable
 
-A provider failure, timeout, missing reviewer, invalid response, or missing
-review context is not approval. Guardian withholds the invocation and opens the
-same dispute workflow. It never offers to run the invocation without a completed
-review. You can provide new direction, use `/guardian-resume` without granting
-authority, retry later, or deliberately turn Guardian Off for the session.
+While Guard is On, a provider failure, timeout, missing reviewer, invalid
+response, or missing review context is not approval. Guardian withholds the
+invocation and opens the same dispute workflow. It never silently downgrades an
+On review to unreviewed execution. You can provide new direction, use
+`/guardian-resume` without granting authority, retry later, or deliberately turn
+Guard Off for the session.
 
 Command release is also separate from execution success. If an executed action
 fails or its effects are uncertain, verify what happened before retrying,
@@ -161,11 +174,16 @@ the [Guardian reference](reference/guardian.md#retained-review-logs).
 
 ## Essential boundaries
 
-- Every new session starts with review Off; resumed sessions restore their mode.
+- Fresh profiles and genuinely new sessions default review Off unless the
+  profile-specific future-session default was deliberately changed; resumed
+  sessions restore their recorded mode.
+- Guard mode is shared: On reviews Guardian commands and CAF disclosures; Off
+  skips command review and lets enabled CAF use its bounded unreviewed path.
 - Normal review covers acting-agent `bash` and `run`; an open dispute blocks all acting-agent tools except its bounded native reads.
 - A disputed invocation did not execute and is never replayed automatically.
 - `/guardian-resume` clears only the dispute latch and grants no authority.
-- Reviewer failure opens a dispute and never releases the invocation.
+- While Guard is On, reviewer failure opens a dispute and never releases the
+  invocation or downgrades it to unreviewed execution.
 - Allowed or released does not mean execution succeeded or its effects were
   independently verified.
 - Instructions and policy guide decisions but do not reduce filesystem,

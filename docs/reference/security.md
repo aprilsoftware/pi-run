@@ -223,9 +223,14 @@ isolation:
 
 - instructions describe authorization and workflow;
 - Planning changes the objective while leaving tools selected;
-- Guardian normally gates acting-agent `bash` and `run` calls; an open dispute
-  withholds every acting-agent tool except bounded native reads and its structured
-  justification handoff;
+- Guard is an optional shared review layer: while On it gates Guardian-covered
+  `bash`/`run` calls and CAF disclosures; while Off those commands skip review
+  and an enabled CAF sends bounded friend/search actions without reviewer calls;
+- review failure while Guard is On never silently selects unreviewed execution;
+  an open Guardian dispute withholds every acting-agent tool except bounded
+  native reads and its structured justification handoff;
+- CAF context separation and Guard review are same-process application controls,
+  not OS isolation or proof of provider confidentiality;
 - project trust controls supported project resources rather than tool access;
 - transcripts and Guardian logs are bounded records, not tamper-proof audits;
 - tool success is not independent verification of filesystem or remote effects.

@@ -79,18 +79,19 @@ Creation stages a private directory and publishes it only after materializing:
 
 - `profile.json`, with `.name` changed and `.skills` reset to `null`;
 - `AGENTS.md`;
-- `guardian/guardian.md`;
+- `guardian/guardian.md` and optional `caf/caf.md`;
 - validated profile-local skill packages; and
-- empty `credentials/` and `sessions/` directories, with no copied Guardian
-  preferences or logs.
+- empty `credentials/` and `sessions/` directories, with no copied Guard, CAF,
+  or Guardian preferences or logs.
 
 The new profile directory and private subdirectories use mode `0700`.
 `profile.json`, `AGENTS.md`, and `guardian/guardian.md` use mode `0600`. Copied
 skill files remain user-writable but are not made group/world writable.
 
 Creation does not copy `auth.json`, `models.json`, `settings.json`, `gitconfig`,
-general credentials, SSH keys, sessions, Guardian preferences, or logs. It does
-not overwrite an existing profile or select the new one.
+general credentials, SSH keys, sessions, shared Guard reviewer preferences,
+Guardian/CAF mode defaults, CAF friend preferences, or logs. It does not
+overwrite an existing profile or select the new one.
 
 Resource and network fields are copied as part of `profile.json`, so shared and
 network exposure remain as in the source. Resetting `skills` to `null` selects
@@ -112,11 +113,18 @@ profiles/<name>/
 ├── credentials/
 ├── caf/
 │   ├── caf.md
+│   ├── config.json
+│   └── mode.json
+├── guard/
 │   └── config.json
 ├── guardian/
 │   ├── guardian.md
-│   └── config.json
+│   ├── config.json          # optional legacy reviewer preference
+│   └── mode.json
 ├── logs/
+│   ├── caf/
+│   │   └── runs/
+│   │       └── <run-id>.jsonl*
 │   └── guardian/
 │       └── runs/
 │           └── <run-id>.jsonl*
@@ -137,60 +145,70 @@ the source has one. Profiles without a CAF policy remain valid and are not
 modified automatically. The policy defines profile-specific external-disclosure
 priorities; it does not enable CAF or grant external access. CAF loads the
 optional policy as a bounded private regular file and reports only its source,
-not its contents, through `/caf status`. Unsafe or malformed policy is
-unavailable rather than silently ignored.
+not its contents, through `/caf status`. Unsafe or malformed policy prevents the
+guarded path rather than being silently ignored; Guard Off does not apply the
+review policy because no reviewer request occurs.
 
-The CAF disclosure gate accepts only a complete valid `ALLOW` for the exact
-message, purpose, and friend-model destination. Missing, failed, malformed,
-cancelled, or non-allowing review remains withheld. Its production reviewer
-uses the current primary model with no tools and receives only that disclosure,
-the CAF policy, and bounded user-authored messages from the selected session
-branch. It receives no assistant or tool results, workspace contents, or
-credentials. If user-message evidence exceeds its bounds, an `ALLOW` is
-reduced to `ASK`. Startup and `/caf status` do not invoke the reviewer.
+Guard mode and CAF availability are separate. Fresh profiles and genuinely new
+sessions default both Off unless their profile-specific defaults were explicitly
+changed. Current modes are private session metadata. Future defaults live in
+private `guardian/mode.json` and `caf/mode.json`. Friend preferences are created
+lazily in private `caf/config.json`. Profile cloning copies none of these files.
+`/guardian`, `/caf`, and their direct command families inspect or change settings
+without contacting a provider.
 
-`/caf` configures a friend model and thinking preference without contacting that
-model. Preferences are created lazily in private `caf/config.json`; a missing
-model remains explicitly unconfigured.
+While Guard is On, the shared configured Guard reviewer evaluates each exact
+friend/search action against the CAF policy, applicable instructions, bounded
+current-branch user authority, and only bounded non-secret evidence it requests.
+A complete valid `ALLOW` is required. Missing, failed, malformed, cancelled,
+timed-out, truncated, or non-allowing review remains withheld and never silently
+downgrades to an unreviewed call. The reviewer receives no credentials, shell,
+network, arbitrary profile state, journals, databases, friend tools, or arbitrary
+MCP. Startup, selectors, mode changes, and status commands make no provider
+request.
 
-The primary can invoke `call_friend({ message, purpose })` as one standalone,
-sequential tool call. After disclosure review allows the exact payload, CAF
-sends the message and purpose under a dedicated advisory system prompt to the
-configured friend model. A continuation also includes only the previously
-reviewed requests and friend responses from that pending consultation; the
-reviewer sees that exact history again before release. The friend receives no
+While Guard is explicitly Off, enabled CAF validates the same bounded action
+schemas and sends them without a reviewer request. Guard Off can save reviewer
+latency and cost but removes the independent disclosure judgment. Unknown Guard
+state sends nothing. Exact reviewer/friend model equality is blocked and
+same-provider identifiers warned about only while Guard is On; identifiers
+cannot prove confidentiality separation.
+
+The primary invokes `call_friend({ message, purpose })` as one standalone,
+sequential tool call. CAF sends the bounded message and purpose under a dedicated
+advisory system prompt. A continuation also includes only bounded CAF requests
+and friend responses from that pending consultation. The friend receives no
 primary transcript, authorization evidence, CAF policy, workspace data,
-credentials, or unrelated CAF rounds. This is application-level context
-isolation, not a sandbox or confidentiality guarantee.
+credentials, Guard evidence, or unrelated CAF rounds. This is application-level
+context isolation, not a sandbox or confidentiality guarantee.
 
 Without research, each invocation performs one friend request. The friend may
 return one bounded answer or end its round with the constrained
 `caf_ask_primary` function containing up to three minimal questions. That
-function does not execute the primary. The primary receives the questions and
-must use a new standalone `call_friend` invocation to answer; the answer receives
-a new disclosure review before transmission. A consultation is limited to three
-primary/friend rounds.
+function does not execute the primary. The primary must use a new standalone
+`call_friend` invocation to answer; the new action follows the current Guard
+mode. A consultation is limited to three primary/friend rounds.
 
 When `web-search.json` selects one explicit provider and the bundled canonical
 `web_search` tool is callable, the friend also receives `caf_web_search`. It may
-request one query and purpose. CAF pauses the friend and independently reviews
-the exact query, purpose, and search-provider destination. Only `ALLOW` permits
-a nested `web_search` call with one query, at most five results, no fetched page
-content, no curator, and no proxy override. CAF sends bounded, normalized,
+request one query and purpose. CAF pauses the friend and validates the exact
+query, purpose, and search-provider destination. Guard On requires a fresh
+`ALLOW` for that destination; Guard Off sends it without reviewer judgment. CAF
+then makes one nested `web_search` call with at most five results, no fetched page
+content, no curator, and no proxy override. It sends bounded, normalized,
 untrusted titles, snippets, and URLs back for one final friend request with no
-tools. The result returned to the primary includes a CAF-generated source list.
-`auto`, `all`, provider arrays, repeated searches, custom-renamed search tools,
-and arbitrary URL fetching are unavailable.
+tools. `auto`, `all`, provider arrays, repeated searches, custom-renamed search
+tools, and arbitrary URL fetching are unavailable.
 
-The search provider and friend model are separate disclosure destinations.
-Approval for one does not authorize the other. Search credentials remain inside
-`pi-web-access` and are not included in friend or reviewer context. Offline and
-restricted network policy remains authoritative. The friend has no filesystem,
-shell, arbitrary Pi, or MCP tools, and public results cannot expand its
-capabilities. There is no recursive primary invocation or unbounded autonomous
-loop. Review refusal and failures before release produce no corresponding
-external request. Failures after a request starts report that uncertain external
-effect and must not be retried automatically.
+The search provider and friend model remain separate disclosure destinations.
+Search credentials stay inside `pi-web-access` and are not included in friend or
+reviewer context. Offline and restricted network policy remains authoritative.
+The friend has no filesystem, shell, arbitrary Pi, or MCP tools, and public
+results cannot expand its capabilities. There is no recursive primary invocation
+or unbounded autonomous loop. Guarded refusal and failures before release make
+no corresponding external request. Failures after a request starts report that
+uncertain external effect and must not be retried automatically. Turning Guard
+or CAF mode during active work cancels it without retrying under the new mode.
 
 Successful answers, question requests, and bounded research evidence are stored
 as finalized branch-local session metadata while the tool result supplies the
@@ -225,8 +243,9 @@ nested search, session-context exclusion, journal completion, and process-local
 resume. It is not evidence of interoperability with every real provider or of
 provider-side confidentiality, retention, or tool-call behavior.
 
-CAF remains application-level orchestration rather than a sandbox. Its
-primary-model reviewer can make mistakes, public content remains untrusted, and
+CAF remains application-level orchestration rather than a sandbox. The shared
+Guard reviewer and primary model can make mistakes, unreviewed CAF deliberately
+has no independent disclosure judgment, public content remains untrusted, and
 Pi extensions execute in the same process. Public research supports one
 canonical `web_search` call with one explicitly configured provider and no page
 fetching or source-check operation. Network policy independently determines

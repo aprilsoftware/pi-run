@@ -53,7 +53,8 @@ export interface GuardReviewClientConnectionV1 {
   dispose(): void;
 }
 export interface GuardRuntimeOptions { reviewer?: GuardReviewBackendV1; }
-export interface GuardActivityRequestV1 { schemaVersion: 1; state: string; detail?: string; right?: string; }
+export type GuardReviewModeV1 = "unknown" | "on" | "off";
+export interface GuardActivityRequestV1 { schemaVersion: 1; state: string; detail?: string; right?: string; surface?: "guard" | "client"; }
 export interface GuardActivitySnapshotV1 extends GuardActivityRequestV1 { clientId: string; sequence: number; }
 export interface GuardActivityLeaseV1 {
   readonly clientId: string;
@@ -78,10 +79,16 @@ export interface GuardRuntimeV1 {
   status(): Readonly<GuardActivitySnapshotV1> | undefined;
   subscribeActivity(listener: (activity: Readonly<GuardActivitySnapshotV1> | undefined) => void): () => void;
   subscribeStatus(listener: (status: Readonly<GuardActivitySnapshotV1> | undefined) => void): () => void;
+  reviewMode(): GuardReviewModeV1;
+  setReviewMode(mode: Exclude<GuardReviewModeV1, "unknown">): void;
+  subscribeReviewMode(listener: (mode: GuardReviewModeV1) => void): () => void;
 }
 export interface GuardClientConnectionV1 {
   connected(): boolean;
   runtime(): GuardRuntimeV1 | undefined;
+  reviewMode(): GuardReviewModeV1;
+  setReviewMode(mode: Exclude<GuardReviewModeV1, "unknown">): void;
+  subscribeReviewMode(listener: (mode: GuardReviewModeV1) => void): () => void;
   setBaseline(activity: GuardActivityRequestV1 | undefined): void;
   acquireActivity(activity: GuardActivityRequestV1, signal?: AbortSignal): Promise<GuardActivityLeaseV1>;
   dispose(): void;
@@ -211,11 +218,12 @@ function validateActivity(value: GuardActivityRequestV1): Readonly<GuardActivity
   const validText = (text: unknown) => typeof text === "string" && text === text.trim() && !!text &&
     text.length <= 120 && !/[\u0000-\u001f\u007f]/.test(text);
   if (!value || typeof value !== "object" || Array.isArray(value) ||
-      Object.keys(value).some(key => !["schemaVersion", "state", "detail", "right"].includes(key)) ||
+      Object.keys(value).some(key => !["schemaVersion", "state", "detail", "right", "surface"].includes(key)) ||
       value.schemaVersion !== 1 || typeof value.state !== "string" ||
       !/^[a-z][a-z0-9-]{0,31}$/.test(value.state) ||
       (value.detail !== undefined && !validText(value.detail)) ||
-      (value.right !== undefined && !validText(value.right))) {
+      (value.right !== undefined && !validText(value.right)) ||
+      (value.surface !== undefined && value.surface !== "guard" && value.surface !== "client")) {
     throw new Error("Invalid Guard Runtime activity");
   }
   return Object.freeze({ ...value });
@@ -230,17 +238,23 @@ function isRuntime(value: unknown): value is GuardRuntimeV1 {
   return !!candidate && candidate.kind === GUARD_RUNTIME_KIND && candidate.schemaVersion === GUARD_RUNTIME_VERSION &&
     typeof candidate.registerClient === "function" && typeof candidate.clients === "function" &&
     typeof candidate.activity === "function" && typeof candidate.status === "function" &&
-    typeof candidate.subscribeActivity === "function" && typeof candidate.subscribeStatus === "function";
+    typeof candidate.subscribeActivity === "function" && typeof candidate.subscribeStatus === "function" &&
+    typeof candidate.reviewMode === "function" && typeof candidate.setReviewMode === "function" && typeof candidate.subscribeReviewMode === "function";
 }
-export function renderGuardStatus(activity: Readonly<GuardActivitySnapshotV1> | undefined, width: number): string {
+function renderStatusRow(label:string,activity: Readonly<GuardActivitySnapshotV1> | undefined, width: number): string {
   const safeWidth = Number.isFinite(width) ? Math.max(1, Math.floor(width)) : 1;
   const state = activity?.state.replaceAll("-", " ") ?? "ready";
-  const left = `guard · ${state}${activity?.detail ? ` ${activity.detail}` : ""}`;
+  const left = `${label} · ${state}${activity?.detail ? ` ${activity.detail}` : ""}`;
   if (visibleWidth(left) >= safeWidth) return truncateToWidth(left, safeWidth, "…");
   const available = safeWidth - visibleWidth(left) - 2;
   if (!activity?.right || available < 12) return left;
   const right = truncateToWidth(activity.right, available, "…");
   return left + " ".repeat(Math.max(2, safeWidth - visibleWidth(left) - visibleWidth(right))) + right;
+}
+export function renderGuardStatus(activity: Readonly<GuardActivitySnapshotV1> | undefined, width: number): string{return renderStatusRow("guard",activity,width);}
+export function renderGuardStatusRows(rows:readonly Readonly<{id:string;activity:Readonly<GuardActivitySnapshotV1>}>[],width:number):string[]{
+  if(!rows.length)return [renderStatusRow("guard",undefined,width)];
+  return rows.map(row=>renderStatusRow(row.id==="guardian"?"guard":row.id,row.activity,width));
 }
 
 export function connectGuardClient(
@@ -262,6 +276,15 @@ export function connectGuardClient(
   const connection: GuardClientConnectionV1 = Object.freeze({
     connected: () => !disposed && !!handle?.active(),
     runtime: () => !disposed && handle?.active() ? selected : undefined,
+    reviewMode: () => !disposed && handle?.active() && selected ? selected.reviewMode() : "unknown",
+    setReviewMode(mode) {
+      if (!handle?.active() || !selected) throw new Error("Guard Runtime client is unavailable");
+      selected.setReviewMode(mode);
+    },
+    subscribeReviewMode(listener) {
+      if (!handle?.active() || !selected) throw new Error("Guard Runtime client is unavailable");
+      return selected.subscribeReviewMode(listener);
+    },
     setBaseline(activity) {
       if (!handle?.active()) throw new Error("Guard Runtime client is unavailable");
       handle.setBaseline(activity);
@@ -314,13 +337,21 @@ export function createGuardRuntimeExtension(options: GuardRuntimeOptions = {}) {
   const baselines = new Map<string, { clientToken: symbol; order: number; snapshot: Readonly<GuardActivitySnapshotV1> }>();
   const activityListeners = new Set<(activity: Readonly<GuardActivitySnapshotV1> | undefined) => void>();
   const statusListeners = new Set<(status: Readonly<GuardActivitySnapshotV1> | undefined) => void>();
-  let closed = false, sequence = 0, baselineOrder = 0, reviewDiagnosticSequence = 0;
+  const reviewModeListeners = new Set<(mode: GuardReviewModeV1) => void>();
+  let closed = false, sequence = 0, baselineOrder = 0, reviewDiagnosticSequence = 0, reviewMode:GuardReviewModeV1 = "unknown";
   let statusContext: ExtensionContext | undefined, statusRedraw: (() => void) | undefined;
-  let statusActivity: Readonly<GuardActivitySnapshotV1> | undefined, stopStatus: (() => void) | undefined;
+  let statusRows:readonly Readonly<{id:string;activity:Readonly<GuardActivitySnapshotV1>}>[]=[], stopStatus: (() => void) | undefined;
   let current: { clientToken: symbol; leaseToken: symbol; snapshot: Readonly<GuardActivitySnapshotV1> } | undefined;
   let currentReview: { pending: PendingReview; controller: AbortController } | undefined;
   const selectedBaseline = () => [...baselines.values()].sort((a, b) => b.order - a.order)[0]?.snapshot;
   const effectiveStatus = () => current?.snapshot ?? selectedBaseline();
+  const effectiveStatusRows=():readonly Readonly<{id:string;activity:Readonly<GuardActivitySnapshotV1>}>[]=>{
+    const rows=new Map<string,Readonly<GuardActivitySnapshotV1>>([...baselines].map(([id,value])=>[id,value.snapshot]));
+    if(current){const target=current.snapshot.surface==="guard"?"guardian":current.snapshot.clientId,baseline=rows.get(target);
+      rows.set(target,Object.freeze({...baseline,...current.snapshot,...(!current.snapshot.right&&baseline?.right?{right:baseline.right}:{}),clientId:target}));}
+    const order=(id:string)=>id==="guardian"?0:id==="caf"?1:2;
+    return Object.freeze([...rows].sort(([left],[right])=>order(left)-order(right)||left.localeCompare(right)).map(([id,activity])=>Object.freeze({id,activity})));
+  };
   const notify = (listeners: Set<(value: Readonly<GuardActivitySnapshotV1> | undefined) => void>,
     value: Readonly<GuardActivitySnapshotV1> | undefined) => {
     for (const listener of listeners) try { listener(value); } catch { /* Presentation cannot affect ownership. */ }
@@ -441,6 +472,18 @@ export function createGuardRuntimeExtension(options: GuardRuntimeOptions = {}) {
       statusListeners.add(listener); try { listener(effectiveStatus()); } catch { /* Presentation cannot affect ownership. */ }
       return () => statusListeners.delete(listener);
     },
+    reviewMode: () => reviewMode,
+    setReviewMode(mode) {
+      if (closed) throw new Error("Guard Runtime is unavailable");
+      if (mode !== "on" && mode !== "off") throw new Error("Invalid Guard review mode");
+      changeReviewMode(mode);
+    },
+    subscribeReviewMode(listener) {
+      if (typeof listener !== "function") throw new Error("Invalid Guard review mode listener");
+      if (closed) throw new Error("Guard Runtime is unavailable");
+      reviewModeListeners.add(listener);try{listener(reviewMode);}catch{/* Client reaction cannot affect mode ownership. */}
+      return () => reviewModeListeners.delete(listener);
+    },
   });
   const finishReview = (pending: PendingReview, result: Readonly<GuardReviewResultV1>) => {
     pending.diagnosticsClosed = true;
@@ -509,6 +552,7 @@ export function createGuardRuntimeExtension(options: GuardRuntimeOptions = {}) {
     if (closed || reviewClients.get(entry.registration.id)?.token !== entry.token) {
       return Promise.resolve(incompleteReview(new Error("Guard review client is unavailable")));
     }
+    if(reviewMode!=="on")return Promise.resolve(incompleteReview(new Error(`Guard review is ${reviewMode}`)));
     if (reviewOptions.signal?.aborted) return Promise.resolve(incompleteReview(reviewOptions.signal.reason, "Guard review cancelled"));
     return new Promise<Readonly<GuardReviewResultV1>>(resolve => {
       const pending: PendingReview = { clientId: entry.registration.id, clientToken: entry.token, request, options: reviewOptions,
@@ -520,6 +564,14 @@ export function createGuardRuntimeExtension(options: GuardRuntimeOptions = {}) {
       reviewWaiting.push(pending); activateNextReview();
     });
   };
+  function changeReviewMode(mode:GuardReviewModeV1):void{
+    if(reviewMode===mode)return;reviewMode=mode;
+    if(mode!=="on"){
+      for(const pending of [...reviewWaiting])removeQueuedReview(pending,new Error(`Guard review is ${mode}`));
+      currentReview?.controller.abort(new Error(`Guard review is ${mode}`));
+    }
+    for(const listener of reviewModeListeners)try{listener(mode);}catch{/* Client reaction cannot affect mode ownership. */}
+  }
   const removeReviewClient = (entry: ReviewClientEntry) => {
     if (reviewClients.get(entry.registration.id)?.token !== entry.token) return;
     reviewClients.delete(entry.registration.id);
@@ -560,7 +612,7 @@ export function createGuardRuntimeExtension(options: GuardRuntimeOptions = {}) {
   const clearStatus = () => {
     stopStatus?.(); stopStatus = undefined; statusRedraw = undefined;
     try { statusContext?.ui.setWidget("guard-runtime", undefined, { placement: "belowEditor" }); } catch { /* UI only. */ }
-    statusContext = undefined; statusActivity = undefined;
+    statusContext = undefined; statusRows=[];
   };
   const installStatus = (ctx: ExtensionContext) => {
     clearStatus();
@@ -569,12 +621,12 @@ export function createGuardRuntimeExtension(options: GuardRuntimeOptions = {}) {
       statusContext = ctx;
       ctx.ui.setWidget("guard-runtime", (tui, theme) => {
         statusRedraw = () => tui.requestRender();
-        return { render: (width: number) => [theme.fg("muted", renderGuardStatus(statusActivity, width))], invalidate() {} };
+        return { render: (width: number) => renderGuardStatusRows(statusRows,width).map(line=>theme.fg("muted",line)), invalidate() {} };
       }, { placement: "belowEditor" });
-      stopStatus = service.subscribeStatus(activity => { statusActivity = activity; statusRedraw?.(); });
+      stopStatus = service.subscribeStatus(() => { statusRows = effectiveStatusRows(); statusRedraw?.(); });
     } catch { clearStatus(); }
   };
-  pi.on("session_start", (_event, ctx) => installStatus(ctx));
+  pi.on("session_start", (_event, ctx) => {changeReviewMode("unknown");installStatus(ctx);});
   pi.on("session_tree", (_event, ctx) => installStatus(ctx));
   pi.on("session_shutdown", () => {
     closed = true;
@@ -582,7 +634,7 @@ export function createGuardRuntimeExtension(options: GuardRuntimeOptions = {}) {
     for (const pending of [...reviewWaiting]) removeQueuedReview(pending, new Error("Guard review runtime stopped"));
     currentReview?.controller.abort(new Error("Guard review runtime stopped"));
     clients.clear(); reviewClients.clear(); baselines.clear(); current = undefined; publish();
-    activityListeners.clear(); statusListeners.clear(); stopDiscovery(); stopReviewDiscovery(); clearStatus();
+    activityListeners.clear(); statusListeners.clear(); reviewModeListeners.clear();stopDiscovery(); stopReviewDiscovery(); clearStatus();
   });
   pi.events.emit(GUARD_RUNTIME_AVAILABLE, service);
   pi.events.emit(GUARD_REVIEW_RUNTIME_AVAILABLE, reviewService);
