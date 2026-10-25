@@ -196,6 +196,24 @@ configured public-web research is available, reconstructs only finalized CAF
 rounds on the selected branch, marks a pending consultation as awaiting the
 primary or at its round limit, and reports malformed state as unavailable.
 
+CAF diagnostics use the shared journal implementation but remain separate from
+Guardian under `logs/caf/runs/<run-id>.jsonl*`. `/caf-log` merges a bounded set
+of active and completed CAF shards and presents recent review, friend, search,
+persistence, cancellation, and failure events. There is no combined
+`/guard-log`.
+
+CAF journal records contain operation and session identifiers, destinations,
+outcomes, byte counts, SHA-256 payload hashes, bounded usage, duration, and
+research-result counts. They do not contain exact messages, purposes, queries,
+policies, authorization evidence, friend answers, search results, credentials,
+or workspace content. Hashes permit equality correlation and do not constitute
+a confidentiality guarantee. Exact finalized exchanges remain branch-local
+session metadata. Clean shutdown creates a completion marker and runs best-effort
+retention targeting 64 MiB and 128 completed run groups. Journal write, read,
+presentation, completion, or retention failure never changes CAF review,
+release, or tool-result behavior. Legacy Guardian logs are neither read nor
+migrated.
+
 Pi uses the selected profile as its configuration directory. Provider login,
 model configuration, settings, Git configuration, credentials, Guardian state,
 and sessions therefore coexist with shareable definitions. A complete profile

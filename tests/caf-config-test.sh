@@ -14,8 +14,8 @@ import { pathToFileURL } from 'node:url';
 const [root,piDir,tmp]=process.argv.slice(2),require=createRequire(join(piDir,'package.json')),{createJiti}=require('jiti');
 const alias={'@earendil-works/pi-coding-agent':join(piDir,'dist','index.js'),'@earendil-works/pi-tui':join(piDir,'node_modules','@earendil-works','pi-tui','dist','index.js'),typebox:require.resolve('typebox')};
 const jiti=createJiti(import.meta.url,{alias,fsCache:false});
-const cafFile=join(root,'docker/extensions/caf-agent.ts'),runtimeFile=join(root,'docker/extensions/guard-runtime.ts');
-const caf=await jiti.import(cafFile),runtime=await jiti.import(runtimeFile);
+const cafFile=join(root,'docker/extensions/caf-agent.ts'),runtimeFile=join(root,'docker/extensions/guard-runtime.ts'),journalFile=join(root,'docker/extensions/guard-journal.ts');
+const caf=await jiti.import(cafFile),runtime=await jiti.import(runtimeFile),journal=await jiti.import(journalFile);
 const valid={schemaVersion:1,model:'friend/frontier',thinking:'high'};
 assert.deepEqual(caf.defaultCafConfig(),{schemaVersion:1,model:null,thinking:null});
 assert.deepEqual(caf.parseCafConfig(JSON.stringify(valid)),valid);
@@ -90,14 +90,14 @@ let branch=[{type:'message',id:'current-user',message:{role:'user',content:[{typ
   {type:'custom',customType:caf.CAF_ROUND_ENTRY,data:questions}];
 const pi={events:bus,on(name,handler){const rows=handlers.get(name)??[];rows.push(handler);handlers.set(name,rows);return()=>handlers.set(name,(handlers.get(name)??[]).filter(row=>row!==handler));},
   registerCommand(name,command){commands.set(name,command);},registerTool(tool){tools.set(tool.name,tool);},appendEntry(customType,data){const entry={type:'custom',id:`appended-${appended.length+1}`,customType,data};appended.push(entry);branch.push(entry);}};
-runtime.default(pi);caf.default(pi);assert.ok(commands.has('caf'));assert.ok(tools.has('call_friend'));
+runtime.default(pi);caf.default(pi);assert.ok(commands.has('caf'));assert.ok(commands.has('caf-log'));assert.ok(!commands.has('guard-log'));assert.ok(tools.has('call_friend'));
 const available=[{provider:'friend',id:'frontier',reasoning:true},{provider:'local',id:'small'}],selections=[],providerCalls=[],friendCalls=[],modelSequence=[];
 const reviewUsage={input:10,output:5,cacheRead:2,cacheWrite:1,totalTokens:18,cost:{input:0.1,output:0.2,cacheRead:0.01,cacheWrite:0.02,total:0.33}};
 const friendUsage={input:20,output:10,cacheRead:3,cacheWrite:2,reasoning:4,totalTokens:35,cost:{input:0.2,output:0.4,cacheRead:0.02,cacheWrite:0.03,total:0.65}},searchUsage={input:1,output:2,cacheRead:0,cacheWrite:0,totalTokens:3,cost:{input:0.01,output:0.02,cacheRead:0,cacheWrite:0,total:0.03}};
-let providerOutput=JSON.stringify({schemaVersion:1,outcome:'ALLOW',reason:'Explicitly authorized and abstract.'}),denySearch=false,friendAnswer='Independent public advice.',friendStopReason='stop',friendContent=()=>[{type:'text',text:friendAnswer}],friendResponses=[];
+let providerOutput=JSON.stringify({schemaVersion:1,outcome:'ALLOW',reason:'Explicitly authorized and abstract.'}),denySearch=false,hangReview=false,reviewStartedResolve,friendAnswer='Independent public advice.',friendStopReason='stop',friendContent=()=>[{type:'text',text:friendAnswer}],friendResponses=[];
 let nestedSearchResult={toolCall:{},isError:false,result:{content:[{type:'text',text:'bounded search'}],details:{},structuredContent:{responseId:'fixture',fetchId:null,queries:[{query:'CAF query fixture',answer:'Provider summary.',error:null,provider:'brave',results:[{title:'Public source',url:'https://example.com/source',snippet:'Public evidence.'}]}]},usage:searchUsage}};
 const ctx={mode:'json',hasUI:false,model:available[1],cwd:'/private/workspace',modelRegistry:{getAvailable:()=>available,find:(provider,id)=>available.find(model=>model.provider===provider&&model.id===id),
-  complete:async(model,request,options)=>{modelSequence.push('review');providerCalls.push({model,request,options});const action=JSON.parse(request.messages[0].content[0].text).disclosure,output=denySearch&&action.kind==='web-search'?JSON.stringify({schemaVersion:1,outcome:'ASK',reason:'Search destination is not authorized.'}):providerOutput;return {stopReason:'stop',content:[{type:'text',text:output}],usage:reviewUsage};},
+  complete:async(model,request,options)=>{modelSequence.push('review');providerCalls.push({model,request,options});if(hangReview){reviewStartedResolve();return new Promise((_,reject)=>options.signal.addEventListener('abort',()=>reject(options.signal.reason),{once:true}));}const action=JSON.parse(request.messages[0].content[0].text).disclosure,output=denySearch&&action.kind==='web-search'?JSON.stringify({schemaVersion:1,outcome:'ASK',reason:'Search destination is not authorized.'}):providerOutput;return {stopReason:'stop',content:[{type:'text',text:output}],usage:reviewUsage};},
   streamSimple:(model,request,options)=>{modelSequence.push('friend');friendCalls.push({model,request,options});const response=friendResponses.shift()??{stopReason:friendStopReason,content:friendContent()};return(async function*(){yield{type:'done',reason:response.stopReason,message:{role:'assistant',stopReason:response.stopReason,content:response.content,usage:friendUsage}};})();}},
   tools:[{name:'web_search'}],executeTool:async(name,args,options)=>{modelSequence.push('search');nestedSearchCalls.push({name,args,options});return nestedSearchResult;},
   ui:{notify:(text,level)=>notifications.push({text,level}),select:async()=>selections.shift()},sessionManager:{getSessionId:()=> 'session',getBranch:()=>branch,getEntries:()=>{throw new Error('CAF must use only the current branch');}}};
@@ -186,9 +186,15 @@ await assert.rejects(caf.callCafFriendModel(hangingCtx,available[0],callArgs.mes
 let friendStartedResolve,friendProviderSignal;const friendStarted=new Promise(resolve=>{friendStartedResolve=resolve;});
 const cancellingCtx={...ctx,modelRegistry:{...ctx.modelRegistry,streamSimple:(_model,_request,options)=>(async function*(){friendProviderSignal=options.signal;friendStartedResolve();await new Promise((_,reject)=>options.signal.addEventListener('abort',()=>reject(options.signal.reason),{once:true}));})()}};
 const friendCancellation=new AbortController(),pendingFriend=caf.callCafFriendModel(cancellingCtx,available[0],callArgs.message,callArgs.purpose,'high',friendCancellation.signal);await friendStarted;friendCancellation.abort(new Error('cancelled friend fixture'));await assert.rejects(pendingFriend,/cancelled friend fixture/);assert.equal(friendProviderSignal.aborted,true);
+const reviewStarted=new Promise(resolve=>{reviewStartedResolve=resolve;});hangReview=true;branch=[{type:'message',id:'cancel-user',message:{role:'user',content:'Cancel fixture.'}},{type:'message',id:'cancel-assistant',message:{role:'assistant',content:[{type:'toolCall',id:'friend-call-cancel',name:'call_friend',arguments:callArgs}]}}];const integratedCancellation=new AbortController(),pendingCancelledTool=callTool.execute('friend-call-cancel',callArgs,integratedCancellation.signal,undefined,ctx);await reviewStarted;integratedCancellation.abort(new Error('cancelled integrated fixture'));toolResult=await pendingCancelledTool;assert.equal(toolResult.isError,true);hangReview=false;
 ctx.hasUI=true;selections.push('Thinking','default');await commands.get('caf').handler('',ctx);
 assert.deepEqual(await caf.loadCafConfig(commandProfile),{...valid,thinking:null});
-await dispatch('session_shutdown',{type:'session_shutdown',reason:'exit'});
+await commands.get('caf-log').handler('',ctx);assert.match(notifications.at(-1).text,/operation_finished/);assert.match(notifications.at(-1).text,/disclosure_reviewed/);
+const cafJournal=await journal.readGuardJournal({schemaVersion:1,stateDir:commandProfile,clientId:'caf',maxRecords:500}),journalText=JSON.stringify(cafJournal.records.map(record=>record.value));
+for(const event of ['session_started','operation_started','disclosure_reviewed','friend_responded','search_disclosure_proposed','search_started','search_completed','round_persisted','operation_finished'])assert.ok(cafJournal.records.some(record=>record.value.event===event),event);assert.ok(cafJournal.records.some(record=>record.value.event==='operation_finished'&&record.value.outcome==='cancelled'));
+for(const secret of [callArgs.message,callArgs.purpose,researchQuery,researchPurpose,friendAnswer,'Provider summary.','Public evidence.','https://example.com/source',policyText])assert.ok(!journalText.includes(secret),`journal leaked ${secret}`);
+assert.ok(cafJournal.records.some(record=>record.value.message?.sha256&&record.value.message?.bytes));assert.ok(cafJournal.files.every(file=>file.startsWith('runs/')));
+await dispatch('session_shutdown',{type:'session_shutdown',reason:'exit'});assert.ok((await readdir(join(commandProfile,'logs','caf','runs'))).some(name=>name.endsWith('.complete')));
 branch=[{type:'message',id:'shutdown-user',message:{role:'user',content:[{type:'text',text:'Use CAF.'}]}},{type:'message',id:'shutdown-assistant',message:{role:'assistant',content:[{type:'toolCall',id:'friend-call-shutdown',name:'call_friend',arguments:callArgs}]}}];
 const callsAfterShutdown=friendCalls.length;toolResult=await callTool.execute('friend-call-shutdown',callArgs,new AbortController().signal,undefined,ctx);assert.equal(toolResult.isError,true);assert.equal(toolResult.details.status,'guard-unavailable');assert.equal(friendCalls.length,callsAfterShutdown);
 
@@ -196,5 +202,5 @@ const dockerfile=await readFile(join(root,'docker/Dockerfile'),'utf8'),launcher=
 const guardian='/usr/local/lib/node_modules/guardian-agent/guardian-agent.ts',cafPath='/usr/local/lib/node_modules/guardian-agent/caf-agent.ts';
 assert.ok(dockerfile.includes('COPY extensions/caf-agent.ts /usr/local/lib/node_modules/guardian-agent/'));
 assert.ok(launcher.includes(`--extension ${cafPath}`));assert.ok(launcher.indexOf(guardian)<launcher.indexOf(cafPath));
-console.log('reviewed CAF dialogue, one-search research, destination isolation, limits, and safety tests passed');
+console.log('reviewed CAF dialogue, web research, per-run journals, isolation, limits, and safety tests passed');
 NODE
