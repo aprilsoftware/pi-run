@@ -110,7 +110,9 @@ const alias = Object.fromEntries(['pi-agent-core', 'pi-tui'].map(name => [
 ]));
 alias['@earendil-works/pi-coding-agent'] = join(piDir, 'dist', 'index.js');
 alias['@earendil-works/pi-ai'] = join(piDir, 'node_modules', '@earendil-works', 'pi-ai', 'dist', 'compat.js');
-const g = await createJiti(import.meta.url, { alias, fsCache: false }).import(join(root, 'docker', 'extensions', 'guardian-agent.ts'));
+const jiti = createJiti(import.meta.url, { alias, fsCache: false });
+const g = await jiti.import(join(root, 'docker', 'extensions', 'guardian-agent.ts'));
+const shared = await jiti.import(join(root, 'docker', 'extensions', 'guard-reviewer-agent.ts'));
 const safe = value => g.parseGuardianLogChunks([{ name: 'memory', text: JSON.stringify({ event: 'model_test', details: value }) + '\n' }]).entries[0].details;
 const sdkImport = path => import(pathToFileURL(join(piDir, 'dist', path)).href);
 const { ModelRuntime } = await sdkImport('core/model-runtime.js');
@@ -118,12 +120,17 @@ const { ModelRegistry } = await sdkImport('core/model-registry.js');
 const { ReadOnlyAuthStorage } = await sdkImport('core/auth-storage.js');
 const { InMemoryCodingAgentModelsStore } = await sdkImport('core/models-store.js');
 const profile = resolve(process.env.PI_RUN_PROFILE_DIR || '/profile');
-const configPath = join(profile, 'guardian', 'config.json');
+let configPath = join(profile, 'guard', 'config.json'), config;
+try { config = await shared.loadGuardReviewerConfig(profile); }
+catch (error) {
+  if (error?.code !== 'ENOENT') throw error;
+  configPath = join(profile, 'guardian', 'config.json');
+  config = shared.adoptLegacyGuardReviewerConfig(await g.loadGuardianConfig(profile));
+}
 const originalConfig = await readFile(configPath, 'utf8');
-const config = await g.loadGuardianConfig(profile);
-assert.ok(config.model && config.thinking, 'Save explicit /guardian-model and /guardian-thinking preferences before live tests');
+assert.ok(config.model, 'Save an explicit shared Guard reviewer with /guardian-model before live tests');
 const requestedModels = (process.env.GUARDIAN_TEST_MODELS || config.model).split(',').map(value => value.trim()).filter(Boolean);
-const requestedThinking = process.env.GUARDIAN_TEST_THINKING || config.thinking;
+const requestedThinking = process.env.GUARDIAN_TEST_THINKING || config.thinking || 'low';
 assert.ok(requestedModels.length >= 1 && requestedModels.length <= 4, 'Specify between one and four reviewer models');
 const instructions = [
   { id: 'I1', path: join(profile, 'AGENTS.md'), scope: 'profile', text: await readFile(join(profile, 'AGENTS.md'), 'utf8') },

@@ -1,8 +1,66 @@
 // SPDX-License-Identifier: MIT
 import type { Api, Model } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { constants } from "node:fs";
+import { lstat, mkdir, open, realpath, rename, unlink } from "node:fs/promises";
+import { join } from "node:path";
+import { randomUUID } from "node:crypto";
 
 export type AgenticThinking = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+export interface GuardReviewerConfig { schemaVersion: 1; model: string | null; thinking: AgenticThinking | null; }
+const GUARD_CONFIG_BYTES = 16 * 1024;
+const GUARD_THINKING:readonly AgenticThinking[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+export function defaultGuardReviewerConfig(): GuardReviewerConfig { return { schemaVersion: 1, model: null, thinking: null }; }
+export function parseGuardReviewerConfig(text: string): GuardReviewerConfig {
+  const value = JSON.parse(text) as Record<string, unknown>;
+  if (!value || typeof value !== "object" || Array.isArray(value) || Object.getPrototypeOf(value) !== Object.prototype ||
+      Object.keys(value).sort().join(",") !== "model,schemaVersion,thinking" || value.schemaVersion !== 1 ||
+      !(value.model === null || typeof value.model === "string" && value.model.length <= 512 && /^[^\s/]+\/[^\s]+$/.test(value.model)) ||
+      !(value.thinking === null || GUARD_THINKING.includes(value.thinking as AgenticThinking))) throw new Error("Invalid Guard reviewer configuration");
+  return { schemaVersion: 1, model: value.model as string | null, thinking: value.thinking as AgenticThinking | null };
+}
+export function adoptLegacyGuardReviewerConfig(legacy: { model: string | null; thinking: AgenticThinking | null }): GuardReviewerConfig {
+  return legacy.model ? parseGuardReviewerConfig(JSON.stringify({ schemaVersion: 1, model: legacy.model, thinking: legacy.thinking })) : defaultGuardReviewerConfig();
+}
+async function guardConfigDirectory(stateDir: string, create: boolean): Promise<string> {
+  const state = await realpath(stateDir), directory = join(stateDir, "guard");
+  if (create) await mkdir(directory, { recursive: true, mode: 0o700 });
+  const metadata = await lstat(directory);
+  if (!metadata.isDirectory() || metadata.isSymbolicLink() || (metadata.mode & 0o777) !== 0o700 || await realpath(directory) !== join(state, "guard")) {
+    throw new Error("Guard configuration directory must be private and must not be redirected");
+  }
+  return directory;
+}
+export async function loadGuardReviewerConfig(stateDir: string): Promise<GuardReviewerConfig> {
+  const directory = await guardConfigDirectory(stateDir, false), path = join(directory, "config.json");
+  const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    const metadata = await file.stat();
+    if (!metadata.isFile() || metadata.nlink !== 1 || (metadata.mode & 0o777) !== 0o600 || metadata.size > GUARD_CONFIG_BYTES) {
+      throw new Error("Guard reviewer configuration must be a private single-link regular file");
+    }
+    const buffer=Buffer.alloc(GUARD_CONFIG_BYTES+1);let length=0;
+    while(length<buffer.length){const read=await file.read(buffer,length,buffer.length-length,null);if(!read.bytesRead)break;length+=read.bytesRead;}
+    if(length>GUARD_CONFIG_BYTES)throw new Error("Guard reviewer configuration exceeds 16 KiB");
+    return parseGuardReviewerConfig(buffer.subarray(0,length).toString("utf8"));
+  } finally { await file.close(); }
+}
+export async function saveGuardReviewerConfig(stateDir: string, config: GuardReviewerConfig): Promise<void> {
+  const validated = parseGuardReviewerConfig(JSON.stringify(config)), directory = await guardConfigDirectory(stateDir, true);
+  const path = join(directory, "config.json");
+  try {
+    const metadata = await lstat(path);
+    if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.nlink !== 1 || (metadata.mode & 0o777) !== 0o600) {
+      throw new Error("Guard reviewer configuration must be a private single-link regular file");
+    }
+  } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+  const temporary = join(directory, `.config.json.tmp.${randomUUID()}`); let file:Awaited<ReturnType<typeof open>> | undefined;
+  try {
+    file = await open(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+    await file.writeFile(JSON.stringify(validated) + "\n", "utf8"); await file.sync(); await file.chmod(0o600); await file.close(); file = undefined;
+    await rename(temporary, path);
+  } catch (error) { if (file) await file.close().catch(() => {}); await unlink(temporary).catch(() => {}); throw error; }
+}
 export type AgenticJson = Record<string, unknown>;
 export interface AgenticReviewMetrics { requests?: number; evidenceCalls?: number; inputBytes?: number; }
 export type AgenticReviewResult<Decision> =

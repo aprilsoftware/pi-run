@@ -15,9 +15,10 @@ import { Text } from "@earendil-works/pi-tui";
 import { connectGuardClient, connectGuardReviewClient, type GuardActivityLeaseV1, type GuardActivityRequestV1,
   type GuardReviewDiagnosticSnapshotV1, type GuardReviewResultV1 } from "./guard-runtime.ts";
 import { createGuardJournalWriter, maintainGuardJournalRetention, readGuardJournal } from "./guard-journal.ts";
-import { AgenticGuardReviewer, registerAgenticGuardReviewDomain,
+import { AgenticGuardReviewer, adoptLegacyGuardReviewerConfig, defaultGuardReviewerConfig, loadGuardReviewerConfig,
+  registerAgenticGuardReviewDomain, saveGuardReviewerConfig,
   type AgenticEvidenceDefinition, type AgenticGuardBackendContext, type AgenticGuardBackendRequest,
-  type AgenticReviewDomain, type PiInfrastructure, type ProviderStream,
+  type AgenticReviewDomain, type GuardReviewerConfig, type PiInfrastructure, type ProviderStream,
 } from "./guard-reviewer-agent.ts";
 export { loadPiInfrastructure } from "./guard-reviewer-agent.ts";
 export type { NativeAgentLike, PiInfrastructure, ProviderStream } from "./guard-reviewer-agent.ts";
@@ -89,7 +90,7 @@ export interface ReviewerBinding { select(ctx: ExtensionContext): GuardianReview
 export interface ReviewerHost {
   pi: ExtensionAPI;
   changed(): void;
-  config(): Readonly<GuardianConfig>;
+  config(): Readonly<GuardReviewerConfig>;
   updateConfig(ctx: ExtensionContext, patch: GuardianConfigPatch): Promise<void>;
   tell(ctx: ExtensionContext, message: string, kind?: "info" | "warning" | "error"): void;
   log(ctx: ExtensionContext): LogSink;
@@ -937,38 +938,40 @@ async function resolveProvider(ctx:ExtensionContext,model:Model<Api>,signal:Abor
 
 export function createPiReviewerBinding(host:ReviewerHost):ReviewerBinding {
   const modelFor=(ctx:ExtensionContext):Model<Api>=>{
-    const configured=host.config().model,at=configured?.indexOf("/")??-1;
-    const model=configured?ctx.modelRegistry.find(configured.slice(0,at),configured.slice(at+1)):ctx.model;
-    if(!model)throw new Error("Reviewer model unavailable; select a configured model");return model;
+    const configured=host.config().model;
+    if(!configured)throw new Error("Guard reviewer model is not selected");
+    const at=configured.indexOf("/"),model=ctx.modelRegistry.find(configured.slice(0,at),configured.slice(at+1));
+    if(!model)throw new Error("Guard reviewer model unavailable; select a configured model");return model;
   };
-  const thinkingFor=():Thinking=>host.config().thinking??(host.pi.getThinkingLevel() as Thinking);
+  const thinkingFor=():Thinking=>host.config().thinking??"low";
   const modelControl:ReviewerControl={name:"guardian-model",label:"Model",description:"Persistent reviewer model selector",handler:async(args,ctx)=>{
     try{const configured=host.config().model;let value=args.trim();
-      if(!value){if(!ctx.hasUI){host.tell(ctx,`Model: ${configured??"conversation"}`);return;}
-        const choices=[{value:"default",label:`Use conversation model${!configured?" [current]":""}`},...ctx.modelRegistry.getAvailable().map(m=>({value:`${m.provider}/${m.id}`,label:`${m.provider}/${m.id}${configured===`${m.provider}/${m.id}`?" [current]":""}`}))];
+      if(!value){if(!ctx.hasUI){host.tell(ctx,`Model: ${configured??"not selected"}`);return;}
+        const choices=[{value:"default",label:`No reviewer selected${!configured?" [current]":""}`},...ctx.modelRegistry.getAvailable().map(m=>({value:`${m.provider}/${m.id}`,label:`${m.provider}/${m.id}${configured===`${m.provider}/${m.id}`?" [current]":""}`}))];
         const selected=await ctx.ui.select("Guardian model",choices.map(c=>c.label));if(selected===undefined)return;value=choices.find(c=>c.label===selected)?.value??"";
       }
       if(value!=="default"){const at=value.indexOf("/");if(at<1||!ctx.modelRegistry.find(value.slice(0,at),value.slice(at+1)))throw new Error("Unknown model");}
-      const model=value==="default"?null:value;await host.updateConfig(ctx,{model});host.log(ctx)("INFO","model_changed","Reviewer model preference changed",{model:model??"conversation"});
-      host.tell(ctx,`Guardian model: ${model??"conversation"} (saved).`);
+      const model=value==="default"?null:value;await host.updateConfig(ctx,{model});host.log(ctx)("INFO","model_changed","Shared Guard reviewer model preference changed",{model:model??"not_selected"});
+      host.tell(ctx,`Guard reviewer model: ${model??"not selected"} (saved).`);
     }catch(e){host.tell(ctx,oneLine(errorText(e),200),"error");}
   }};
   const thinkingControl:ReviewerControl={name:"guardian-thinking",label:"Thinking",description:"Persistent reviewer thinking selector",handler:async(args,ctx)=>{
-    try{const configured=host.config().thinking,model=modelFor(ctx),supported=supportedThinking(model);let value=args.trim().toLowerCase();
+    try{const configured=host.config().thinking;let model:Model<Api>|undefined;try{model=modelFor(ctx);}catch{/* Thinking may be saved before a model is selected. */}
+      const supported=model?supportedThinking(model):[...LEVELS];let value=args.trim().toLowerCase();
       if(!value){if(!ctx.hasUI){host.tell(ctx,`Thinking: ${thinkingFor()}`);return;}
-        const choices=[{value:"default",label:`Use conversation setting — ${host.pi.getThinkingLevel()}${!configured?" [current]":""}`},...supported.map(t=>({value:t,label:(t==="off"?"Off — review remains enabled":t[0].toUpperCase()+t.slice(1))+(configured===t?" [current]":"")}))];
+        const choices=[{value:"default",label:`Use Guard default — low${!configured?" [current]":""}`},...supported.map(t=>({value:t,label:(t==="off"?"Off — review remains enabled":t[0].toUpperCase()+t.slice(1))+(configured===t?" [current]":"")}))];
         const selected=await ctx.ui.select("Guardian thinking",choices.map(c=>c.label));if(selected===undefined)return;value=choices.find(c=>c.label===selected)?.value??"";
       }
       if(value!=="default"&&!supported.includes(value as Thinking))throw new Error("Thinking level not supported by this reviewer model");
-      const thinking=value==="default"?null:value as Thinking;await host.updateConfig(ctx,{thinking});const requested=thinkingFor();
-      host.log(ctx)("INFO","thinking_changed","Reviewer thinking preference changed",{requested,effective:effectiveThinking(model,requested)});
-      host.tell(ctx,`Guardian thinking: ${effectiveThinking(model,requested)} (saved).`);
+      const thinking=value==="default"?null:value as Thinking;await host.updateConfig(ctx,{thinking});const requested=thinkingFor(),effective=model?effectiveThinking(model,requested):requested;
+      host.log(ctx)("INFO","thinking_changed","Shared Guard reviewer thinking preference changed",{requested,effective,modelSelected:!!model});
+      host.tell(ctx,`Guard reviewer thinking: ${effective} (saved${model?"":", model not selected"}).`);
     }catch(e){host.tell(ctx,oneLine(errorText(e),200),"error");}
   }};
   return {select(ctx){const model=modelFor(ctx),requested=thinkingFor();return new PiAgentReviewer({model,thinking:effectiveThinking(model,requested),requestedThinking:requested,
-    modelSource:host.config().model?"profile_override":"conversation",thinkingSource:host.config().thinking?"profile_override":"conversation",provider:(s,step)=>resolveProvider(ctx,model,s,step)});},
+    modelSource:"shared_or_adopted_config",thinkingSource:host.config().thinking?"shared_or_adopted_config":"guard_default",provider:(s,step)=>resolveProvider(ctx,model,s,step)});},
     describe(ctx){try{const model=modelFor(ctx);return ["Reviewer: Pi Agent",`Model: ${model.provider}/${model.id}`,`Thinking: ${effectiveThinking(model,thinkingFor())}`];}
-      catch{return ["Reviewer: Pi Agent",`Model: ${host.config().model??"conversation"} (unavailable)`,`Thinking: ${thinkingFor()} (not evaluated)`];}},
+      catch{return ["Reviewer: Pi Agent",`Model: ${host.config().model??"not selected"} (unavailable)`,`Thinking: ${thinkingFor()} (not evaluated)`];}},
     controls:[modelControl,thinkingControl]};
 }
 function reviewServices(request:ReviewRequest,signal:AbortSignal,emit:LogSink,stats:Stats,trace:ReviewTrace):ReviewServices{
@@ -1580,7 +1583,7 @@ export function createGuardianExtension(factory: ReviewerFactory = createPiRevie
     let revision = 0, statusOwner = 0, last: Stats | undefined;
     let dispute:GuardianDispute|undefined;
     const store = new ConversationStore();
-    let config = defaultGuardianConfig(), configNeedsWrite = true;
+    let config:GuardReviewerConfig = defaultGuardReviewerConfig(), configNeedsWrite = true;
     let enabled = false, displayState = "Off", displayDetail = ""; // Never inferred from model output.
     // Viewer lifecycle is independent of review/cancellation/permission state.
     let logViewer: AbortController | undefined;
@@ -1618,9 +1621,9 @@ export function createGuardianExtension(factory: ReviewerFactory = createPiRevie
     const block = (reason: string) => ({ block: true as const, reason });
     const tell = (ctx: ExtensionContext, message: string, kind: "info" | "warning" | "error" = "info") => ctx.ui.notify(visible(message), kind);
     async function updateConfig(ctx: ExtensionContext, patch: GuardianConfigPatch): Promise<void> {
-      const candidate:GuardianConfig={...config,...patch,schemaVersion:2};
+      const candidate:GuardReviewerConfig={...config,...patch,schemaVersion:1};
       if(!configNeedsWrite&&JSON.stringify(candidate)===JSON.stringify(config))return;
-      await saveGuardianConfig(stateDir,candidate);
+      await saveGuardReviewerConfig(stateDir,candidate);
       invalidate();config=candidate;configNeedsWrite=false;statusOwner++;last=undefined;refreshStatus(ctx);
     }
 
@@ -1837,19 +1840,28 @@ export function createGuardianExtension(factory: ReviewerFactory = createPiRevie
     });
 
     pi.on("session_start", async (_event, ctx) => {
-      invalidate();dispute=undefined;store.clear();binding.reset?.();last=undefined;config=defaultGuardianConfig();configNeedsWrite=true;
+      invalidate();dispute=undefined;store.clear();binding.reset?.();last=undefined;config=defaultGuardReviewerConfig();configNeedsWrite=true;
       let configSource="default";
-      try{config=await loadGuardianConfig(stateDir);configNeedsWrite=false;configSource="file";}
-      catch(e){if((e as NodeJS.ErrnoException).code!=="ENOENT"){
-        tell(ctx,`Guardian configuration unavailable; starting with default reviewer preferences: ${errorText(e)}`,"warning");
-        sink(ctx)("ERROR","config_unavailable","Guardian configuration rejected; safe defaults applied",{error:errorText(e)});
-      }}
+      try{config=await loadGuardReviewerConfig(stateDir);configNeedsWrite=false;configSource="guard_file";}
+      catch(e){
+        if((e as NodeJS.ErrnoException).code==="ENOENT"){
+          try{const legacy=await loadGuardianConfig(stateDir);config=adoptLegacyGuardReviewerConfig(legacy);configSource=legacy.model?"legacy_explicit":"default";}
+          catch(legacyError){if((legacyError as NodeJS.ErrnoException).code!=="ENOENT"){
+            tell(ctx,`Legacy Guardian configuration unavailable; no Guard reviewer selected: ${errorText(legacyError)}`,"warning");
+            sink(ctx)("ERROR","config_unavailable","Legacy Guardian configuration rejected; no reviewer selected",{error:errorText(legacyError)});
+          }}
+        }else{
+          tell(ctx,`Shared Guard reviewer configuration unavailable; no reviewer selected: ${errorText(e)}`,"warning");
+          sink(ctx)("ERROR","config_unavailable","Shared Guard reviewer configuration rejected; no reviewer selected",{error:errorText(e)});
+          configSource="invalid_guard_config";
+        }
+      }
       const restored=restoredGuardianMode(ctx);enabled=restored.mode==="on";dispute=enabled?restoredGuardianDispute(ctx):undefined;syncJustificationTool(ctx);
       statusOwner++;status(ctx,dispute?"Dispute":enabled?"On":"Off",dispute?(dispute.phase==="awaiting-user"?"awaiting you":"investigating"):"");
       sink(ctx)("SESSION_START", "session_started", "Guardian ready; logs are diagnostic only", {
         logPath: logger.path, maxBytes: MAX_LOG_BYTES, backups: LOG_BACKUPS,
-        configPath:join(stateDir,"guardian","config.json"),configSource,mode:restored.mode,modeSource:restored.source,
-        model:config.model??"conversation",thinking:config.thinking??"conversation",
+        configPath:join(stateDir,"guard","config.json"),legacyConfigPath:join(stateDir,"guardian","config.json"),configSource,
+        mode:restored.mode,modeSource:restored.source,model:config.model??"not_selected",thinking:config.thinking??"low",
         reviewScope: "command_execution", toolNames: [...GUARDED_COMMAND_TOOLS],
       });
     });

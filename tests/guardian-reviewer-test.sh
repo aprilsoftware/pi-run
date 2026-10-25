@@ -6,7 +6,7 @@ PI_PACKAGE_DIR="${PI_PACKAGE_DIR:-$(npm root -g)/@earendil-works/pi-coding-agent
 
 node --input-type=module - "${ROOT}" "${PI_PACKAGE_DIR}" <<'NODE'
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, link, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -33,6 +33,31 @@ const ai = await import(pathToFileURL(join(piDir, 'node_modules', '@earendil-wor
 const workspace = await mkdtemp(join(tmpdir(), 'guardian-reviewer-'));
 const controller = new AbortController();
 try {
+  assert.deepEqual(shared.defaultGuardReviewerConfig(),{schemaVersion:1,model:null,thinking:null});
+  const explicit={schemaVersion:1,model:'trusted/reviewer',thinking:'high'};
+  assert.deepEqual(shared.parseGuardReviewerConfig(JSON.stringify(explicit)),explicit);
+  assert.deepEqual(shared.adoptLegacyGuardReviewerConfig({model:'trusted/reviewer',thinking:'low'}),{schemaVersion:1,model:'trusted/reviewer',thinking:'low'});
+  assert.deepEqual(shared.adoptLegacyGuardReviewerConfig({model:null,thinking:'high'}),shared.defaultGuardReviewerConfig(),
+    'A legacy null model must not become a conversation-model fallback');
+  for(const value of [null,{},[],{...explicit,schemaVersion:2},{...explicit,model:'invalid'},{...explicit,thinking:'extreme'},{...explicit,extra:true}])
+    assert.throws(()=>shared.parseGuardReviewerConfig(JSON.stringify(value)),/Invalid Guard reviewer configuration/);
+  const profile=join(workspace,'profile');await mkdir(profile,{mode:0o700});
+  await assert.rejects(shared.loadGuardReviewerConfig(profile),error=>error?.code==='ENOENT');
+  await shared.saveGuardReviewerConfig(profile,explicit);
+  assert.equal((await stat(join(profile,'guard'))).mode&0o777,0o700);assert.equal((await stat(join(profile,'guard','config.json'))).mode&0o777,0o600);
+  assert.deepEqual(await shared.loadGuardReviewerConfig(profile),explicit);
+  assert.equal(await readFile(join(profile,'guard','config.json'),'utf8'),JSON.stringify(explicit)+'\n');
+  const hardlink=join(profile,'guard','config-copy.json');await link(join(profile,'guard','config.json'),hardlink);
+  await assert.rejects(shared.loadGuardReviewerConfig(profile),/single-link regular file/);await rm(hardlink);
+  const redirected=join(workspace,'redirected-profile'),target=join(workspace,'redirect-target');
+  await mkdir(redirected,{mode:0o700});await mkdir(target,{mode:0o700});await symlink(target,join(redirected,'guard'));
+  await assert.rejects(shared.saveGuardReviewerConfig(redirected,explicit),/must not be redirected/);
+  await chmod(join(profile,'guard'),0o755);await assert.rejects(shared.loadGuardReviewerConfig(profile),/must be private/);await chmod(join(profile,'guard'),0o700);
+  const unselectedBinding=g.createPiReviewerBinding({pi:{getThinkingLevel:()=> 'high'},config:()=>shared.defaultGuardReviewerConfig(),
+    changed(){},async updateConfig(){},tell(){},log:()=>()=>{}});
+  assert.throws(()=>unselectedBinding.select({modelRegistry:{find(){throw new Error('must not resolve a conversation fallback');}}}),/model is not selected/);
+  console.log('PASS guardian-reviewer: private shared config, explicit legacy adoption, and no implicit model fallback');
+
   const files = [];
   for (let i = 1; i <= 4; i++) {
     const path = join(workspace, `evidence-${i}.txt`);
