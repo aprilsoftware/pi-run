@@ -3,6 +3,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+VERSION="$(tr -d '\r\n' < "${ROOT}/VERSION")"
 TMP="$(mktemp -d)"
 trap 'rm -rf "${TMP}"' EXIT
 
@@ -137,7 +138,7 @@ assert_pair --env RESTIC_REPOSITORY=/snapshots/repository
 assert_pair --env RESTIC_PASSWORD_FILE=/snapshots/secrets
 grep -F "type=bind,src=${SNAPSHOT_ROOT},dst=/snapshots,readonly" "${DOCKER_LOG}" >/dev/null \
     || fail "status did not use a read-only snapshots mount"
-grep -Fx 'ghcr.io/aprilsoftware/pi-run:0.8.7' "${DOCKER_LOG}" >/dev/null \
+grep -Fx "ghcr.io/aprilsoftware/pi-run:${VERSION}" "${DOCKER_LOG}" >/dev/null \
     || fail "status used the wrong runtime image"
 
 UNSAFE_HOME="${TMP}/unsafe home"

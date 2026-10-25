@@ -3,6 +3,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+VERSION="$(tr -d '\r\n' < "${ROOT}/VERSION")"
 TMP="$(mktemp -d)"
 trap 'rm -rf "${TMP}"' EXIT
 
@@ -13,15 +14,15 @@ fail() {
 
 mkdir -p "${TMP}/release" "${TMP}/fake-bin" "${TMP}/home"
 "${ROOT}/scripts/build-release" "${TMP}/release" >/dev/null
-cat > "${TMP}/release/metadata.json" <<'EOF'
+cat > "${TMP}/release/metadata.json" <<EOF
 {
   "assets": [
     {
-      "name": "pi-run-0.8.7.tar.gz",
+      "name": "pi-run-${VERSION}.tar.gz",
       "url": "https://api.github.test/releases/assets/1"
     },
     {
-      "name": "pi-run-0.8.7.tar.gz.sha256",
+      "name": "pi-run-${VERSION}.tar.gz.sha256",
       "url": "https://api.github.test/releases/assets/2"
     }
   ]
@@ -55,14 +56,14 @@ done
 [ -n "$destination" ] && [ -n "$url" ] && [ "$authorized" = true ] || exit 2
 printf '%s\n' "$url" >> "${CURL_LOG:?}"
 case "$url" in
-    https://api.github.com/repos/aprilsoftware/pi-run/releases/tags/v0.8.7)
+    https://api.github.com/repos/aprilsoftware/pi-run/releases/tags/v${TEST_VERSION:?})
         cp "${FIXTURE_RELEASE:?}/metadata.json" "$destination"
         ;;
     https://api.github.test/releases/assets/1)
-        cp "${FIXTURE_RELEASE:?}/pi-run-0.8.7.tar.gz" "$destination"
+        cp "${FIXTURE_RELEASE:?}/pi-run-${TEST_VERSION}.tar.gz" "$destination"
         ;;
     https://api.github.test/releases/assets/2)
-        cp "${FIXTURE_RELEASE:?}/pi-run-0.8.7.tar.gz.sha256" "$destination"
+        cp "${FIXTURE_RELEASE:?}/pi-run-${TEST_VERSION}.tar.gz.sha256" "$destination"
         ;;
     *) exit 3 ;;
 esac
@@ -72,7 +73,7 @@ cat > "${TMP}/fake-bin/docker" <<'EOF'
 set -eu
 [ "$1" = pull ] || exit 2
 case "$2" in
-    ghcr.io/aprilsoftware/pi-run:0.8.7|ghcr.io/aprilsoftware/pi-run-egress:0.8.7) ;;
+    ghcr.io/aprilsoftware/pi-run:"${TEST_VERSION:?}"|ghcr.io/aprilsoftware/pi-run-egress:"${TEST_VERSION}") ;;
     *) exit 2 ;;
 esac
 printf '%s\n' "$2" >> "${DOCKER_LOG:?}"
@@ -87,6 +88,7 @@ chmod 0644 "${TMP}/downloaded-install.sh"
 export CURL_LOG="${TMP}/curl.log"
 export DOCKER_LOG="${TMP}/docker.log"
 export FIXTURE_RELEASE="${TMP}/release"
+export TEST_VERSION="${VERSION}"
 PATH="${TMP}/fake-bin:${PATH}" \
 HOME="${TMP}/home" \
 GH_TOKEN="private-test-token" \
@@ -100,15 +102,15 @@ for component in doctor.sh upgrade.sh; do
        ! -L "${TMP}/application/current/lib/pi-run/${component}" ]] \
         || fail "private install did not activate component: ${component}"
 done
-[[ "$(cat "${TMP}/application/current/VERSION")" == 0.8.7 ]] \
+[[ "$(cat "${TMP}/application/current/VERSION")" == "${VERSION}" ]] \
     || fail "private install selected the wrong release"
-grep -Fx 'ghcr.io/aprilsoftware/pi-run:0.8.7' "${DOCKER_LOG}" >/dev/null \
+grep -Fx "ghcr.io/aprilsoftware/pi-run:${VERSION}" "${DOCKER_LOG}" >/dev/null \
     || fail "private install did not pull the runtime image"
-grep -Fx 'ghcr.io/aprilsoftware/pi-run-egress:0.8.7' "${DOCKER_LOG}" >/dev/null \
+grep -Fx "ghcr.io/aprilsoftware/pi-run-egress:${VERSION}" "${DOCKER_LOG}" >/dev/null \
     || fail "private install did not pull the egress image"
 [[ "$(wc -l < "${DOCKER_LOG}")" -eq 2 ]] \
     || fail "private install pulled an unexpected image set"
-grep -Fx 'https://api.github.com/repos/aprilsoftware/pi-run/releases/tags/v0.8.7' \
+grep -Fx "https://api.github.com/repos/aprilsoftware/pi-run/releases/tags/v${VERSION}" \
     "${TMP}/curl.log" >/dev/null
 grep -Fx 'https://api.github.test/releases/assets/1' "${TMP}/curl.log" >/dev/null
 grep -Fx 'https://api.github.test/releases/assets/2' "${TMP}/curl.log" >/dev/null
