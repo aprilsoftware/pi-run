@@ -214,6 +214,22 @@ presentation, completion, or retention failure never changes CAF review,
 release, or tool-result behavior. Legacy Guardian logs are neither read nor
 migrated.
 
+### Current CAF limits
+
+CAF has native Pi lifecycle coverage using fake primary, friend, and search
+providers. That coverage includes branch restoration, reviewed continuation,
+nested search, session-context exclusion, journal completion, and process-local
+resume. It is not evidence of interoperability with every real provider or of
+provider-side confidentiality, retention, or tool-call behavior.
+
+CAF remains application-level orchestration rather than a sandbox. Its
+primary-model reviewer can make mistakes, public content remains untrusted, and
+Pi extensions execute in the same process. Public research supports one
+canonical `web_search` call with one explicitly configured provider and no page
+fetching or source-check operation. Network policy independently determines
+whether provider traffic can leave the container. Journal hashes permit
+correlation and can confirm guesses about low-entropy content.
+
 Pi uses the selected profile as its configuration directory. Provider login,
 model configuration, settings, Git configuration, credentials, Guardian state,
 and sessions therefore coexist with shareable definitions. A complete profile

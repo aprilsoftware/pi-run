@@ -278,27 +278,34 @@ Guardian's dispute contract remains command-specific until shared infrastructure
 can preserve it exactly. CAF may reuse arbitration UI and evidence mechanisms
 without inheriting the global command-dispute latch.
 
-## Proposed implementation sequence
+## Implementation sequence
 
-Each stage requires a separate approved increment:
+Each stage was implemented through a separate approved increment:
 
-1. Define the versioned Guard Runtime/client contract and tests.
-2. Extract common mechanics while preserving Guardian behavior.
-3. Register Guardian command review as an ordinary client and prove parity.
-4. Use namespaced per-run logs without legacy-log migration.
-5. Add isolated CAF configuration and conversation without network calls.
-6. Add reviewed friend dialogue and `caf_ask_primary`.
-7. Add reviewed public-web research functions and bounded citations.
-8. Validate the complete lifecycle with internal and friend models.
+1. [x] Define the versioned Guard Runtime/client contract and tests.
+2. [x] Extract common mechanics while preserving Guardian behavior.
+3. [x] Register Guardian command review as an ordinary client and prove parity.
+4. [x] Use namespaced per-run logs without legacy-log migration.
+5. [x] Add isolated CAF configuration and conversation without network calls.
+6. [x] Add reviewed friend dialogue and `caf_ask_primary`.
+7. [x] Add one reviewed `caf_web_search` operation with bounded source results.
+8. [x] Validate the native Pi lifecycle with fake primary, friend, and search providers.
 
-No stage authorizes the next one, a release, or publication.
+Completion of this experimental sequence does not authorize a release,
+publication, real-provider test, or the next product increment.
 
-## Open questions and acceptance
+## Remaining questions and acceptance
 
-The experiment must select the smallest public-web tool set, exact budgets, CAF
-decision schema, journal excerpt policy, restricted-network integration, useful
-real-model scenarios, and whether friend credentials move to a broker.
-The design is complete when both features are ordinary clients, one status
-surface presents sequential activity, journals remain separate, every external
-CAF boundary is explicit, and agent dialogue is bounded without unsupported
-security claims.
+The experiment selected a maximum of three questions and three rounds per
+consultation, one search and five results per `call_friend`, destination-specific
+`ALLOW`/`ASK`/`USER_REFUSED` review, and hash-only payload diagnostics without
+journal excerpts. Remaining work includes useful real-provider scenarios,
+restricted-network validation against real provider endpoints, provider-specific
+tool-call interoperability, and whether friend credentials should move to a
+broker.
+
+The architecture now has equal ordinary Guard Runtime clients, one sequential
+status surface, separate journals, explicit external CAF boundaries, bounded
+agent dialogue, native fake-provider lifecycle coverage, and documented limits.
+This is experimental evidence, not a sandbox, confidentiality proof, or release
+readiness claim.
