@@ -160,25 +160,41 @@ primary transcript, authorization evidence, CAF policy, workspace data,
 credentials, or unrelated CAF rounds. This is application-level context
 isolation, not a sandbox or confidentiality guarantee.
 
-Each invocation performs at most one friend request. The friend may return one
-bounded answer or end its round with the single constrained
+Without research, each invocation performs one friend request. The friend may
+return one bounded answer or end its round with the constrained
 `caf_ask_primary` function containing up to three minimal questions. That
 function does not execute the primary. The primary receives the questions and
 must use a new standalone `call_friend` invocation to answer; the answer receives
 a new disclosure review before transmission. A consultation is limited to three
 primary/friend rounds.
 
-The friend has no public-web, filesystem, shell, arbitrary Pi, or MCP tools.
-There is no recursive primary invocation or autonomous friend loop. Review
-refusal and failures before release produce no friend request. Failures after a
-friend request starts report that uncertain external effect and must not be
-retried automatically.
+When `web-search.json` selects one explicit provider and the bundled canonical
+`web_search` tool is callable, the friend also receives `caf_web_search`. It may
+request one query and purpose. CAF pauses the friend and independently reviews
+the exact query, purpose, and search-provider destination. Only `ALLOW` permits
+a nested `web_search` call with one query, at most five results, no fetched page
+content, no curator, and no proxy override. CAF sends bounded, normalized,
+untrusted titles, snippets, and URLs back for one final friend request with no
+tools. The result returned to the primary includes a CAF-generated source list.
+`auto`, `all`, provider arrays, repeated searches, custom-renamed search tools,
+and arbitrary URL fetching are unavailable.
 
-Successful answers and question requests are stored as finalized branch-local
-session metadata while the tool result supplies the response to the primary
-model. `/caf status` reconstructs only finalized CAF rounds on the selected
-branch, marks a pending consultation as awaiting the primary or at its round
-limit, and reports malformed state as unavailable.
+The search provider and friend model are separate disclosure destinations.
+Approval for one does not authorize the other. Search credentials remain inside
+`pi-web-access` and are not included in friend or reviewer context. Offline and
+restricted network policy remains authoritative. The friend has no filesystem,
+shell, arbitrary Pi, or MCP tools, and public results cannot expand its
+capabilities. There is no recursive primary invocation or unbounded autonomous
+loop. Review refusal and failures before release produce no corresponding
+external request. Failures after a request starts report that uncertain external
+effect and must not be retried automatically.
+
+Successful answers, question requests, and bounded research evidence are stored
+as finalized branch-local session metadata while the tool result supplies the
+response to the primary model. `/caf status` reports whether explicitly
+configured public-web research is available, reconstructs only finalized CAF
+rounds on the selected branch, marks a pending consultation as awaiting the
+primary or at its round limit, and reports malformed state as unavailable.
 
 Pi uses the selected profile as its configuration directory. Provider login,
 model configuration, settings, Git configuration, credentials, Guardian state,
