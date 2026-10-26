@@ -2,41 +2,44 @@
 
 ## Status and purpose
 
-This document defines the presentation boundary for Guard Runtime, Guardian, and
-Call a Friend (CAF). It corrects an ownership gap found after v0.9.1: Guardian
-contains a complete custom journal-browser overlay, while CAF renders its journal
-as a multi-line notification. Shared storage did not produce a shared user
-experience because the reusable dialog mechanics remained inside one client.
+This document records the implemented presentation boundary for Guard Runtime,
+Guardian, and Call a Friend (CAF). The correction was implemented after v0.9.1
+on `experiment/call-a-friend` and checkpointed in `12daf89` and `ebada28`. It has
+not been versioned, built, installed, pushed, tagged, published, or released by
+those commits.
 
-This is an architecture decision, not implementation or release authorization.
-Each implementation stage requires separate approval.
+The work corrected an ownership gap found after v0.9.1 while preserving separate
+Guardian and CAF policy, journals, decisions, and effects. Each implementation
+stage was separately approved and validated.
 
-## Current finding
+## Original finding and implemented correction
 
-Pi-Run currently has one custom Pi overlay:
+Before this work, Pi-Run had one custom Pi journal overlay inside
+`guardian-agent.ts`. It combined generic dialog interaction with Guardian review
+semantics. CAF had no reusable dialog and rendered `/caf-log` through a
+multi-line notification, so shared storage did not produce a shared experience.
+
+The implemented structure is now:
 
 ```text
-docker/extensions/guardian-agent.ts
-└── GuardianLogViewer / openGuardianLogViewer
+docker/extensions/guard-runtime.ts
+└── docker/extensions/guard-viewer.ts   private generic viewer
+
+docker/extensions/guardian-agent.ts    Guardian presentation model
+docker/extensions/caf-agent.ts         CAF presentation model
 ```
 
-It predates Guard Runtime and combines two kinds of responsibility:
+Only Guard Runtime imports and opens the private viewer. Guardian and CAF supply
+bounded rows and details, flush their own pending journal writes, and use the
+same search, refresh, navigation, sizing, fallback, and lifecycle mechanics.
 
-- generic interaction: overlay lifecycle, framing, focus, selection, search,
-  refresh, tabs, scrolling, keyboard handling, sizing, and close behavior;
-- Guardian semantics: review grouping, decision labels, command columns, and
-  Summary, Command, Evidence, and Timeline content.
-
-Guard Runtime later became the owner of the shared two-row status widget, but the
-journal browser was not migrated. CAF consequently had no reusable dialog and
-implemented `/caf-log` by sending formatted journal lines through a notification.
-Independent tests then preserved both behaviors.
-
-The same review also found a separate dependency inversion: CAF imports shared
-evidence types and implementations from `guardian-agent.ts`. Shared Guard
-reviewer controls also remain implemented in Guardian even though their model
-and thinking configuration serves both clients. Those problems are related
-follow-up work; they must not be hidden inside the viewer extraction.
+The related dependency and control findings were also resolved in separate
+stages. Guardian and CAF now import shared evidence machinery from
+`guard-evidence.ts`; CAF no longer imports Guardian. Runtime owns shared reviewer
+configuration capabilities, while Guardian remains the sole client granted
+mutation capability and continues to own the canonical `/guardian-model` and
+`/guardian-thinking` commands. CAF retains friend-only model and thinking
+commands.
 
 ## Architectural boundary
 
@@ -228,32 +231,47 @@ Forbidden directions are:
 - Guard Journal importing presentation code; and
 - presentation callbacks entering serialized review requests.
 
-CAF's current import of shared evidence machinery from Guardian violates the
-intended dependency direction and must be removed in a later, separately scoped
-extraction into the shared reviewer layer.
+The former CAF-to-Guardian evidence import was removed. Both clients now depend
+on the neutral `guard-evidence.ts` layer, which imports neither client nor Guard
+Runtime. Focused source-contract tests preserve this dependency direction.
 
 ## Implementation sequence
 
 Each stage is independently reviewed, implemented, validated, and stopped:
 
-1. Add the bounded runtime presentation contract and private generic viewer;
+1. [x] Add the bounded runtime presentation contract and private generic viewer;
    migrate Guardian without changing visible behavior.
-2. Add the CAF journal adapter and route `/caf-log` through the same runtime
+2. [x] Add the CAF journal adapter and route `/caf-log` through the same runtime
    viewer; retain old journal compatibility and privacy.
-3. Add cross-client presentation contract tests and harmonize log loading,
+3. [x] Add cross-client presentation contract tests and harmonize log loading,
    refresh, search, bounds, and non-TUI behavior.
-4. Extract shared evidence machinery so CAF no longer imports Guardian.
-5. Move shared reviewer controls behind Runtime-owned capabilities while keeping
-   public Guardian command compatibility.
-6. Audit and separately harmonize remaining menu, alias, selector, and status
-   presentation differences.
+4. [x] Extract shared evidence machinery so CAF no longer imports Guardian.
+5. [x] Move shared reviewer controls behind Runtime-owned capabilities while
+   keeping `/guardian-model` and `/guardian-thinking` canonical.
+6. [x] Harmonize role labels and status discovery. `/guardian-status` and
+   `/caf-status` are dedicated autocomplete-visible commands; the nested
+   `/guardian status` and `/caf status` forms were removed.
 
-No stage may combine this refactor with provider routing, policy, journal schema,
+The resulting menus keep their semantic ownership. Guardian configures the
+shared reviewer; CAF configures only the friend. Both expose read-only status,
+and CAF reads reviewer identity and effective thinking through Runtime without
+receiving reviewer mutation capability. Search terms supplied to
+`/guardian-log` or `/caf-log` remain user input rather than hidden subcommands.
+
+No stage combined this refactor with provider routing, policy, journal schema,
 mode semantics, release publication, or unrelated UI frameworks.
+
+Focused offline validation covered the shared presentation contract, runtime
+registry and lifecycle, journal bounds, Guardian flow/reviewer/evidence/reference
+fixtures, CAF configuration and lifecycle, command registration, privacy fields,
+dependency direction, Bash syntax, ShellCheck, and diff hygiene. The Guardian
+model fixture definitions passed while live reviewer calls remained explicitly
+disabled. No real-provider call, image build, installation, or release validation
+is claimed by this architecture checkpoint.
 
 ## Acceptance criteria
 
-The presentation correction is complete only when:
+The implemented presentation correction satisfies these criteria:
 
 - Guardian and CAF use one Runtime-owned overlay implementation;
 - no client calls `ctx.ui.custom()` for Guard views;
