@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import type { ExtensionAPI, ExtensionContext, ExtensionUIContext, ToolCallEventResult } from "@earendil-works/pi-coding-agent";
 import guardRuntime, { GUARD_RUNTIME_DISCOVER, type GuardRuntimeV1 } from "../docker/extensions/guard-runtime.ts";
-import { createGuardianExtension, createLogger, loadGuardianModeConfig, parseGuardianConfig, parseGuardianModeConfig, readGuardianLogs, saveGuardianModeConfig, type ReviewDecision } from "../docker/extensions/guardian-agent.ts";
+import { createGuardianExtension, createGuardianLogViewRequest, createLogger, loadGuardianModeConfig, parseGuardianConfig, parseGuardianModeConfig, readGuardianLogs, saveGuardianModeConfig, type ReviewDecision } from "../docker/extensions/guardian-agent.ts";
 
 type Outcome = ReviewDecision["outcome"] | "unavailable";
 type Handler = (event: any, ctx: ExtensionContext) => unknown | Promise<unknown>;
@@ -30,13 +30,14 @@ async function runScenario(name: Scenario, realUI?: ExtensionUIContext, withRunt
   let activeTools=["bash","read","edit","write","custom-effect"];
   const calls: string[] = [], reviewedIds: string[] = [], notices: string[] = [], statusLines: string[] = [];
   let outcome: Outcome = scenario.outcome, sessionId = "guardian-flow-test", reviews = 0, assessmentReviews=0, aborts = 0;
+  let viewerCalls=0,viewerText="";
   let runtimeService:GuardRuntimeV1|undefined;
   const userEntry = { type: "message", id: "user-1", message: { role: "user", content: "Synthetic test direction; no action may execute." } };
   const entries:any[] = [{ type: "custom", id: "caf-mode-ignored", customType: "pi-run-caf-mode", data: { mode: "off" } },{ type: "custom", id: "mode-1", customType: "guardian-mode", data: { mode: "on" } }, userEntry];
   let branch:any[] = entries;
   const widgets=new Map<string,any>();
-  const tui = { requestRender: () => { for(const widget of widgets.values())statusLines.push(widget.render(120)[0]); } };
-  const theme = { fg: (_color:string, text:string) => text, bold:(text:string)=>text };
+  const tui = { terminal:{rows:24},requestRender: () => { for(const widget of widgets.values())statusLines.push(widget.render(120)[0]); } };
+  const theme = { fg: (_color:string, text:string) => text, bg:(_color:string,text:string)=>text,bold:(text:string)=>text };
   const reviewerModel={id:"reviewer",provider:"synthetic",api:"openai-responses",reasoning:false,contextWindow:128_000,maxTokens:4096};
   const ctx = {
     cwd: workspace, mode:name==="no-ui"?"print":"tui",hasUI: name !== "no-ui", hasPendingMessages: () => false,
@@ -50,6 +51,9 @@ async function runScenario(name: Scenario, realUI?: ExtensionUIContext, withRunt
       setStatus() {},
       setWidget(id:string, factory:any) { if(typeof factory==="function")widgets.set(id,factory(tui,theme));else widgets.delete(id);tui.requestRender(); },
       notify(message:string) { notices.push(message); realUI?.notify(`TEST ONLY · ${message}`, "info"); },
+      async custom(factory:any){viewerCalls++;return await new Promise(resolve=>{let component:any;
+        const done=(value:unknown)=>{component?.dispose?.();resolve(value);};component=factory(tui,theme,{},done);
+        viewerText=component.render(120).join("\n");done(undefined);});},
       async confirm() { throw new Error("Guardian disputes must not open confirmation dialogs"); },
       async select() { throw new Error("Unexpected selector in short-action fixture"); },
     },
@@ -147,6 +151,10 @@ async function runScenario(name: Scenario, realUI?: ExtensionUIContext, withRunt
 
     if (name === "allow"&&withRuntime) {
       assert.ok(commands.has("guardian-default"),"Guardian must expose a dedicated new-session default command");
+      await commands.get("guardian-log")!.handler("forced",ctx);
+      assert.equal(viewerCalls,1,"Guardian must open logs through the shared runtime viewer");
+      assert.match(viewerText,/Guardian reviews · all retained sessions · UTC/);
+      assert.match(viewerText,/Read-only · not a confirmation|log read warning/);
       (ctx.ui as any).select=async(title:string,choices:string[])=>{assert.match(title,/Guard review — On/);for(const label of ["Current session — On (turn Off)","New sessions — Off","Logs","Close"])assert.ok(choices.includes(label),label);return "Close";};
       await commands.get("guardian")!.handler("",ctx);
       branch=[userEntry];await dispatch("session_tree",{type:"session_tree"});
@@ -267,6 +275,13 @@ async function runScenario(name: Scenario, realUI?: ExtensionUIContext, withRunt
     assert.equal(aborts,0,"Guardian must not abort the acting agent when opening a dispute");
     await dispatch("session_shutdown",{type:"session_shutdown"});handlers.delete("session_shutdown");
     const snapshot=await readGuardianLogs(profile),events=snapshot.entries.map(entry=>entry.value);
+    assert.ok(snapshot.reviews.length>=1,"Completed actions must be grouped for the read-only log viewer");
+    let viewFlushes=0;const view=createGuardianLogViewRequest(profile,async()=>{viewFlushes++;},"synthetic"),presented=await view.load(new AbortController().signal);
+    await view.load(new AbortController().signal);assert.equal(viewFlushes,2,"Guardian must flush before initial load and refresh");
+    assert.equal(presented.rows.length,snapshot.reviews.length,"Guardian must present every grouped review through the runtime contract");
+    assert.ok(presented.rows.every(row=>row.searchText&&row.wide&&row.compact));
+    assert.match(view.details(presented.rows[0].id,"summary").join("\n"),/Decision|Review|Command/);
+    assert.match(view.details(presented.rows[0].id,"timeline").join("\n"),/Times UTC/);
     const runFiles=await readdir(join(profile,"logs","guardian","runs"));
     assert.equal(runFiles.filter(name=>name.endsWith(".jsonl")).length,1,"Guardian must write one run shard");
     assert.equal(runFiles.filter(name=>name.endsWith(".complete")).length,1,"Clean shutdown must complete the run journal");

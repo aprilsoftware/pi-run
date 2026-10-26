@@ -9,14 +9,14 @@ import { randomUUID } from "node:crypto";
 export type AgenticThinking = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 export interface GuardReviewerConfig { schemaVersion: 1; model: string | null; thinking: AgenticThinking | null; }
 const GUARD_CONFIG_BYTES = 16 * 1024;
-const GUARD_THINKING:readonly AgenticThinking[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+export const GUARD_REVIEWER_THINKING_LEVELS:readonly AgenticThinking[] = Object.freeze(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
 export function defaultGuardReviewerConfig(): GuardReviewerConfig { return { schemaVersion: 1, model: null, thinking: null }; }
 export function parseGuardReviewerConfig(text: string): GuardReviewerConfig {
   const value = JSON.parse(text) as Record<string, unknown>;
   if (!value || typeof value !== "object" || Array.isArray(value) || Object.getPrototypeOf(value) !== Object.prototype ||
       Object.keys(value).sort().join(",") !== "model,schemaVersion,thinking" || value.schemaVersion !== 1 ||
       !(value.model === null || typeof value.model === "string" && value.model.length <= 512 && /^[^\s/]+\/[^\s]+$/.test(value.model)) ||
-      !(value.thinking === null || GUARD_THINKING.includes(value.thinking as AgenticThinking))) throw new Error("Invalid Guard reviewer configuration");
+      !(value.thinking === null || GUARD_REVIEWER_THINKING_LEVELS.includes(value.thinking as AgenticThinking))) throw new Error("Invalid Guard reviewer configuration");
   return { schemaVersion: 1, model: value.model as string | null, thinking: value.thinking as AgenticThinking | null };
 }
 export function adoptLegacyGuardReviewerConfig(legacy: { model: string | null; thinking: AgenticThinking | null }): GuardReviewerConfig {
@@ -38,7 +38,7 @@ async function loadLegacyGuardReviewerConfig(stateDir: string): Promise<GuardRev
     const current=value.schemaVersion===2&&keys==="model,schemaVersion,thinking";
     const legacy=value?.schemaVersion===1&&keys==="mode,model,schemaVersion,thinking"&&["on","off"].includes(String(value.mode));
     if((!current&&!legacy)||!(value.model===null||typeof value.model==="string"&&value.model.length<=512&&/^[^\s/]+\/[^\s]+$/.test(value.model))||
-      !(value.thinking===null||GUARD_THINKING.includes(value.thinking as AgenticThinking)))throw new Error("Invalid legacy Guardian configuration");
+      !(value.thinking===null||GUARD_REVIEWER_THINKING_LEVELS.includes(value.thinking as AgenticThinking)))throw new Error("Invalid legacy Guardian configuration");
     return adoptLegacyGuardReviewerConfig({model:value.model as string|null,thinking:value.thinking as AgenticThinking|null});
   }finally{await file.close();}
 }
@@ -156,11 +156,11 @@ export function registerAgenticGuardReviewDomain(pi: ExtensionAPI, clientId: str
 export function supportedAgenticThinking(model:Model<Api>):AgenticThinking[]{
   if(!model.reasoning)return ["off"];
   const map=(model as Model<Api>&{thinkingLevelMap?:Record<string,unknown>}).thinkingLevelMap;
-  return GUARD_THINKING.filter(level=>map?.[level]!==null&&(!["xhigh","max"].includes(level)||map?.[level]!==undefined));
+  return GUARD_REVIEWER_THINKING_LEVELS.filter(level=>map?.[level]!==null&&(!["xhigh","max"].includes(level)||map?.[level]!==undefined));
 }
 export function effectiveAgenticThinking(model:Model<Api>,requested:AgenticThinking):AgenticThinking{
   const levels=supportedAgenticThinking(model);return levels.includes(requested)?requested:
-    levels.find(level=>GUARD_THINKING.indexOf(level)>=GUARD_THINKING.indexOf(requested))??levels.at(-1)??"off";
+    levels.find(level=>GUARD_REVIEWER_THINKING_LEVELS.indexOf(level)>=GUARD_REVIEWER_THINKING_LEVELS.indexOf(requested))??levels.at(-1)??"off";
 }
 export function createAgenticGuardReviewBackend(pi: ExtensionAPI): { review(request: Readonly<AgenticGuardBackendRequest>, context: Readonly<AgenticGuardBackendContext>): Promise<unknown> } {
   const stateDir=process.env.PI_RUN_PROFILE_DIR||"/profile",discoveredDomains=new Map<string,AgenticDomainRegistration>();

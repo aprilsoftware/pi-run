@@ -29,6 +29,9 @@ const dockerfile = await readFile(join(root, 'docker', 'Dockerfile'), 'utf8');
 assert.ok(dockerfile.includes('COPY extensions/guard-reviewer-agent.ts /usr/local/lib/node_modules/guardian-agent/'));
 const core = await import(pathToFileURL(packagePath('pi-agent-core')).href);
 const ai = await import(pathToFileURL(join(piDir, 'node_modules', '@earendil-works', 'pi-ai', 'dist', 'compat.js')).href);
+const {createEventBus}=await import(pathToFileURL(join(piDir,'dist/core/event-bus.js')).href);
+const commands=new Set(),commandPi={events:createEventBus(),on:()=>()=>{},registerCommand:name=>commands.add(name),registerTool(){},getActiveTools:()=>[],setActiveTools(){}};
+g.default(commandPi);assert.ok(commands.has('guardian-model'));assert.ok(commands.has('guardian-thinking'));assert.ok(!commands.has('guard-model'));assert.ok(!commands.has('guard-thinking'));
 
 const workspace = await mkdtemp(join(tmpdir(), 'guardian-reviewer-'));
 const controller = new AbortController();
@@ -55,6 +58,7 @@ try {
   await chmod(join(profile,'guard'),0o755);await assert.rejects(shared.loadGuardReviewerConfig(profile),/must be private/);await chmod(join(profile,'guard'),0o700);
   const unselectedBinding=g.createPiReviewerBinding({pi:{getThinkingLevel:()=> 'high'},config:()=>shared.defaultGuardReviewerConfig(),
     changed(){},async updateConfig(){},tell(){},log:()=>()=>{}});
+  assert.equal(unselectedBinding.controls,undefined,'Shared reviewer controls must not be implemented by the Guardian reviewer binding');
   assert.throws(()=>unselectedBinding.select({modelRegistry:{find(){throw new Error('must not resolve a conversation fallback');}}}),/model is not selected/);
   const backendHandlers=new Map(),backendPi={on:(name,handler)=>{backendHandlers.set(name,handler);return()=>backendHandlers.delete(name);}};
   const previousProfile=process.env.PI_RUN_PROFILE_DIR;process.env.PI_RUN_PROFILE_DIR=profile;

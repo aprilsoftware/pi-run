@@ -37,12 +37,13 @@ internal evidence.
 
 - **Guard Runtime** owns reviewer-agent execution, reviewer resolution, bounded
   evidence dispatch, budgets, cancellation, decision transport, sequential
-  activity, status, and shared journal mechanics.
+  activity, status, shared presentation mechanics, and shared journal mechanics.
 - **Guardian** owns command policy, command actions, decision validation,
-  enforcement, and dispute handling.
+  enforcement, dispute handling, and Guardian-specific presentation data.
 - **CAF** owns disclosure policy, disclosure/search actions, decision validation,
-  friend interaction, and withholding while Guard review is On; while Guard is
-  Off it sends the same bounded actions directly without a reviewer decision.
+  friend interaction, CAF-specific presentation data, and withholding while
+  Guard review is On; while Guard is Off it sends the same bounded actions
+  directly without a reviewer decision.
 - **Primary agent** proposes work and CAF payloads but cannot approve its own
   disclosure while Guard review is On. With Guard Off, its bounded CAF payload
   is intentionally sent without independent review.
@@ -200,7 +201,10 @@ Existing Guardian commands remain compatible. CAF gains matching `/caf-mode`,
 non-TUI use, and tests. There is no `/caf-resume`: CAF has no global dispute
 latch. Changing the shared reviewer clearly states that it may receive bounded
 Guardian command and CAF confidentiality evidence. Opening selectors makes no
-provider call.
+provider call. Stateful presentation shared by registered Guard clients is
+Runtime-owned; clients provide bounded semantic view data rather than separate
+custom-dialog implementations. See
+[Guard Runtime presentation architecture](guard-runtime-presentation.md).
 
 ## Shared status surface
 
@@ -228,19 +232,25 @@ review/friend/research lease exists at a time.
 
 ## Journals and retained state
 
-Guardian and CAF retain separate `/guardian-log` and `/caf-log` views and
-`logs/<client>/runs/<run-id>.jsonl*`; there is no `/guard-log`. CAF journals
-continue to exclude payloads, policies, authorization text, evidence, answers,
-and search results while recording bounded hashes, sizes, stages, decisions,
-usage, duration, and whether an external request started. Guardian retains its
-documented private evidence diagnostics. Journal failure never changes review.
+Guardian and CAF retain separate `/guardian-log` and `/caf-log` semantic views
+and `logs/<client>/runs/<run-id>.jsonl*`; there is no `/guard-log`. The shared
+Runtime dialog owns interaction and rendering mechanics without combining the
+journals or interpreting client events. CAF journals continue to exclude
+payloads, policies, authorization text, evidence, answers, and search results
+while recording bounded hashes, sizes, stages, decisions, usage, duration, and
+whether an external request started. Guardian retains its documented private
+evidence diagnostics. Journal or presentation failure never changes review.
 
 Finalized CAF rounds remain branch-local and excluded from ordinary primary
 context. Guard investigation evidence is not persisted in CAF rounds.
 
 ## Implementation sequence
 
-Each stage requires separate approval and stops after validation:
+Each stage requires separate approval and stops after validation. The reviewer
+correction stages below remain historical. The subsequent presentation
+extraction and dependency cleanup are governed by
+[Guard Runtime presentation architecture](guard-runtime-presentation.md) and
+must not be folded into these completed stages.
 
 1. [x] Add the shared-review contract and fake-client tests while production
    paths remain unchanged.

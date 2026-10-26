@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: MIT
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import { createAgenticGuardReviewBackend } from "./guard-reviewer-agent.ts";
+import { createAgenticGuardReviewBackend, defaultGuardReviewerConfig, effectiveAgenticThinking, GUARD_REVIEWER_THINKING_LEVELS, resolveGuardReviewerConfig,
+  saveGuardReviewerConfig, supportedAgenticThinking, type AgenticThinking, type GuardReviewerConfig,
+  type ResolvedGuardReviewerConfig } from "./guard-reviewer-agent.ts";
+import { openGuardView, validateGuardViewRequest, type GuardViewRequestV1 } from "./guard-viewer.ts";
+export type { GuardViewRequestV1, GuardViewRowV1, GuardViewSectionV1, GuardViewSnapshotV1 } from "./guard-viewer.ts";
 
 export const GUARD_RUNTIME_KIND = "pi-run.guard-runtime";
 export const GUARD_RUNTIME_VERSION = 1 as const;
@@ -12,7 +16,7 @@ export const GUARD_REVIEW_RUNTIME_VERSION = 1 as const;
 export const GUARD_REVIEW_RUNTIME_AVAILABLE = "pi-run:guard-review-runtime:v1:available";
 export const GUARD_REVIEW_RUNTIME_DISCOVER = "pi-run:guard-review-runtime:v1:discover";
 
-export interface GuardClientRegistrationV1 { schemaVersion: 1; id: string; label: string; }
+export interface GuardClientRegistrationV1 { schemaVersion: 1; id: string; label: string; reviewerControl?: true; }
 export interface GuardReviewClientRegistrationV1 extends GuardClientRegistrationV1 {
   evidenceProfile: string;
   decisionContract: string;
@@ -55,6 +59,15 @@ export interface GuardReviewClientConnectionV1 {
 export interface GuardRuntimeOptions { reviewer?: GuardReviewBackendV1; }
 export type GuardReviewModeV1 = "unknown" | "on" | "off";
 export interface GuardActivityRequestV1 { schemaVersion: 1; state: string; detail?: string; right?: string; surface?: "guard" | "client"; }
+export interface GuardReviewerSettingsV1 {
+  schemaVersion: 1;
+  config: Readonly<GuardReviewerConfig>;
+  source: ResolvedGuardReviewerConfig["source"];
+  modelAvailable: boolean;
+  effectiveThinking: AgenticThinking;
+}
+export interface GuardReviewerControlRequestV1 { schemaVersion: 1; setting: "model" | "thinking"; value?: string; }
+export interface GuardReviewerControlResultV1 { schemaVersion: 1; status: "shown" | "applied" | "cancelled"; settings: Readonly<GuardReviewerSettingsV1>; }
 export interface GuardActivitySnapshotV1 extends GuardActivityRequestV1 { clientId: string; sequence: number; }
 export interface GuardActivityLeaseV1 {
   readonly clientId: string;
@@ -68,6 +81,10 @@ export interface GuardClientHandleV1 {
   active(): boolean;
   setBaseline(activity: GuardActivityRequestV1 | undefined): void;
   acquireActivity(activity: GuardActivityRequestV1, signal?: AbortSignal): Promise<GuardActivityLeaseV1>;
+  openView?(request: GuardViewRequestV1): Promise<void>;
+  closeView?(): void;
+  reviewerSettings?(): Promise<Readonly<GuardReviewerSettingsV1>>;
+  configureReviewer?(request: GuardReviewerControlRequestV1): Promise<Readonly<GuardReviewerControlResultV1>>;
   dispose(): void;
 }
 export interface GuardRuntimeV1 {
@@ -91,6 +108,10 @@ export interface GuardClientConnectionV1 {
   subscribeReviewMode(listener: (mode: GuardReviewModeV1) => void): () => void;
   setBaseline(activity: GuardActivityRequestV1 | undefined): void;
   acquireActivity(activity: GuardActivityRequestV1, signal?: AbortSignal): Promise<GuardActivityLeaseV1>;
+  openView(request: GuardViewRequestV1): Promise<void>;
+  closeView(): void;
+  reviewerSettings(): Promise<Readonly<GuardReviewerSettingsV1>>;
+  configureReviewer(request: GuardReviewerControlRequestV1): Promise<Readonly<GuardReviewerControlResultV1>>;
   dispose(): void;
 }
 type ConnectionCallbacks = { connected?(runtime: GuardRuntimeV1): void; error?(error: Error): void; };
@@ -128,10 +149,11 @@ function identifier(value: unknown): value is string {
 }
 function validateRegistration(value: GuardClientRegistrationV1): Readonly<GuardClientRegistrationV1> {
   if (!value || typeof value !== "object" || Array.isArray(value) ||
-      Object.keys(value).sort().join(",") !== "id,label,schemaVersion" || value.schemaVersion !== 1 ||
+      !["id,label,schemaVersion","id,label,reviewerControl,schemaVersion"].includes(Object.keys(value).sort().join(",")) || value.schemaVersion !== 1 ||
       typeof value.id !== "string" || !/^[a-z][a-z0-9-]{0,63}$/.test(value.id) ||
       typeof value.label !== "string" || value.label !== value.label.trim() || !value.label ||
-      value.label.length > 80 || /[\u0000-\u001f\u007f]/.test(value.label)) {
+      value.label.length > 80 || /[\u0000-\u001f\u007f]/.test(value.label) ||
+      (Object.hasOwn(value,"reviewerControl") && value.reviewerControl !== true)) {
     throw new Error("Invalid Guard Runtime client registration");
   }
   return Object.freeze({ ...value });
@@ -292,6 +314,16 @@ export function connectGuardClient(
     acquireActivity: (activity, signal) => handle?.active()
       ? handle.acquireActivity(activity, signal)
       : Promise.reject(new Error("Guard Runtime client is unavailable")),
+    openView: request => handle?.active() && handle.openView
+      ? handle.openView(request)
+      : Promise.reject(new Error("Guard Runtime viewer is unavailable")),
+    closeView() { if (handle?.active()) handle.closeView?.(); },
+    reviewerSettings: () => handle?.active() && handle.reviewerSettings
+      ? handle.reviewerSettings()
+      : Promise.reject(new Error("Guard Runtime reviewer settings are unavailable")),
+    configureReviewer: request => handle?.active() && handle.configureReviewer
+      ? handle.configureReviewer(request)
+      : Promise.reject(new Error("Guard Runtime reviewer controls are unavailable")),
     dispose() {
       if (disposed) return;
       disposed = true; handle?.dispose(); stopAvailable(); stopShutdown();
@@ -332,6 +364,7 @@ export function createGuardRuntimeExtension(options: GuardRuntimeOptions = {}) {
     throw new Error("Invalid Guard reviewer backend");
   }
   return function guardRuntime(pi: ExtensionAPI) {
+  const stateDir=process.env.PI_RUN_PROFILE_DIR||"/profile";
   const clients = new Map<string, ClientEntry>(), waiting: PendingActivity[] = [];
   const reviewClients = new Map<string, ReviewClientEntry>(), reviewWaiting: PendingReview[] = [];
   const baselines = new Map<string, { clientToken: symbol; order: number; snapshot: Readonly<GuardActivitySnapshotV1> }>();
@@ -343,6 +376,7 @@ export function createGuardRuntimeExtension(options: GuardRuntimeOptions = {}) {
   let statusRows:readonly Readonly<{id:string;activity:Readonly<GuardActivitySnapshotV1>}>[]=[], stopStatus: (() => void) | undefined;
   let current: { clientToken: symbol; leaseToken: symbol; snapshot: Readonly<GuardActivitySnapshotV1> } | undefined;
   let currentReview: { pending: PendingReview; controller: AbortController } | undefined;
+  let currentView: { clientToken: symbol; controller: AbortController } | undefined;
   const selectedBaseline = () => [...baselines.values()].sort((a, b) => b.order - a.order)[0]?.snapshot;
   const effectiveStatus = () => current?.snapshot ?? selectedBaseline();
   const effectiveStatusRows=():readonly Readonly<{id:string;activity:Readonly<GuardActivitySnapshotV1>}>[]=>{
@@ -429,8 +463,88 @@ export function createGuardRuntimeExtension(options: GuardRuntimeOptions = {}) {
     });
     if (!current) publishStatus();
   };
+  const closeView = (entry?: ClientEntry, reason = "Guard viewer closed") => {
+    if (!currentView || (entry && currentView.clientToken !== entry.token)) return;
+    const controller = currentView.controller; currentView = undefined;
+    controller.abort(new Error(reason));
+  };
+  const openView = (entry: ClientEntry, value: GuardViewRequestV1): Promise<void> => {
+    let request: GuardViewRequestV1;
+    try { request = validateGuardViewRequest(value); }
+    catch (cause) { return Promise.reject(error(cause)); }
+    if (closed || clients.get(entry.registration.id)?.token !== entry.token) {
+      return Promise.reject(new Error("Guard Runtime client is unavailable"));
+    }
+    if (currentView) return Promise.resolve();
+    const ctx = statusContext;
+    if (!ctx) return Promise.reject(new Error("Guard Runtime viewer context is unavailable"));
+    const controller = new AbortController(); currentView = { clientToken: entry.token, controller };
+    return openGuardView(ctx, { request, signal: controller.signal }).finally(() => {
+      if (currentView?.controller === controller) currentView = undefined;
+      controller.abort(new Error("Guard viewer finished"));
+    });
+  };
+  const resolvedReviewerSettings=(ctx:ExtensionContext,resolved:ResolvedGuardReviewerConfig):Readonly<GuardReviewerSettingsV1>=>{
+    const configured=resolved.config.model,slash=configured?.indexOf("/")??-1;
+    const model=configured&&slash>0?ctx.modelRegistry.find(configured.slice(0,slash),configured.slice(slash+1)):undefined,requested=resolved.config.thinking??"low";
+    return Object.freeze({schemaVersion:1,config:Object.freeze({...resolved.config}),source:resolved.source,modelAvailable:!!model,
+      effectiveThinking:model?effectiveAgenticThinking(model,requested):requested});
+  };
+  const reviewerSettings = async (entry:ClientEntry):Promise<Readonly<GuardReviewerSettingsV1>> => {
+    if(closed||clients.get(entry.registration.id)?.token!==entry.token)throw new Error("Guard Runtime client is unavailable");
+    const ctx=statusContext;if(!ctx)throw new Error("Guard Runtime reviewer context is unavailable");
+    const resolved=await resolveGuardReviewerConfig(stateDir);
+    if(closed||clients.get(entry.registration.id)?.token!==entry.token||statusContext!==ctx)throw new Error("Guard Runtime reviewer context changed");
+    return resolvedReviewerSettings(ctx,resolved);
+  };
+  const configureReviewer = async (entry:ClientEntry,value:GuardReviewerControlRequestV1):Promise<Readonly<GuardReviewerControlResultV1>> => {
+    if(closed||clients.get(entry.registration.id)?.token!==entry.token)throw new Error("Guard Runtime client is unavailable");
+    if(entry.registration.reviewerControl!==true)throw new Error("Guard Runtime reviewer controls are unavailable for this client");
+    if(!value||typeof value!=="object"||Array.isArray(value))throw new Error("Invalid Guard reviewer control request");
+    const hasValue=Object.hasOwn(value,"value"),keys=Object.keys(value).sort().join(",");
+    if(keys!==(hasValue?"schemaVersion,setting,value":"schemaVersion,setting")||value.schemaVersion!==1||
+      !["model","thinking"].includes(value.setting)||(hasValue&&(typeof value.value!=="string"||!value.value.trim()||value.value!==value.value.trim()||value.value.length>512||/[\u0000-\u001f\u007f]/.test(value.value))))
+      throw new Error("Invalid Guard reviewer control request");
+    const ctx=statusContext;if(!ctx)throw new Error("Guard Runtime reviewer context is unavailable");
+    let resolved:ResolvedGuardReviewerConfig;try{resolved=await resolveGuardReviewerConfig(stateDir);}catch{resolved={config:defaultGuardReviewerConfig(),source:"default"};}
+    if(closed||clients.get(entry.registration.id)?.token!==entry.token||statusContext!==ctx)throw new Error("Guard Runtime reviewer context changed");
+    const before=resolvedReviewerSettings(ctx,resolved),available=ctx.modelRegistry.getAvailable();let selected=value.value;
+    if(value.setting==="model"){
+      if(selected===undefined){
+        if(!ctx.hasUI)return Object.freeze({schemaVersion:1,status:"shown",settings:before});
+        const choices=[{value:"default",label:`No reviewer selected${!before.config.model?" [current]":""}`},...available.map(model=>({value:`${model.provider}/${model.id}`,label:`${model.provider}/${model.id}${before.config.model===`${model.provider}/${model.id}`?" [current]":""}`}))];
+        const answer=await ctx.ui.select("Guardian model",choices.map(choice=>choice.label));
+        if(statusContext!==ctx)throw new Error("Guard Runtime session changed during reviewer selection");
+        if(answer===undefined)return Object.freeze({schemaVersion:1,status:"cancelled",settings:before});
+        selected=choices.find(choice=>choice.label===answer)?.value;
+        if(!selected)throw new Error("Invalid Guard reviewer model selection");
+      }
+      if(selected!=="default"){const slash=selected.indexOf("/");if(slash<1||!ctx.modelRegistry.find(selected.slice(0,slash),selected.slice(slash+1)))throw new Error("Unknown model");}
+    }else{
+      const configured=before.config.model,slash=configured?.indexOf("/")??-1,model=configured&&slash>0?ctx.modelRegistry.find(configured.slice(0,slash),configured.slice(slash+1)):undefined;
+      const supported=model?supportedAgenticThinking(model):[...GUARD_REVIEWER_THINKING_LEVELS];
+      if(selected===undefined){
+        if(!ctx.hasUI)return Object.freeze({schemaVersion:1,status:"shown",settings:before});
+        const choices=[{value:"default",label:`Use Guard default — low${!before.config.thinking?" [current]":""}`},...supported.map(thinking=>({value:thinking,label:(thinking==="off"?"Off — review remains enabled":thinking[0].toUpperCase()+thinking.slice(1))+(before.config.thinking===thinking?" [current]":"")}))];
+        const answer=await ctx.ui.select("Guardian thinking",choices.map(choice=>choice.label));
+        if(statusContext!==ctx)throw new Error("Guard Runtime session changed during reviewer selection");
+        if(answer===undefined)return Object.freeze({schemaVersion:1,status:"cancelled",settings:before});
+        selected=choices.find(choice=>choice.label===answer)?.value;
+        if(!selected)throw new Error("Invalid Guard reviewer thinking selection");
+      }
+      if(selected!=="default"&&!supported.includes(selected as AgenticThinking))throw new Error("Thinking level not supported by this reviewer model");
+    }
+    const config:GuardReviewerConfig=value.setting==="model"?{...before.config,model:selected==="default"?null:selected!,schemaVersion:1}:
+      {...before.config,thinking:selected==="default"?null:selected as AgenticThinking,schemaVersion:1};
+    if(closed||clients.get(entry.registration.id)?.token!==entry.token||statusContext!==ctx)throw new Error("Guard Runtime reviewer context changed");
+    const changed=before.source!=="guard_file"||JSON.stringify(config)!==JSON.stringify(before.config);
+    if(changed)await saveGuardReviewerConfig(stateDir,config);
+    const settings=changed?resolvedReviewerSettings(ctx,{config,source:"guard_file"}):before;
+    return Object.freeze({schemaVersion:1,status:"applied",settings});
+  };
   const removeClient = (entry: ClientEntry) => {
     if (clients.get(entry.registration.id)?.token !== entry.token) return;
+    closeView(entry, "Guard Runtime client was disposed");
     clients.delete(entry.registration.id);
     if (baselines.get(entry.registration.id)?.clientToken === entry.token) baselines.delete(entry.registration.id);
     rejectWaiting(value => value.clientToken === entry.token, new Error("Guard Runtime client was disposed"));
@@ -453,6 +567,10 @@ export function createGuardRuntimeExtension(options: GuardRuntimeOptions = {}) {
         active: () => !closed && clients.get(registration.id)?.token === entry.token,
         setBaseline: activity => setBaseline(entry, activity),
         acquireActivity: (activity, signal) => acquire(entry, activity, signal),
+        openView: request => openView(entry, request),
+        closeView: () => closeView(entry),
+        reviewerSettings: () => reviewerSettings(entry),
+        configureReviewer: request => configureReviewer(entry,request),
         dispose: () => removeClient(entry),
       });
     },
@@ -615,21 +733,20 @@ export function createGuardRuntimeExtension(options: GuardRuntimeOptions = {}) {
     statusContext = undefined; statusRows=[];
   };
   const installStatus = (ctx: ExtensionContext) => {
-    clearStatus();
+    clearStatus(); statusContext = ctx;
     if (ctx.mode !== "tui") return;
     try {
-      statusContext = ctx;
       ctx.ui.setWidget("guard-runtime", (tui, theme) => {
         statusRedraw = () => tui.requestRender();
         return { render: (width: number) => renderGuardStatusRows(statusRows,width).map(line=>theme.fg("muted",line)), invalidate() {} };
       }, { placement: "belowEditor" });
       stopStatus = service.subscribeStatus(() => { statusRows = effectiveStatusRows(); statusRedraw?.(); });
-    } catch { clearStatus(); }
+    } catch { clearStatus(); statusContext=ctx; }
   };
-  pi.on("session_start", (_event, ctx) => {changeReviewMode("unknown");installStatus(ctx);});
-  pi.on("session_tree", (_event, ctx) => installStatus(ctx));
+  pi.on("session_start", (_event, ctx) => {closeView(undefined,"Guard session changed");changeReviewMode("unknown");installStatus(ctx);});
+  pi.on("session_tree", (_event, ctx) => {closeView(undefined,"Guard session changed");installStatus(ctx);});
   pi.on("session_shutdown", () => {
-    closed = true;
+    closeView(undefined,"Guard Runtime stopped");closed = true;
     rejectWaiting(() => true, new Error("Guard Runtime stopped"));
     for (const pending of [...reviewWaiting]) removeQueuedReview(pending, new Error("Guard review runtime stopped"));
     currentReview?.controller.abort(new Error("Guard review runtime stopped"));

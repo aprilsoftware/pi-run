@@ -6,7 +6,9 @@ PI_PACKAGE_DIR="${PI_PACKAGE_DIR:-$(npm root -g)/@earendil-works/pi-coding-agent
 node --input-type=module - "${ROOT}" "${PI_PACKAGE_DIR}" <<'NODE'
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
 
 const [root, piDir] = process.argv.slice(2);
@@ -19,6 +21,17 @@ const alias = {
 };
 const file = join(root, 'docker', 'extensions', 'guard-runtime.ts');
 const module = await createJiti(import.meta.url, { alias, fsCache: false }).import(file);
+const [runtimeSource,guardianSource,cafSource,dockerfile]=await Promise.all([
+  readFile(file,'utf8'),readFile(join(root,'docker','extensions','guardian-agent.ts'),'utf8'),readFile(join(root,'docker','extensions','caf-agent.ts'),'utf8'),readFile(join(root,'docker','Dockerfile'),'utf8'),
+]);
+assert.match(runtimeSource,/from "\.\/guard-viewer\.ts"/,'Only Guard Runtime may own the private viewer');
+assert.doesNotMatch(guardianSource,/\.ui\.custom\b|openGuardView|from "\.\/guard-viewer\.ts"/,'Guardian must supply semantics through the runtime contract');
+assert.match(dockerfile,/COPY extensions\/guard-viewer\.ts \/usr\/local\/lib\/node_modules\/guardian-agent\//);
+assert.match(guardianSource,/name:"guardian-model"/);assert.match(guardianSource,/name:"guardian-thinking"/);assert.match(guardianSource,/guardConnection\.configureReviewer/);
+assert.doesNotMatch(guardianSource,/saveGuardReviewerConfig/,'Guardian commands must persist reviewer settings through Guard Runtime');
+assert.doesNotMatch(runtimeSource,/registerCommand\(["']guard-(?:model|thinking)["']/,'Guard Runtime must not register reviewer commands');
+assert.doesNotMatch(guardianSource,/registerCommand\(["']guard-(?:model|thinking)["']/,'Guardian commands must keep their canonical names');
+assert.doesNotMatch(cafSource,/configureReviewer\b|registerCommand\(["']caf-(?:reviewer|guard)/,'CAF must not expose reviewer configuration controls');
 const { createEventBus } = await import(pathToFileURL(join(piDir, 'dist', 'core', 'event-bus.js')).href);
 const { loadExtensions } = await import(pathToFileURL(join(piDir, 'dist', 'core', 'extensions', 'loader.js')).href);
 const { visibleWidth } = await import(pathToFileURL(tuiPath).href);
@@ -43,6 +56,11 @@ function harness(bus) {
         await handler({ type: 'session_start', reason: 'startup' }, ctx);
       }
     },
+    async tree(ctx) {
+      for (const handler of [...(handlers.get('session_tree') ?? [])]) {
+        await handler({ type: 'session_tree' }, ctx);
+      }
+    },
     async shutdown(reason = 'reload') {
       for (const handler of [...(handlers.get('session_shutdown') ?? [])]) {
         await handler({ type: 'session_shutdown', reason }, {});
@@ -50,8 +68,8 @@ function harness(bus) {
     },
   };
 }
-function registration(id, label) {
-  return { schemaVersion: 1, id, label };
+function registration(id, label, reviewerControl = false) {
+  return { schemaVersion: 1, id, label, ...(reviewerControl ? { reviewerControl: true } : {}) };
 }
 function reviewRegistration(id, label, evidenceProfile = `${id}-evidence.v1`, decisionContract = `${id}-decision.v1`) {
   return { schemaVersion: 1, id, label, evidenceProfile, decisionContract };
@@ -90,6 +108,34 @@ const loadedReviewService = await discoverReview(loaderBus);
 assert.equal(loadedReviewService.kind, module.GUARD_REVIEW_RUNTIME_KIND);
 assert.equal(loadedReviewService.schemaVersion, 1);
 assert.equal(typeof loadedReviewService.registerClient, 'function');
+{
+  const profile=await mkdtemp(join(tmpdir(),'guard-runtime-controls-')),previousProfile=process.env.PI_RUN_PROFILE_DIR;
+  try{
+    process.env.PI_RUN_PROFILE_DIR=profile;await mkdir(join(profile,'guardian'),{mode:0o700});
+    await writeFile(join(profile,'guardian','config.json'),JSON.stringify({schemaVersion:2,model:'trusted/reviewer',thinking:'low'})+'\n',{mode:0o600});
+    const reviewerModel={provider:'trusted',id:'reviewer',api:'openai-responses',reasoning:false,contextWindow:128000,maxTokens:4096};
+    const context={mode:'json',hasUI:false,modelRegistry:{getAvailable:()=>[reviewerModel],find:(provider,id)=>provider==='trusted'&&id==='reviewer'?reviewerModel:undefined},ui:{}};
+    const bus=createEventBus(),runtime=harness(bus),guardianHarness=harness(bus),cafHarness=harness(bus);
+    module.createGuardRuntimeExtension()(runtime.pi);
+    const guardian=module.connectGuardClient(guardianHarness.pi,registration('guardian','Guardian',true));
+    const caf=module.connectGuardClient(cafHarness.pi,registration('caf','Call a Friend'));
+    await tick();await runtime.start(context);
+    let settings=await guardian.reviewerSettings();assert.deepEqual(settings.config,{schemaVersion:1,model:'trusted/reviewer',thinking:'low'});assert.equal(settings.source,'legacy_explicit');assert.equal(settings.modelAvailable,true);assert.equal(settings.effectiveThinking,'off');assert.equal(Object.isFrozen(settings),true);assert.equal(Object.isFrozen(settings.config),true);
+    let result=await guardian.configureReviewer({schemaVersion:1,setting:'model'});assert.equal(result.status,'shown');assert.equal(result.settings.source,'legacy_explicit');
+    result=await guardian.configureReviewer({schemaVersion:1,setting:'model',value:'trusted/reviewer'});assert.equal(result.status,'applied');assert.equal(result.settings.source,'guard_file');
+    assert.deepEqual(JSON.parse(await readFile(join(profile,'guard','config.json'),'utf8')),{schemaVersion:1,model:'trusted/reviewer',thinking:'low'});
+    settings=await caf.reviewerSettings();assert.deepEqual(settings.config,result.settings.config,'registered clients must observe the same Runtime-owned reviewer settings');
+    await assert.rejects(caf.configureReviewer({schemaVersion:1,setting:'model',value:'trusted/reviewer'}),/unavailable for this client/,'CAF must not mutate reviewer configuration');
+    await writeFile(join(profile,'guard','config.json'),'{invalid json\n',{mode:0o600});result=await guardian.configureReviewer({schemaVersion:1,setting:'model',value:'trusted/reviewer'});
+    assert.deepEqual(result.settings.config,{schemaVersion:1,model:'trusted/reviewer',thinking:null},'An explicit Guardian control must repair a malformed but safely replaceable configuration');
+    await assert.rejects(guardian.configureReviewer({schemaVersion:1,setting:'model',value:'missing/model'}),/Unknown model/);
+    await assert.rejects(guardian.configureReviewer({schemaVersion:1,setting:'thinking',value:'high'}),/not supported/);
+    const selections=[];const uiContext={...context,hasUI:true,ui:{select:async(title,choices)=>{selections.push({title,choices});return choices.find(choice=>choice.startsWith('Off'))}}};
+    await runtime.tree(uiContext);result=await guardian.configureReviewer({schemaVersion:1,setting:'thinking'});assert.equal(result.status,'applied');assert.equal(result.settings.config.thinking,'off');assert.deepEqual(selections.map(item=>item.title),['Guardian thinking']);
+    await assert.rejects(guardian.configureReviewer({schemaVersion:1,setting:'thinking',value:' high'}),/Invalid Guard reviewer control request/);
+    await runtime.shutdown();await assert.rejects(guardian.reviewerSettings(),/unavailable/);
+  }finally{if(previousProfile===undefined)delete process.env.PI_RUN_PROFILE_DIR;else process.env.PI_RUN_PROFILE_DIR=previousProfile;await rm(profile,{recursive:true,force:true});}
+}
 {
   const bus = createEventBus(), client = harness(bus), runtime = harness(bus);
   let connected = 0;
@@ -399,6 +445,57 @@ assert.equal(typeof loadedReviewService.registerClient, 'function');
   await runtime.shutdown();
   assert.equal(service.status(), undefined, 'Shutdown clears passive client status');
   assert.equal(widgets.size, 0, 'Shutdown removes the shared status widget');
+}
+{
+  const bus=createEventBus(),runtime=harness(bus),guardianHarness=harness(bus),cafHarness=harness(bus);
+  module.default(runtime.pi);
+  let component,finish,customCalls=0,loads=0,details=0;
+  const tui={terminal:{rows:24},requestRender(){}};
+  const theme={fg:(_role,text)=>text,bg:(_role,text)=>text};
+  const ctx={mode:'tui',hasUI:true,ui:{setWidget(){},custom(factory){customCalls++;return new Promise(resolve=>{
+    finish=value=>{component?.dispose?.();resolve(value);};component=factory(tui,theme,{},finish);component.focused=true;
+  });},notify(){throw new Error('TUI viewer must not use notify');}}};
+  await runtime.start(ctx);
+  const guardian=module.connectGuardClient(guardianHarness.pi,registration('guardian','Guardian'));
+  const caf=module.connectGuardClient(cafHarness.pi,registration('caf','Call a Friend'));
+  const request={schemaVersion:1,title:'Fixture activity · UTC',compactTitle:'Fixture activity',wideHeader:'  Time  Outcome',fallbackText:'fixture journals',
+    unavailableText:'Fixture viewer unavailable.',emptyText:'Nothing retained.',noMatchesText:'No matches.',
+    missingSelectionText:'Selected fixture is no longer retained.',incompleteNoticeText:'fixture view may be incomplete',
+    sections:[{id:'summary',label:'Summary'},{id:'timeline',label:'Timeline'}],
+    async load(){loads++;return {schemaVersion:1,loadedAt:'2026-04-01T12:00:00.000Z',notices:[],rows:[
+      {id:'one',wide:'12:00:00  ALLOW  first fixture',compact:'12:00 ALLOW · first fixture',searchText:'allow first fixture'},
+      {id:'two',wide:'12:01:00  ASK    second fixture',compact:'12:01 ASK · second fixture',searchText:'ask second fixture'},
+    ]};},details(rowId,sectionId){details++;return [`${sectionId} for ${rowId}`,'bounded detail'];}};
+  let firstSettled=false;const first=guardian.openView(request).finally(()=>{firstSettled=true;});await tick();
+  assert.equal(customCalls,1);assert.equal(loads,1);assert.match(component.render(100).join('\n'),/Fixture activity · UTC/);
+  assert.match(component.render(100).join('\n'),/Time  Outcome/);
+  component.handleInput('/');for(const character of 'second')component.handleInput(character);component.handleInput('\r');
+  assert.doesNotMatch(component.render(100).join('\n'),/first fixture/);assert.match(component.render(100).join('\n'),/second fixture/);
+  component.handleInput('r');await tick();assert.equal(loads,2);component.handleInput('\r');
+  assert.match(component.render(100).join('\n'),/summary for two/);assert.equal(details,1);
+  component.handleInput('\t');assert.match(component.render(100).join('\n'),/timeline for two/);
+  assert.equal(details,2);assert.match(component.render(10)[0],/Fixture/);assert.ok(visibleWidth(component.render(10)[0])<=10);
+  await caf.openView({...request,title:'Must not stack'});assert.equal(customCalls,1,'Only one Guard-owned viewer may be active');
+  caf.closeView();await tick();assert.equal(firstSettled,false,'A client cannot close another client\'s viewer');
+  guardian.closeView();await first;assert.equal(firstSettled,true);
+  const second=guardian.openView(request);await tick();assert.equal(customCalls,2);await runtime.tree(ctx);await second;
+  assert.equal(component.render(100).length,0,'Changing the session tree closes and disposes the viewer');
+  const third=guardian.openView(request);await tick();assert.equal(customCalls,3);guardian.dispose();await third;
+  assert.equal(component.render(100).length,0,'Disposing the owner closes and disposes its viewer');
+  for(const invalid of [{...request,schemaVersion:2},{...request,sections:[]},{...request,title:'bad\ncontrol'}]){
+    await assert.rejects(caf.openView(invalid),/Invalid Guard view/);
+  }
+  await runtime.shutdown();
+}
+{
+  const bus=createEventBus(),runtime=harness(bus),clientHarness=harness(bus),messages=[];
+  module.default(runtime.pi);await runtime.start({mode:'print',hasUI:false,ui:{notify(message,kind){messages.push([message,kind]);}}});
+  const client=module.connectGuardClient(clientHarness.pi,registration('guardian','Guardian'));
+  await client.openView({schemaVersion:1,title:'Print fixture',compactTitle:'Print fixture',fallbackText:'fixture journals path',unavailableText:'unavailable',
+    emptyText:'empty',noMatchesText:'none',missingSelectionText:'missing',incompleteNoticeText:'incomplete',
+    sections:[{id:'summary',label:'Summary'}],async load(){throw new Error('non-TUI must not read the journal');},details(){return [];}});
+  assert.deepEqual(messages,[['fixture journals path','info']]);
+  await runtime.shutdown();
 }
 {
   for (const mode of ['print', 'json', 'rpc']) {

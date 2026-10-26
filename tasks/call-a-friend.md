@@ -63,11 +63,14 @@ Guard Runtime
 
 The Guard Runtime owns private reviewer execution, provider resolution, bounded
 evidence and budgets, cancellation, decision validation, arbitration primitives,
-one status surface, namespaced journal infrastructure, and lifecycle cleanup.
-A client owns its trigger, policy, decision meaning, reviewed action, evidence,
-configuration, enforcement, and rendering. The runtime returns a decision but
-never performs the action. This is trusted-extension coordination, not an
-operating-system boundary.
+shared presentation mechanics, one status surface, namespaced journal
+infrastructure, and lifecycle cleanup. A client owns its trigger, policy,
+decision meaning, reviewed action, evidence, configuration, enforcement, and
+semantic presentation data. It does not own a duplicate implementation of a
+shared Guard dialog. The runtime returns a decision but never performs the
+action. This is trusted-extension coordination, not an operating-system
+boundary. The corrected presentation boundary is defined in
+[Guard Runtime presentation architecture](guard-runtime-presentation.md).
 
 ## Ordinary-client requirement
 
@@ -79,6 +82,7 @@ to another trusted client. The contract needs operations equivalent to:
 registerClient(...)
 review(...)
 beginActivity(...)
+openView(...)
 createJournal(...)
 ```
 
@@ -129,7 +133,8 @@ preceding baseline. The runtime serializes reviews. The primary must issue
 ## Journals and profile layout
 
 The runtime supplies one logging implementation, not one combined journal or
-command. Guardian and CAF retain separate views:
+command. Guardian and CAF retain separate semantic views presented through one
+Runtime-owned dialog implementation:
 
 ```text
 /guardian-log
