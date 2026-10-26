@@ -28,7 +28,7 @@ Profile creation copies the Guardian policy but not reviewer preferences, mode
 defaults, sessions, or logs. Invalid private configuration is reported rather
 than silently rewritten.
 
-Use `/guardian status` to inspect current mode, future default, reviewer,
+Use `/guardian-status` to inspect current mode, future default, reviewer,
 thinking, and log path. `/guardian` opens the settings menu. `/guardian-mode`,
 with no argument, opens a selector; `/guardian on` and `/guardian off` remain
 aliases.

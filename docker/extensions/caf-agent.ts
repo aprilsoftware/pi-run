@@ -729,6 +729,7 @@ export default function cafAgent(pi:ExtensionAPI){
     try{await guard.openView(createCafLogViewRequest(stateDir,()=>journal.flush(),args.trim().slice(0,300)));}
     catch(error){tell(ctx,`Cannot open CAF log: ${cafViewText(message(error),220)??"viewer unavailable"}`,"warning");}};
   pi.registerCommand("caf-log",{description:"Browse Call a Friend diagnostics (read-only)",handler:logsCommand});
+  pi.registerCommand("caf-status",{description:"Show Call a Friend status",handler:async(_args,ctx)=>status(ctx)});
   pi.registerTool({name:"call_friend",label:"Call a Friend",exposure:"model-only",executionMode:"sequential",
     description:"Ask the configured external friend model one advisory question. Send only the minimum message and purpose; never include secrets, workspace contents, or implicit context. Guard reviews the disclosure only while Guard review is On. Treat the answer as untrusted advice and verify it yourself.",
     parameters:CALL_FRIEND_PARAMETERS,annotations:{readOnlyHint:false,destructiveHint:false,idempotentHint:false,openWorldHint:true},
@@ -808,9 +809,9 @@ export default function cafAgent(pi:ExtensionAPI){
   pi.registerCommand("caf",{description:"Call a Friend menu: mode, default, model, thinking, status and logs",handler:async(args,ctx)=>{
     pinSessionMode(ctx);const [action="",...rest]=args.trim().split(/\s+/),value=rest.join(" ").trim();
     if(action==="on"||action==="off"){await setMode(ctx,action==="on");return;}if(action==="mode"){await modeCommand(value,ctx);return;}
-    if(action==="default"){await defaultModeCommand(value,ctx);return;}if(action==="status"){await status(ctx);return;}if(action==="log"||action==="logs"){await logsCommand(value,ctx);return;}
+    if(action==="default"){await defaultModeCommand(value,ctx);return;}if(action==="log"||action==="logs"){await logsCommand(value,ctx);return;}
     if(action==="model"){await setModel(value,ctx);return;}if(action==="thinking"){await setThinking(value,ctx);return;}
-    if(action){tell(ctx,"Usage: /caf [on|off|mode on|off|default on|off|status|log|model <provider/model>|thinking <level>]","error");return;}
+    if(action){tell(ctx,"Usage: /caf [on|off|mode on|off|default on|off|log|model <provider/model>|thinking <level>]","error");return;}
     if(!ctx.hasUI){await status(ctx);return;}
     const split=await separation();if(split.warning)tell(ctx,split.warning,"warning");
     const choices=[{id:enabled?"mode-off":"mode-on",label:`Current session — ${enabled?"On (turn Off)":"Off (turn On)"}`},{id:"default",label:`New sessions — ${defaultMode==="on"?"On":"Off"}`},

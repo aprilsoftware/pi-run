@@ -145,7 +145,7 @@ the source has one. Profiles without a CAF policy remain valid and are not
 modified automatically. The policy defines profile-specific external-disclosure
 priorities; it does not enable CAF or grant external access. CAF loads the
 optional policy as a bounded private regular file and reports only its source,
-not its contents, through `/caf status`. Unsafe or malformed policy prevents the
+not its contents, through `/caf-status`. Unsafe or malformed policy prevents the
 guarded path rather than being silently ignored; Guard Off does not apply the
 review policy because no reviewer request occurs.
 
@@ -212,7 +212,7 @@ or CAF mode during active work cancels it without retrying under the new mode.
 
 Successful answers, question requests, and bounded research evidence are stored
 as finalized branch-local session metadata while the tool result supplies the
-response to the primary model. `/caf status` reports whether explicitly
+response to the primary model. `/caf-status` reports whether explicitly
 configured public-web research is available, reconstructs only finalized CAF
 rounds on the selected branch, marks a pending consultation as awaiting the
 primary or at its round limit, and reports malformed state as unavailable.

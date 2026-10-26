@@ -1804,14 +1804,15 @@ export function createGuardianExtension(factory: ReviewerFactory = createPiRevie
     pi.registerCommand("guardian-default", { description: "Set shared Guard review for genuinely new sessions", handler: defaultModeCommand });
     pi.registerCommand("guardian-resume", { description: "Clear the current dispute without authorizing an action", handler: resumeCommand });
     pi.registerCommand("guardian-log", { description: "Browse recorded guardian reviews (read-only)", handler: logsCommand });
-    pi.registerCommand("guardian", { description: "Guard menu: review mode, model, thinking and logs", handler: async (args, ctx) => {
+    pi.registerCommand("guardian-status", { description: "Show Guard review status", handler: async (_args,ctx) => shortStatus(ctx) });
+    pi.registerCommand("guardian", { description: "Guard menu: review mode, model, thinking, status and logs", handler: async (args, ctx) => {
       try {pinSessionMode(ctx);
         const value = args.trim().toLowerCase();
         if (["on", "off"].includes(value)) { await setMode(ctx, value === "on"); return; }
         if(value.startsWith("default ")){await defaultModeCommand(value.slice(8),ctx);return;}
         if (value === "log" || value === "logs") { await logsCommand("", ctx); return; }
-        if (value === "status" || !ctx.hasUI) { shortStatus(ctx); return; }
-        if (value) { tell(ctx, "Usage: /guardian [on|off|default on|off|status|log]"); return; }
+        if (!value && !ctx.hasUI) { shortStatus(ctx); return; }
+        if (value) { tell(ctx, "Usage: /guardian [on|off|default on|off|log]"); return; }
         // No status dump, trace counts or last-error wall of text. The first menu
         // item can always toggle reviewing, even if the selected model is invalid.
         const choices = [
@@ -1819,6 +1820,7 @@ export function createGuardianExtension(factory: ReviewerFactory = createPiRevie
           {id:"guardian-default",label:`New sessions — ${defaultMode==="on"?"On":"Off"}`},
           ...(dispute?[{id:"guardian-resume",label:"Resume — clear dispute without authorization"}]:[]),
           ...reviewerControls.map(c => ({ id: c.name, label: c.label ?? c.name.replace(/^guardian-/, "") })),
+          { id: "guardian-status", label: "Status" },
           { id: "guardian-log", label: "Logs" },
           { id: "close", label: "Close" },
         ];
@@ -1829,6 +1831,7 @@ export function createGuardianExtension(factory: ReviewerFactory = createPiRevie
         if (id === "mode-on" || id === "mode-off") { await setMode(ctx, id === "mode-on"); return; }
         if(id==="guardian-default"){await defaultModeCommand("",ctx);return;}
         if (id === "guardian-resume") { await resumeCommand("",ctx); return; }
+        if (id === "guardian-status") { shortStatus(ctx); return; }
         if (id === "guardian-log") { await logsCommand("", ctx); return; }
         const control = reviewerControls.find(c => c.name === id);
         if (control) await control.handler("", ctx);
@@ -1836,7 +1839,7 @@ export function createGuardianExtension(factory: ReviewerFactory = createPiRevie
     }});
     // Only the active implementation contributes settings. A specialized reviewer
     // can expose no settings at all; the execution gate remains identical.
-    const commandNames = new Set(["guardian", "guardian-mode", "guardian-default", "guardian-resume", "guardian-log"]);
+    const commandNames = new Set(["guardian", "guardian-mode", "guardian-default", "guardian-resume", "guardian-log", "guardian-status"]);
     for (const control of reviewerControls) {
       if (!/^guardian-[a-z][a-z0-9-]*$/.test(control.name) || commandNames.has(control.name)) throw new Error("Invalid or duplicate reviewer control");
       commandNames.add(control.name);

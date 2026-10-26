@@ -151,11 +151,14 @@ async function runScenario(name: Scenario, realUI?: ExtensionUIContext, withRunt
 
     if (name === "allow"&&withRuntime) {
       assert.ok(commands.has("guardian-default"),"Guardian must expose a dedicated new-session default command");
+      assert.ok(commands.has("guardian-status"),"Guardian must expose a dedicated autocomplete-visible status command");
+      await commands.get("guardian-status")!.handler("",ctx);assert.match(notices.at(-1)!,/Guard review · On/);
+      await commands.get("guardian")!.handler("status",ctx);assert.match(notices.at(-1)!,/Usage: \/guardian/);
       await commands.get("guardian-log")!.handler("forced",ctx);
       assert.equal(viewerCalls,1,"Guardian must open logs through the shared runtime viewer");
       assert.match(viewerText,/Guardian reviews · all retained sessions · UTC/);
       assert.match(viewerText,/Read-only · not a confirmation|log read warning/);
-      (ctx.ui as any).select=async(title:string,choices:string[])=>{assert.match(title,/Guard review — On/);for(const label of ["Current session — On (turn Off)","New sessions — Off","Logs","Close"])assert.ok(choices.includes(label),label);return "Close";};
+      (ctx.ui as any).select=async(title:string,choices:string[])=>{assert.match(title,/Guard review — On/);for(const label of ["Current session — On (turn Off)","New sessions — Off","Status","Logs","Close"])assert.ok(choices.includes(label),label);return "Close";};
       await commands.get("guardian")!.handler("",ctx);
       branch=[userEntry];await dispatch("session_tree",{type:"session_tree"});
       assert.equal((await invoke())?.block,undefined,"Branch navigation must retain session-wide mode");

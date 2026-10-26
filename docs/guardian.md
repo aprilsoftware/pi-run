@@ -39,7 +39,7 @@ the selected profile's new-session default was deliberately changed. Check the
 current mode and reviewer:
 
 ```text
-/guardian status
+/guardian-status
 ```
 
 Open the complete settings menu:

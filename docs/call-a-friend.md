@@ -77,7 +77,7 @@ and non-TUI sessions:
 /caf-default on|off
 /caf-model <provider/model>
 /caf-thinking <default|off|minimal|low|medium|high|xhigh|max>
-/caf status
+/caf-status
 /caf-log
 ```
 
@@ -139,7 +139,7 @@ true:
 
 Use the bundled web-search configuration UI to select a provider, or configure
 one explicit `provider` or `searchProvider` in the profile's
-`web-search.json`. `/caf status` reports the provider loaded at session start.
+`web-search.json`. `/caf-status` reports the provider loaded at session start.
 
 The friend may request one `caf_web_search({ query, purpose })`. CAF pauses the
 friend and validates the exact query, purpose, and search-provider destination.
@@ -173,7 +173,7 @@ activity. During friend or search work, the CAF row shows that activity. Narrow
 terminals retain role and state before truncating model details. Non-TUI sessions
 have no widget. Presentation failure never changes mode, review, or transmission.
 
-`/caf status` gives detailed readiness, configuration, Guard mode, policy,
+`/caf-status` gives detailed readiness, configuration, Guard mode, policy,
 research, and branch-state information without contacting either model.
 
 ## Branch state and resume
