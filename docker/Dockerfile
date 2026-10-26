@@ -94,6 +94,12 @@ RUN apt-get update \
         gdb \
         pkg-config \
         \
+        # Rust
+        rustc \
+        cargo \
+        rustfmt \
+        rust-clippy \
+        \
         # Flutter Linux development dependencies
         libgtk-3-dev \
         libglu1-mesa \
@@ -269,6 +275,10 @@ RUN set -eux; \
     clang --version; \
     cmake --version; \
     ninja --version; \
+    rustc --version; \
+    cargo --version; \
+    rustfmt --version; \
+    cargo clippy --version; \
     kubectl version --client; \
     helm version --short; \
     kustomize version; \
