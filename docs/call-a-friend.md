@@ -189,11 +189,16 @@ fail closed.
 
 ## Diagnostics
 
-`/caf-log` shows bounded recent diagnostics merged from private per-run shards:
+`/caf-log` shows bounded recent diagnostics merged from Pi sessions belonging
+to the current workspace:
 
 ```text
-<profile>/logs/caf/runs/<run-id>.jsonl*
+<profile>/logs/<workspace-id>/<session-id>/caf.jsonl*
 ```
+
+A resumed session appends to the same file. Unusually large individual files
+rotate locally; there is no profile-wide journal pruning or completion marker.
+Existing v0.9.x run journals remain untouched and are not read.
 
 Records include operation identities, destinations, whether the path used Guard
 review, outcomes, byte counts, SHA-256 payload hashes, usage, duration, and
@@ -202,8 +207,8 @@ authorization evidence, answers, search results, credentials, workspace
 content, and private Guard evidence. Hashes still permit equality correlation
 and can confirm guesses about low-entropy content.
 
-CAF and Guardian use the same journal implementation but separate namespaces and
-commands. There is no `/guard-log`. Journal or presentation failure never
+CAF and Guardian use the same journal implementation but separate fixed streams
+and commands. There is no `/guard-log`. Journal or presentation failure never
 changes review, transmission, or tool-result behavior.
 
 ## Current limits

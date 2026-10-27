@@ -122,13 +122,12 @@ profiles/<name>/
 │   ├── config.json          # optional legacy reviewer preference
 │   └── mode.json
 ├── logs/
-│   ├── caf/
-│   │   └── runs/
-│   │       └── <run-id>.jsonl*
-│   └── guardian/
-│       └── runs/
-│           └── <run-id>.jsonl*
+│   └── <workspace-id>/
+│       └── <session-id>/
+│           ├── caf.jsonl*
+│           └── guardian.jsonl*
 └── sessions/
+    └── <workspace-id>/
 ```
 
 `profile.json`, `AGENTS.md`, and `guardian/guardian.md` must be regular,
@@ -218,10 +217,10 @@ rounds on the selected branch, marks a pending consultation as awaiting the
 primary or at its round limit, and reports malformed state as unavailable.
 
 CAF diagnostics use the shared journal implementation but remain separate from
-Guardian under `logs/caf/runs/<run-id>.jsonl*`. `/caf-log` merges a bounded set
-of active and completed CAF shards and presents recent review, friend, search,
-persistence, cancellation, and failure events. There is no combined
-`/guard-log`.
+Guardian under `logs/<workspace-id>/<session-id>/caf.jsonl*`. `/caf-log` merges
+a bounded set of CAF session streams from the current workspace and presents
+recent review, friend, search, persistence, cancellation, and failure events.
+There is no combined `/guard-log`.
 
 CAF journal records contain operation and session identifiers, destinations,
 outcomes, byte counts, SHA-256 payload hashes, bounded usage, duration, and
@@ -229,19 +228,20 @@ research-result counts. They do not contain exact messages, purposes, queries,
 policies, authorization evidence, friend answers, search results, credentials,
 or workspace content. Hashes permit equality correlation and do not constitute
 a confidentiality guarantee. Exact finalized exchanges remain branch-local
-session metadata. Clean shutdown creates a completion marker and runs best-effort
-retention targeting 64 MiB and 128 completed run groups. Journal write, read,
-presentation, completion, or retention failure never changes CAF review,
-release, or tool-result behavior. Legacy Guardian logs are neither read nor
-migrated.
+session metadata. A resumed session appends to its fixed CAF stream, and only an
+unusually large individual file rotates. There is no completion marker,
+profile-wide pruning, or retention lock. Journal write, read, or presentation
+failure never changes CAF review, release, or tool-result behavior. Existing
+v0.9.x Guardian and CAF run journals are neither read nor migrated.
 
 ### Current CAF limits
 
 CAF has native Pi lifecycle coverage using fake primary, friend, and search
 providers. That coverage includes branch restoration, reviewed continuation,
-nested search, session-context exclusion, journal completion, and process-local
-resume. It is not evidence of interoperability with every real provider or of
-provider-side confidentiality, retention, or tool-call behavior.
+nested search, session-context exclusion, session-journal append on resume, and
+process-local lifecycle handling. It is not evidence of interoperability with
+every real provider or of provider-side confidentiality, retention, or
+tool-call behavior.
 
 CAF remains application-level orchestration rather than a sandbox. The shared
 Guard reviewer and primary model can make mistakes, unreviewed CAF deliberately

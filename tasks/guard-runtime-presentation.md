@@ -63,7 +63,7 @@ CAF client
 └── CAF presentation model
 
 Guard Journal
-└── storage, reading, retention, permissions, and concurrency only
+└── storage, reading, rotation, permissions, and concurrency only
 ```
 
 ### Guard Runtime owns presentation mechanics
@@ -119,11 +119,10 @@ Runtime provides interaction and rendering.
 
 `guard-journal.ts` owns:
 
-- per-run writing and completion markers;
-- bounded reading and deterministic merge order;
-- retention and maintenance locking;
+- session-owned Guardian and CAF streams with bounded per-file rotation;
+- bounded current-workspace reading and deterministic merge order;
 - regular-file, ownership, mode, and link checks; and
-- concurrency behavior.
+- session-writer concurrency behavior.
 
 It must not import Pi TUI, create overlays, define navigation, or understand
 Guardian/CAF events. A journal snapshot is storage data, not a view model.
@@ -175,7 +174,7 @@ The contract must bound at least:
 
 Snapshot and detail validation failures close or withhold the viewer with a
 bounded diagnostic. They never change mode, complete a review, release an
-action, send a CAF payload, or alter journal retention.
+action, send a CAF payload, or alter journal storage.
 
 ## Lifecycle and concurrency
 
@@ -242,7 +241,8 @@ Each stage is independently reviewed, implemented, validated, and stopped:
 1. [x] Add the bounded runtime presentation contract and private generic viewer;
    migrate Guardian without changing visible behavior.
 2. [x] Add the CAF journal adapter and route `/caf-log` through the same runtime
-   viewer; retain old journal compatibility and privacy.
+   viewer while preserving journal privacy. A later storage correction removed
+   compatibility reading in favor of session-owned, workspace-viewed journals.
 3. [x] Add cross-client presentation contract tests and harmonize log loading,
    refresh, search, bounds, and non-TUI behavior.
 4. [x] Extract shared evidence machinery so CAF no longer imports Guardian.

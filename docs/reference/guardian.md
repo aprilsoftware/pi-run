@@ -190,8 +190,8 @@ task or change operating-system permissions.
 
 ## Retained review logs
 
-`/guardian-log` opens a read-only browser of retained review attempts across the
-selected profile's sessions. `/guardian log` is an alias, and
+`/guardian-log` opens a read-only browser of retained review attempts across Pi
+sessions belonging to the current workspace. `/guardian log` is an alias, and
 `/guardian-log <search terms>` applies an initial filter. Calls skipped while
 Guardian was Off and raw diagnostic-only records do not appear as reviews.
 
@@ -216,16 +216,20 @@ missing conversation content, or reconstruct data no longer retained. It
 requires Pi's terminal UI. Opening a dispute closes the log browser so its reason
 is not obscured.
 
-Each Pi process writes its own bounded run journal under
-`logs/guardian/runs/<run-id>.jsonl*`, with up to two rotated segments at about
-1 MiB each. Concurrent sessions do not share a writer lock. `/guardian-log`
-reads these runs chronologically. After a clean run closure, best-effort
-retention targets 64 MiB and 128 run groups by pruning completed runs oldest
-first. Active, incomplete, and unsafe files are not automatically removed, so
-the aggregate can temporarily exceed those targets.
-Rotation, partial writes, process interruption, display limits, missing tool
-results, and logging failures can create gaps. Logging or retention failure does
-not alter a review decision or dispute state.
+Each Pi session writes its bounded Guardian stream under
+`logs/<workspace-id>/<session-id>/guardian.jsonl`, with up to two rotated
+segments at about 1 MiB each. A resumed session appends to the same file, and
+`/guardian-log` merges Guardian streams from the current workspace
+chronologically. Separate sessions do not share a writer lock. Concurrently
+resuming the same saved session has the same unsupported file-writing semantics
+as Pi's session file itself; the journal adds no separate lock.
+
+Rotation applies only to an unusually large individual session file. There is
+no profile-wide pruning, completion marker, or retention lock. Existing v0.9.x
+run journals remain untouched and are not read. Rotation, partial writes,
+process interruption, display limits, missing tool results, and logging failures
+can create gaps. Logging failure does not alter a review decision or dispute
+state.
 
 Treat logs as private. They can contain commands, paths, selected conversation
 text, evidence excerpts, model details, and errors. Redaction is best effort,

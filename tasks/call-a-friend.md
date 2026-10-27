@@ -152,13 +152,12 @@ profiles/<name>/
 │   ├── caf.md
 │   └── config.json
 ├── logs/
-│   ├── guardian/
-│   │   └── runs/
-│   │       └── <run-id>.jsonl*
-│   └── caf/
-│       └── runs/
-│           └── <run-id>.jsonl*
+│   └── <workspace-id>/
+│       └── <session-id>/
+│           ├── guardian.jsonl*
+│           └── caf.jsonl*
 └── sessions/
+    └── <workspace-id>/
 ```
 
 Definition and configuration remain client-owned; mutable journals live under
@@ -176,26 +175,26 @@ stores bounded diagnostics such as decisions, payload hashes or excerpts,
 destination identity, research operations, usage, duration, and failure. It is
 not a second complete transcript or search-result store.
 
-### Concurrent writers and retention
+### Session writers and rotation
 
-The journal hot path has no profile-wide writer lock. Every Pi process gets
-a random run ID and is the only writer and rotator of its bounded journal
-segments. A resumed session uses a new run ID, so uncertain process overlap
-cannot create two writers for one file. Events retain run, process, and session
-identities. `/guardian-log` and `/caf-log` validate their own regular files and
-merge completed and active segments chronologically, using per-run sequence as
-a deterministic tie-breaker.
+Guardian and CAF each write a fixed stream inside the active Pi session's log
+directory. A resumed session appends to the same file. Different sessions write
+different files without a profile-wide writer lock; concurrent resume of one
+saved session follows Pi's existing unsupported concurrent session-file writing
+semantics rather than adding journal-specific locking. Events retain writer,
+process, workspace, and session identities. `/guardian-log` and `/caf-log`
+validate their own regular files and merge session streams from the current
+workspace chronologically.
 
-Profile-wide retention cleanup uses a separate best-effort maintenance lock.
-Contention can postpone cleanup but must never block or drop journal writes.
-Per-run limits prevent one writer from growing without bound; aggregate usage
-may temporarily exceed its retention target until a later cleanup succeeds.
-Unsafe ownership, links, unexpected file types, and redirected directories fail
-closed. Activity leases and status remain process-local and never coordinate
-unrelated Pi-Run sessions through the profile filesystem.
+Only unusually large individual session files rotate. There is no completion
+marker, profile-wide pruning, or maintenance lock. Unsafe ownership, links,
+unexpected file types, and redirected directories fail closed. Activity leases
+and status remain process-local and never coordinate unrelated Pi-Run sessions
+through the profile filesystem.
 
-Old shared Guardian logs are non-vital diagnostics and are intentionally not
-read or migrated. The per-run layout does not change schema 1 in `profile.json`.
+Existing v0.9.x run journals are non-vital diagnostics and are intentionally
+left untouched, unread, and unmigrated. The journal layout does not change
+schema 1 in `profile.json`.
 
 ## CAF conversation protocol
 
@@ -290,7 +289,8 @@ Each stage was implemented through a separate approved increment:
 1. [x] Define the versioned Guard Runtime/client contract and tests.
 2. [x] Extract common mechanics while preserving Guardian behavior.
 3. [x] Register Guardian command review as an ordinary client and prove parity.
-4. [x] Use namespaced per-run logs without legacy-log migration.
+4. [x] Use separate Guardian and CAF diagnostics without legacy-log migration;
+   the later session-journal correction made them session-owned and workspace-viewed.
 5. [x] Add isolated CAF configuration and conversation without network calls.
 6. [x] Add reviewed friend dialogue and `caf_ask_primary`.
 7. [x] Add one reviewed `caf_web_search` operation with bounded source results.
