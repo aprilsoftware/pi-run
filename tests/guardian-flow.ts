@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext, ExtensionUIContext, ToolCallEventResult } from "@earendil-works/pi-coding-agent";
 import guardRuntime, { GUARD_RUNTIME_DISCOVER, type GuardRuntimeV1 } from "../docker/extensions/guard-runtime.ts";
-import { createGuardianExtension, createGuardianLogViewRequest, createLogger, loadGuardianModeConfig, parseGuardianConfig, parseGuardianModeConfig, readGuardianLogs, saveGuardianModeConfig, type ReviewDecision } from "../docker/extensions/guardian-agent.ts";
+import { createGuardianExtension, createGuardianLogViewRequest, createLogger, loadGuardianModeConfig, parseGuardianConfig, parseGuardianModeConfig, readGuardianLogs, reviewFailureSummary, saveGuardianModeConfig, type ReviewDecision } from "../docker/extensions/guardian-agent.ts";
 
 type Outcome = ReviewDecision["outcome"] | "unavailable";
 type Handler = (event: any, ctx: ExtensionContext) => unknown | Promise<unknown>;
@@ -30,6 +30,7 @@ async function runScenario(name: Scenario, realUI?: ExtensionUIContext, withRunt
   let activeTools=["bash","read","edit","write","custom-effect"];
   const calls: string[] = [], reviewedIds: string[] = [], notices: string[] = [], statusLines: string[] = [];
   let outcome:Outcome=scenario.outcome,sessionId="00000000-0000-7000-8000-000000000001",reviews=0,assessmentReviews=0,aborts=0;
+  const journalPath=()=>join(profile,"logs",workspaceId,sessionId,"guardian.jsonl");
   let viewerCalls=0,viewerText="";
   let runtimeService:GuardRuntimeV1|undefined;
   const userEntry = { type: "message", id: "user-1", message: { role: "user", content: "Synthetic test direction; no action may execute." } };
@@ -117,6 +118,7 @@ async function runScenario(name: Scenario, realUI?: ExtensionUIContext, withRunt
               assert.equal(request.action.toolName,"bash","Assessment must retain the original blocked tool");
               assert.match(String(request.action.input.command),/synthetic invocation, never executed/,"Assessment must retain exact original arguments");
               assert.match(request.dispute.guardianReason,/TEST ONLY|Review could not complete/,"Assessment must include Guardian's original concern");
+              if(name==="unavailable")assert.match(request.dispute.guardianReason,new RegExp(journalPath().replace(/[.*+?^${}()|[\]\\]/g,"\\$&")),"Unavailable review disputes must carry the exact active journal path");
               if(scenario.assessment==="delayed")await new Promise((_resolve,reject)=>services.signal.addEventListener("abort",()=>reject(services.signal.reason),{once:true}));
               if(scenario.assessment==="unavailable")return {status:"incomplete",error:"Synthetic assessment failure"};
               const assessed=scenario.assessment as ReviewDecision["outcome"];
@@ -174,6 +176,11 @@ async function runScenario(name: Scenario, realUI?: ExtensionUIContext, withRunt
       await dispatch("session_start",{type:"session_start"});assert.equal(runtimeService?.reviewMode(),"off");assert.equal(await invoke(),undefined,"An existing session without mode metadata must remain Off");assert.equal(reviews,4);
     } else {
       assert.ok(notices.some(message=>message.includes("Guardian stopped this action; nothing was executed")),"Guardian must show its own dispute reason");
+      if(name==="unavailable"){
+        const notice=notices.find(message=>message.includes("Guardian stopped this action; nothing was executed"))!;
+        assert.ok(notice.includes(`Diagnostic journal: ${journalPath()}.`),"Review failure must expose the exact active journal path");
+        assert.doesNotMatch(notice,/details are in (?:guardian\.log|the Guardian journal)/i,"Review failure must not advertise an unresolvable journal name");
+      }
       if(name==="no-ui"||!withRuntime)assert.deepEqual(statusLines,[],"Non-TUI or missing-runtime review must not create status output");
       else assert.ok(statusLines.some(line=>line.includes("guard · dispute · investigating")),"Status must show dispute investigation");
       assert.ok(activeTools.includes("guardian_justify"),"An investigating dispute must activate structured justification");
@@ -231,6 +238,7 @@ async function runScenario(name: Scenario, realUI?: ExtensionUIContext, withRunt
           const saved=[...entries].reverse().find(e=>e.type==="custom"&&e.customType==="guardian-dispute"&&e.data?.assessment);
           assert.equal(saved?.data.justification.explanation,params.explanation,"Structured position must persist on the active branch");
           assert.equal(saved?.data.assessment.status,scenario.assessment==="unavailable"?"unavailable":"completed","Assessment must persist on the active branch");
+          if(scenario.assessment==="unavailable")assert.ok(saved.data.assessment.error.includes(`Diagnostic journal: ${journalPath()}.`),"Assessment failure must expose the exact active journal path");
           if(name!=="no-ui"){
             assert.ok(statusLines.some(line=>line.includes("guard · dispute · assessing")),"Status must expose assessment work");
             assert.ok(statusLines.at(-1)?.includes("guard · dispute · awaiting you"),"Assessment must finish waiting for human judgment");
@@ -334,6 +342,11 @@ async function testGuardianModeConfig():Promise<void>{
 }
 
 export async function runAutomatedTests(): Promise<void> {
+  const diagnosticPath="/profile/logs/11111111-1111-4111-8111-111111111111/00000000-0000-7000-8000-000000000001/guardian.jsonl";
+  assert.equal(reviewFailureSummary("provider unavailable",diagnosticPath),`Review could not complete. Diagnostic journal: ${diagnosticPath}.`);
+  assert.equal(reviewFailureSummary("review timed out",diagnosticPath),`Review timed out. Diagnostic journal: ${diagnosticPath}.`);
+  assert.equal(reviewFailureSummary("invalid reviewer response",diagnosticPath),`Reviewer response was invalid. Diagnostic journal: ${diagnosticPath}.`);
+  assert.equal(reviewFailureSummary("provider unavailable"),"Review could not complete. Guardian diagnostics are unavailable.");
   assert.deepEqual(parseGuardianConfig(JSON.stringify({schemaVersion:1,mode:"on",model:null,thinking:"low"})),
     {schemaVersion:2,model:null,thinking:"low"},"Legacy profile mode must migrate out of preferences");
   for(const name of Object.keys(scenarios) as Scenario[]){await runScenario(name);console.log(`PASS guardian-flow: ${name}`);}

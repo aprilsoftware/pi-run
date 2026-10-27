@@ -418,10 +418,14 @@ function oneLine(text: string, limit: number): string {
   const clean = visible(text).replace(/\s+/g, " ").trim();
   return clean.length > limit ? clean.slice(0, limit - 1) + "…" : clean;
 }
-function reviewFailureSummary(error:string):string{
-  if(/timed? out|timeout|exceeded.*seconds/i.test(error))return "Review timed out; details are in the Guardian journal.";
-  if(/reviewer response|decision|userMessageIds|instructionRefs|list argument/i.test(error))return "Reviewer response was invalid; details are in the Guardian journal.";
-  return "Review could not complete; details are in the Guardian journal.";
+function guardianDiagnosticReference(journalPath?:string):string{
+  return journalPath?`Diagnostic journal: ${journalPath}.`:"Guardian diagnostics are unavailable.";
+}
+export function reviewFailureSummary(error:string,journalPath?:string):string{
+  const detail=guardianDiagnosticReference(journalPath);
+  if(/timed? out|timeout|exceeded.*seconds/i.test(error))return `Review timed out. ${detail}`;
+  if(/reviewer response|decision|userMessageIds|instructionRefs|list argument/i.test(error))return `Reviewer response was invalid. ${detail}`;
+  return `Review could not complete. ${detail}`;
 }
 
 // ============================================================================
@@ -1400,7 +1404,7 @@ export function createGuardianExtension(factory: ReviewerFactory = createPiRevie
           effects:decision.effects??null,instructionRefs:decision.instructionRefs??[],explanationSource:decision.reason?"reviewer":"extension_fallback",
           userMessageIds:decision.userMessageIds??[],decisionAvailable:true,assessment:true,authorizationGranted:false,pendingInvocationReleased:false});
         return assessment;
-      }catch(e){failure=e;const error=timedOut?"Assessment timed out; details are in the Guardian journal.":signal.aborted?"Assessment cancelled because the conversation or session changed.":reviewFailureSummary(errorText(e));
+      }catch(e){failure=e;const error=timedOut?`Assessment timed out. ${guardianDiagnosticReference(logger?.path)}`:signal.aborted?"Assessment cancelled because the conversation or session changed.":reviewFailureSummary(errorText(e),logger?.path);
         emit(signal.aborted?"CANCELLED":"ERROR","dispute_assessment_unavailable","No completed assessment was applied",{disputeId:snapshot.id,error:errorText(e)});
         emit(signal.aborted?"CANCELLED":"ERROR","review_unavailable","No completed reviewer decision for this assessment",{
           error:errorText(e),failureKind:timedOut?"timeout":signal.aborted?"cancelled":"review_failure",stage:trace?.stage()??"assessment",decisionAvailable:false});
@@ -1691,7 +1695,7 @@ export function createGuardianExtension(factory: ReviewerFactory = createPiRevie
         const basis=found?.outcome==="USER_REFUSED"?"existing_user_refusal":failure?"review_unavailable":"reviewer_dispute";
         const explanation=found?.outcome==="USER_REFUSED"
           ? `This review found a currently applicable user restriction. ${decisionExplanation(found)}`
-          : failure?reviewFailureSummary(failure):decisionExplanation(found!);
+          : failure?reviewFailureSummary(failure,logger?.path):decisionExplanation(found!);
         const stopped=withheld(basis,`Not executed: Guardian opened a dispute. ${visible(explanation)} The invocation is cancelled. Use only permitted read-only inspection, present your position to the user, and stop for feedback.`);
         openDispute(ctx,current,explanation,basis,emit,event,found);
         return stopped;
