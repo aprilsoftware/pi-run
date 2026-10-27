@@ -41,7 +41,7 @@ for(const value of [{...answer,extra:true},{...answer,round:4},{...answer,reques
   assert.throws(()=>caf.parseCafRound(value),/CAF/);
 assert.throws(()=>caf.restoreCafConversation([{type:'custom',customType:caf.CAF_ROUND_ENTRY,data:answer}]),/consultation sequence/);
 assert.throws(()=>caf.restoreCafConversation([{type:'custom',customType:caf.CAF_ROUND_ENTRY,data:{...questions,extra:true}}]),/CAF round/);
-const logRecord=(runId,operationId,event,second,details={})=>({source:`runs/${runId}.jsonl`,line:second+1,timestamp:`2026-04-01T12:00:${String(second).padStart(2,'0')}.000Z`,runId,sequence:second+1,
+const logRecord=(sessionId,operationId,event,second,details={})=>({source:`${sessionId}/caf.jsonl`,line:second+1,timestamp:`2026-04-01T12:00:${String(second).padStart(2,'0')}.000Z`,sessionId,writerId:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',sequence:second+1,
   value:{schemaVersion:1,timestamp:`2026-04-01T12:00:${String(second).padStart(2,'0')}.000Z`,event,...(operationId?{operationId}:{}),...details}});
 const logFixtures=[
   logRecord('run-a','completed','operation_started',1,{message:'EXACT PRIVATE MESSAGE',purpose:'EXACT PRIVATE PURPOSE',query:'EXACT PRIVATE QUERY',answer:'EXACT PRIVATE ANSWER',policy:'EXACT PRIVATE POLICY'}),
@@ -57,7 +57,7 @@ const grouped=caf.groupCafLogRecords(logFixtures),groupedAgain=caf.groupCafLogRe
 assert.equal(grouped.length,5);assert.deepEqual(grouped.map(item=>item.key),groupedAgain.map(item=>item.key),'CAF operation row identities must be stable');assert.equal(grouped[0].operationId,'partial');assert.equal(grouped[0].partial,true);
 const groupedDetails=grouped.flatMap(item=>[...caf.cafLogDetail(item,'summary'),...caf.cafLogDetail(item,'timeline')]).join('\n');
 for(const expected of ['Answered','Review Withheld','Cancelled','Public research: yes','search_completed'])assert.match(groupedDetails,new RegExp(expected));
-const groupedPresentation=JSON.stringify(grouped.map(({key,operationId,runId,timestamp,partial,searchText})=>({key,operationId,runId,timestamp,partial,searchText})));
+const groupedPresentation=JSON.stringify(grouped.map(({key,operationId,sessionId,timestamp,partial,searchText})=>({key,operationId,sessionId,timestamp,partial,searchText})));
 for(const forbidden of ['EXACT PRIVATE MESSAGE','EXACT PRIVATE PURPOSE','EXACT PRIVATE QUERY','EXACT PRIVATE ANSWER','EXACT PRIVATE POLICY'])assert.ok(!groupedPresentation.includes(forbidden)&&!groupedDetails.includes(forbidden));
 const manyUsers=Array.from({length:40},(_,index)=>({type:'message',id:`user-${index}`,message:{role:'user',content:[{type:'text',text:`authorization ${index}`} ]}}));
 const boundedAuthorization=caf.collectCafAuthorizationMessages([...manyUsers,{type:'message',id:'oversized',message:{role:'user',content:'x'.repeat(17*1024)}},{type:'message',id:'assistant',message:{role:'assistant',content:[{type:'text',text:'not user authority'}]}}]);
@@ -141,12 +141,12 @@ result=await caf.runCafDisclosureReview({...disclosure,workspace:'/workspace'},d
 result=await caf.runCafDisclosureReview(disclosure,{source:'profile',text:null},allowReviewer,new AbortController().signal);assert.equal(result.released,false);
 
 const webProfile=join(tmp,'web-profile');await mkdir(webProfile,{mode:0o700});assert.equal(await caf.loadCafWebSearchProvider(webProfile),undefined);await writeFile(join(webProfile,'web-search.json'),JSON.stringify({searchProvider:'brave'}));assert.equal(await caf.loadCafWebSearchProvider(webProfile),'brave');await writeFile(join(webProfile,'web-search.json'),JSON.stringify({searchProvider:'auto'}));await assert.rejects(caf.loadCafWebSearchProvider(webProfile),/provider/);await rm(join(webProfile,'web-search.json'));await symlink(outside,join(webProfile,'web-search.json'));await assert.rejects(caf.loadCafWebSearchProvider(webProfile));
-const commandProfile=join(tmp,'command-profile'),commandWorkspace=join(tmp,'command-workspace');await mkdir(commandProfile,{mode:0o700});await mkdir(commandWorkspace,{mode:0o700});
+const commandProfile=join(tmp,'command-profile'),commandWorkspace=join(tmp,'command-workspace'),workspaceId='11111111-1111-4111-8111-111111111111',commandSessionDir=join(commandProfile,'sessions',workspaceId);await mkdir(commandProfile,{mode:0o700});await mkdir(commandWorkspace,{mode:0o700});await mkdir(commandSessionDir,{recursive:true,mode:0o700});
 await writeFile(join(commandProfile,'AGENTS.md'),'# Profile instructions\nKeep private context inside the trusted Guard review.\n',{mode:0o600});await writeFile(join(commandWorkspace,'AGENTS.md'),'# Workspace instructions\nOnly public abstractions may be disclosed.\n',{mode:0o600});
 await mkdir(join(commandProfile,'guard'),{mode:0o700});await writeFile(join(commandProfile,'guard','config.json'),JSON.stringify({schemaVersion:1,model:'trusted/reviewer',thinking:'off'})+'\n',{mode:0o600});
 await writeFile(join(commandProfile,'web-search.json'),JSON.stringify({searchProvider:'brave'}));process.env.PI_RUN_PROFILE_DIR=commandProfile;
 const {createEventBus}=await import(pathToFileURL(join(piDir,'dist/core/event-bus.js')).href),bus=createEventBus();
-const handlers=new Map(),commands=new Map(),tools=new Map(),notifications=[],appended=[],nestedSearchCalls=[];let currentSessionId='session';
+const handlers=new Map(),commands=new Map(),tools=new Map(),notifications=[],appended=[],nestedSearchCalls=[];let currentSessionId='00000000-0000-7000-8000-000000000001';
 let branch=[{type:'message',id:'current-user',message:{role:'user',content:[{type:'text',text:'You may ask the configured friend about this abstract API design.'}]}},
   {type:'message',id:'assistant-private',message:{role:'assistant',content:[{type:'text',text:'assistant-only private analysis'}]}},
   {type:'message',id:'tool-private',message:{role:'toolResult',content:[{type:'text',text:'private tool result'}]}},
@@ -169,7 +169,7 @@ const ctx={mode:'json',hasUI:false,model:primary,cwd:commandWorkspace,modelRegis
       return streamed({role:'assistant',api:model.api,provider:model.provider,model:model.id,stopReason:'toolUse',timestamp:Date.now(),usage:reviewUsage,content:[{type:'toolCall',id:`decision-${providerCalls.length}`,name:'caf_guard_decide',arguments:{outcome,reason,userMessageIds:outcome==='ALLOW'?[malformedReview?'missing-source':sourceId]:[]}}]});}
     modelSequence.push('friend');friendCalls.push({model,request,options});const response=friendResponses.shift()??{stopReason:friendStopReason,content:friendContent()};return(async function*(){yield{type:'done',reason:response.stopReason,message:{role:'assistant',api:model.api,provider:model.provider,model:model.id,stopReason:response.stopReason,timestamp:Date.now(),content:response.content,usage:friendUsage}};})();}},
   tools:[{name:'web_search'}],executeTool:async(name,args,options)=>{modelSequence.push('search');nestedSearchCalls.push({name,args,options});return nestedSearchResult;},
-  ui:{notify:(text,level)=>notifications.push({text,level}),select:async()=>selections.shift()},sessionManager:{getSessionId:()=>currentSessionId,getCwd:()=>commandWorkspace,getBranch:()=>branch,getEntries:()=>sessionEntries}};
+  ui:{notify:(text,level)=>notifications.push({text,level}),select:async()=>selections.shift()},sessionManager:{getSessionId:()=>currentSessionId,getSessionDir:()=>commandSessionDir,getCwd:()=>commandWorkspace,getBranch:()=>branch,getEntries:()=>sessionEntries}};
 const dispatch=async(name,event)=>{for(const handler of handlers.get(name)??[])await handler(event,ctx);};
 await dispatch('session_start',{type:'session_start',reason:'resume'});
 await commands.get('caf-status').handler('',ctx);assert.match(notifications.at(-1).text,/Guard Runtime: available/);assert.match(notifications.at(-1).text,/Guard reviewer: trusted\/reviewer · off/);assert.match(notifications.at(-1).text,/Friend thinking: default/);assert.match(notifications.at(-1).text,/Disclosure policy: built-in only/);assert.match(notifications.at(-1).text,/Disclosure review: connected — shared Guard/);assert.match(notifications.at(-1).text,/Public web research: ready via brave/);assert.match(notifications.at(-1).text,/Conversation: 1 finalized round.*awaiting primary/);assert.match(notifications.at(-1).text,/Friend calls: unavailable/);assert.equal(guardService.reviewMode(),'on');assert.equal(providerCalls.length,0);assert.equal(friendCalls.length,0);assert.equal(nestedSearchCalls.length,0);
@@ -183,7 +183,7 @@ const callTool=tools.get('call_friend');assert.equal(callTool.exposure,'model-on
 await commands.get('caf-default').handler('on',ctx);assert.equal((await caf.loadCafModeConfig(commandProfile)).defaultMode,'on');
 const offArgs={message:'Review an abstract interface.',purpose:'Mode-off fixture'};branch=[{type:'message',id:'off-user',message:{role:'user',content:'Use CAF.'}},{type:'message',id:'off-assistant',message:{role:'assistant',content:[{type:'toolCall',id:'friend-call-off',name:'call_friend',arguments:offArgs}]}}];
 let toolResult=await callTool.execute('friend-call-off',offArgs,new AbortController().signal,undefined,ctx);assert.equal(toolResult.details.status,'mode-off');assert.equal(providerCalls.length,0);assert.equal(friendCalls.length,0);assert.equal(nestedSearchCalls.length,0);
-sessionEntries.splice(0);branch=[];currentSessionId='new-session';await dispatch('session_start',{type:'session_start',reason:'new'});await commands.get('caf-status').handler('',ctx);assert.match(notifications.at(-1).text,/Current session: On/);
+sessionEntries.splice(0);branch=[];currentSessionId='00000000-0000-7000-8000-000000000002';await dispatch('session_start',{type:'session_start',reason:'new'});await commands.get('caf-status').handler('',ctx);assert.match(notifications.at(-1).text,/Current session: On/);
 await commands.get('caf-default').handler('off',ctx);await commands.get('caf-status').handler('',ctx);assert.match(notifications.at(-1).text,/Current session: On/);assert.match(notifications.at(-1).text,/New sessions: off/);await dispatch('input',{type:'input',source:'user'});assert.equal(sessionEntries.at(-1).customType,'pi-run-caf-mode');assert.equal(sessionEntries.at(-1).data.mode,'on');appended.length=0;
 assert.deepEqual(await caf.loadCafConfig(commandProfile),valid);
 await commands.get('caf').handler('model missing/model',ctx);assert.match(notifications.at(-1).text,/unavailable/);assert.deepEqual(await caf.loadCafConfig(commandProfile),valid);
@@ -277,11 +277,11 @@ selections.push('Current session — On (turn Off)');await commands.get('caf').h
 let cafViewerList='',cafViewerDetails='',cafViewerCalls=0;ctx.mode='tui';ctx.hasUI=true;ctx.ui.custom=async factory=>await new Promise(resolve=>{let component;
   const done=value=>{component?.dispose?.();resolve(value);};component=factory({terminal:{rows:24},requestRender(){}},{fg:(_role,text)=>text,bg:(_role,text)=>text},{},done);cafViewerCalls++;
   cafViewerList=component.render(120).join('\n');component.handleInput('\r');cafViewerDetails=component.render(120).join('\n');done(undefined);});
-await commands.get('caf-log').handler('answer',ctx);assert.equal(cafViewerCalls,1);assert.match(cafViewerList,/Call a Friend operations · all retained sessions · UTC/);assert.match(cafViewerList,/Search: answer/);assert.doesNotMatch(cafViewerList,/session_started|mode_changed/);assert.match(cafViewerDetails,/Summary|Call a Friend operation/);
-ctx.mode='json';ctx.hasUI=false;delete ctx.ui.custom;await commands.get('caf-log').handler('',ctx);assert.match(notifications.at(-1).text,/CAF journals: .*logs\/caf\/runs/);assert.doesNotMatch(notifications.at(-1).text,/operation_finished|disclosure_reviewed/);
-await dispatch('session_shutdown',{type:'session_shutdown',reason:'exit'});assert.ok((await readdir(join(commandProfile,'logs','caf','runs'))).some(name=>name.endsWith('.complete')));
-const cafJournal=await journal.readGuardJournal({schemaVersion:1,stateDir:commandProfile,clientId:'caf',maxRecords:500}),journalText=JSON.stringify(cafJournal.records.map(record=>record.value));
-let viewFlushes=0;const cafView=caf.createCafLogViewRequest(commandProfile,async()=>{viewFlushes++;},'guarded answer'),firstView=await cafView.load(new AbortController().signal),secondView=await cafView.load(new AbortController().signal);
+await commands.get('caf-log').handler('answer',ctx);assert.equal(cafViewerCalls,1);assert.match(cafViewerList,/Call a Friend operations · current workspace · UTC/);assert.match(cafViewerList,/Search: answer/);assert.doesNotMatch(cafViewerList,/session_started|mode_changed/);assert.match(cafViewerDetails,/Summary|Call a Friend operation/);
+ctx.mode='json';ctx.hasUI=false;delete ctx.ui.custom;await commands.get('caf-log').handler('',ctx);assert.match(notifications.at(-1).text,new RegExp(`CAF journals: .*logs/${workspaceId}`));assert.doesNotMatch(notifications.at(-1).text,/operation_finished|disclosure_reviewed/);
+await dispatch('session_shutdown',{type:'session_shutdown',reason:'exit'});assert.deepEqual(await readdir(join(commandProfile,'logs',workspaceId,currentSessionId)),['caf.jsonl']);
+const cafJournal=await journal.readWorkspaceGuardJournal({schemaVersion:2,stateDir:commandProfile,workspaceId,kind:'caf',maxRecords:500}),journalText=JSON.stringify(cafJournal.records.map(record=>record.value));
+let viewFlushes=0;const cafView=caf.createCafLogViewRequest(commandProfile,workspaceId,async()=>{viewFlushes++;},'guarded answer'),firstView=await cafView.load(new AbortController().signal),secondView=await cafView.load(new AbortController().signal);
 assert.equal(cafView.initialQuery,'guarded answer');assert.equal(viewFlushes,2,'CAF must flush before initial load and refresh');assert.ok(firstView.rows.length>0);assert.equal(secondView.rows.length,firstView.rows.length);
 assert.deepEqual(cafView.sections,[{id:'summary',label:'Summary'},{id:'timeline',label:'Timeline'}]);
 const firstDetails=[...cafView.details(firstView.rows[0].id,'summary'),...cafView.details(firstView.rows[0].id,'timeline')].join('\n');assert.match(firstDetails,/Call a Friend operation|operation_finished/);
@@ -290,7 +290,7 @@ const presentationText=JSON.stringify(firstView.rows.map(row=>({row,summary:cafV
 for(const secret of [callArgs.message,callArgs.purpose,researchQuery,researchPurpose,friendAnswer,'Provider summary.','Public evidence.','https://example.com/source',policyText,'You may use Call a Friend','Only public abstractions','Keep private context']){
   assert.ok(!journalText.includes(secret),`journal leaked ${secret}`);assert.ok(!presentationText.includes(secret),`CAF view leaked ${secret}`);
 }
-assert.ok(cafJournal.records.some(record=>record.value.message?.sha256&&record.value.message?.bytes));assert.ok(cafJournal.files.every(file=>file.startsWith('runs/')));
+assert.ok(cafJournal.records.some(record=>record.value.message?.sha256&&record.value.message?.bytes));assert.ok(cafJournal.files.every(file=>file.endsWith('/caf.jsonl')));assert.equal(new Set(cafJournal.records.map(record=>record.sessionId)).size,2);
 branch=[{type:'message',id:'shutdown-user',message:{role:'user',content:[{type:'text',text:'Use CAF.'}]}},{type:'message',id:'shutdown-assistant',message:{role:'assistant',content:[{type:'toolCall',id:'friend-call-shutdown',name:'call_friend',arguments:callArgs}]}}];
 const callsAfterShutdown=friendCalls.length;toolResult=await callTool.execute('friend-call-shutdown',callArgs,new AbortController().signal,undefined,ctx);assert.equal(toolResult.isError,true);assert.equal(toolResult.details.status,'guard-unavailable');assert.equal(friendCalls.length,callsAfterShutdown);
 
@@ -298,5 +298,5 @@ const dockerfile=await readFile(join(root,'docker/Dockerfile'),'utf8'),launcher=
 const guardian='/usr/local/lib/node_modules/guardian-agent/guardian-agent.ts',cafPath='/usr/local/lib/node_modules/guardian-agent/caf-agent.ts';
 assert.ok(dockerfile.includes('COPY extensions/caf-agent.ts /usr/local/lib/node_modules/guardian-agent/'));
 assert.ok(launcher.includes(`--extension ${cafPath}`));assert.ok(launcher.indexOf(guardian)<launcher.indexOf(cafPath));
-console.log('reviewed CAF dialogue, web research, per-run journals, isolation, limits, and safety tests passed');
+console.log('reviewed CAF dialogue, web research, workspace session journals, isolation, limits, and safety tests passed');
 NODE

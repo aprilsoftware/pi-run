@@ -21,7 +21,7 @@ const [runtime,guardian,caf,journal]=await Promise.all([
   jiti.import(runtimeFile),jiti.import(join(root,'docker/extensions/guardian-agent.ts')),jiti.import(join(root,'docker/extensions/caf-agent.ts')),jiti.import(join(root,'docker/extensions/guard-journal.ts')),
 ]);
 const base=Date.parse('2026-04-02T12:00:00.000Z'),timestamp=index=>new Date(base+index*1000).toISOString();
-const cafWriter=journal.createGuardJournalWriter({schemaVersion:1,stateDir:profile,clientId:'caf',maxBytes:1024*1024,backups:2,maxPending:1000});
+const cafWriter=journal.createSessionGuardJournalWriter({schemaVersion:2,stateDir:profile,workspaceId,sessionId,kind:'caf',maxBytes:1024*1024,backups:2,maxPending:1000});
 let sequence=0;
 for(let index=0;index<60;index++){
   const operationId=`operation-${String(index).padStart(2,'0')}`,time=timestamp(sequence++);
@@ -39,7 +39,7 @@ guardianLogger.write({schemaVersion:1,timestamp:timestamp(sequence++),event:'rev
 await guardianLogger.flush();
 let guardianFlushes=0,cafFlushes=0;
 const guardianRequest=guardian.createGuardianLogViewRequest(profile,workspaceId,async()=>{guardianFlushes++;await guardianLogger.flush();},'allowed');
-const cafRequest=caf.createCafLogViewRequest(profile,async()=>{cafFlushes++;await cafWriter.flush();},'answered');
+const cafRequest=caf.createCafLogViewRequest(profile,workspaceId,async()=>{cafFlushes++;await cafWriter.flush();},'answered');
 assert.equal(guardianRequest.initialQuery,'allowed');assert.equal(cafRequest.initialQuery,'answered');
 assert.deepEqual(guardianRequest.sections.map(section=>section.id),['summary','command','evidence','timeline']);
 assert.deepEqual(cafRequest.sections.map(section=>section.id),['summary','timeline']);
