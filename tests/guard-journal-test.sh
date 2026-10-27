@@ -175,9 +175,58 @@ await mkdir(badClient, { recursive: true, mode: 0o700 }); await symlink(outside,
 const unsafeRead = await module.readGuardJournal({ schemaVersion: 1, stateDir: badReadState, clientId: 'guardian' });
 assert.deepEqual(unsafeRead.records, []); assert.ok(unsafeRead.notices.some(notice => notice.includes('Unsafe Guard journal directory')));
 
+const workspaceA='11111111-1111-4111-8111-111111111111',workspaceB='22222222-2222-4222-8222-222222222222';
+const sessionA='00000000-0000-7000-8000-000000000001',sessionB='00000000-0000-7000-8000-000000000002';
+const scopedState=join(tmp,'workspace-session-profile');await mkdir(scopedState,{mode:0o700});
+for(const options of [null,{},
+  {schemaVersion:2,stateDir:scopedState,workspaceId:'../bad',sessionId:sessionA,kind:'guardian'},
+  {schemaVersion:2,stateDir:scopedState,workspaceId:workspaceA,sessionId:'bad',kind:'guardian'},
+  {schemaVersion:2,stateDir:scopedState,workspaceId:workspaceA,sessionId:sessionA,kind:'other'}])
+  assert.throws(()=>module.createSessionGuardJournalWriter(options),/Invalid Guard journal/);
+const scopedA=module.createSessionGuardJournalWriter({schemaVersion:2,stateDir:scopedState,workspaceId:workspaceA,sessionId:sessionA,kind:'guardian'});
+scopedA.write({event:'session-a-first',timestamp:'2026-05-01T10:00:01.000Z'});await scopedA.close();
+assert.equal(scopedA.path,join(scopedState,'logs',workspaceA,sessionA,'guardian.jsonl'));
+assert.equal(await exists(`${scopedA.path}.complete`),false);
+const resumedA=module.createSessionGuardJournalWriter({schemaVersion:2,stateDir:scopedState,workspaceId:workspaceA,sessionId:sessionA,kind:'guardian'});
+assert.equal(resumedA.path,scopedA.path);resumedA.write({event:'session-a-resumed',timestamp:'2026-05-01T10:00:03.000Z'});await resumedA.close();
+const scopedRows=await entries(scopedA.path);assert.deepEqual(scopedRows.map(row=>row.event),['session-a-first','session-a-resumed']);
+assert.ok(scopedRows.every(row=>row.journal.schemaVersion===2&&row.journal.kind==='guardian'&&row.journal.workspaceId===workspaceA&&row.journal.sessionId===sessionA));
+const scopedB=module.createSessionGuardJournalWriter({schemaVersion:2,stateDir:scopedState,workspaceId:workspaceA,sessionId:sessionB,kind:'guardian'});
+scopedB.write({event:'session-b',timestamp:'2026-05-01T10:00:02.000Z'});await scopedB.close();
+const scopedCaf=module.createSessionGuardJournalWriter({schemaVersion:2,stateDir:scopedState,workspaceId:workspaceA,sessionId:sessionA,kind:'caf'});
+scopedCaf.write({event:'caf-only',timestamp:'2026-05-01T10:00:04.000Z'});await scopedCaf.close();
+const otherWorkspace=module.createSessionGuardJournalWriter({schemaVersion:2,stateDir:scopedState,workspaceId:workspaceB,sessionId:sessionA,kind:'guardian'});
+otherWorkspace.write({event:'other-workspace',timestamp:'2026-05-01T10:00:05.000Z'});await otherWorkspace.close();
+const scopedSnapshot=await module.readWorkspaceGuardJournal({schemaVersion:2,stateDir:scopedState,workspaceId:workspaceA,kind:'guardian'});
+assert.deepEqual(scopedSnapshot.records.map(record=>record.value.event),['session-a-first','session-b','session-a-resumed']);
+assert.deepEqual(new Set(scopedSnapshot.records.map(record=>record.sessionId)),new Set([sessionA,sessionB]));
+assert.ok(!JSON.stringify(scopedSnapshot.records).includes('caf-only'));assert.ok(!JSON.stringify(scopedSnapshot.records).includes('other-workspace'));
+const cafSnapshot=await module.readWorkspaceGuardJournal({schemaVersion:2,stateDir:scopedState,workspaceId:workspaceA,kind:'caf'});
+assert.deepEqual(cafSnapshot.records.map(record=>record.value.event),['caf-only']);
+for(const directory of [join(scopedState,'logs'),join(scopedState,'logs',workspaceA),join(scopedState,'logs',workspaceA,sessionA)])assert.equal(await mode(directory),0o700);
+for(const path of [scopedA.path,scopedB.path,scopedCaf.path])assert.equal(await mode(path),0o600);
+const scopedRotating=module.createSessionGuardJournalWriter({schemaVersion:2,stateDir:scopedState,workspaceId:workspaceA,
+  sessionId:'00000000-0000-7000-8000-000000000003',kind:'guardian',maxBytes:512,backups:2});
+for(let index=1;index<=30;index++)scopedRotating.write({event:'scoped-rotation',index,payload:'x'.repeat(90),timestamp:`2026-05-01T10:01:${String(index).padStart(2,'0')}.000Z`});
+await scopedRotating.close();
+for(const path of [`${scopedRotating.path}.2`,`${scopedRotating.path}.1`,scopedRotating.path]){assert.ok(await exists(path));assert.ok((await stat(path)).size<=512);}
+assert.equal(await exists(`${scopedRotating.path}.complete`),false);
+const legacy=module.createGuardJournalWriter({schemaVersion:1,stateDir:scopedState,clientId:'guardian'});legacy.write({event:'legacy-v09',timestamp:'2026-05-01T09:00:00.000Z'});await legacy.close();
+const withoutLegacy=await module.readWorkspaceGuardJournal({schemaVersion:2,stateDir:scopedState,workspaceId:workspaceA,kind:'guardian'});
+assert.ok(!JSON.stringify(withoutLegacy.records).includes('legacy-v09'));
+const unsafeScopedState=join(tmp,'unsafe-workspace-session'),unsafeScopedLogs=join(unsafeScopedState,'logs'),unsafeScopedWorkspace=join(unsafeScopedLogs,workspaceA);
+await mkdir(unsafeScopedWorkspace,{recursive:true,mode:0o700});await chmod(unsafeScopedState,0o700);await chmod(unsafeScopedLogs,0o700);await chmod(unsafeScopedWorkspace,0o700);
+await symlink(outside,join(unsafeScopedWorkspace,sessionA));const scopedWarnings=[];
+const unsafeScoped=module.createSessionGuardJournalWriter({schemaVersion:2,stateDir:unsafeScopedState,workspaceId:workspaceA,sessionId:sessionA,kind:'guardian'},message=>scopedWarnings.push(message));
+unsafeScoped.write({event:'refused'});await unsafeScoped.flush();assert.equal(unsafeScoped.health().dropped,1);assert.equal(scopedWarnings.length,1);
+const unsafeScopedRead=await module.readWorkspaceGuardJournal({schemaVersion:2,stateDir:unsafeScopedState,workspaceId:workspaceA,kind:'guardian'});
+assert.deepEqual(unsafeScopedRead.records,[]);assert.ok(unsafeScopedRead.notices.some(notice=>notice.includes('unsafe session directory')));
+
 const loaded = await createJiti(import.meta.url, { fsCache: false }).import(file);
 assert.equal(typeof loaded.createGuardJournalWriter, 'function');
 assert.equal(typeof loaded.readGuardJournal, 'function');
+assert.equal(typeof loaded.createSessionGuardJournalWriter,'function');
+assert.equal(typeof loaded.readWorkspaceGuardJournal,'function');
 assert.ok((await readFile(join(root, 'docker', 'Dockerfile'), 'utf8')).includes(
   'COPY extensions/guard-journal.ts /usr/local/lib/node_modules/guardian-agent/'));
 console.log(`guard journal writers, merged reading, retention, private modes, and unsafe-path tests passed (${basename(file)})`);
