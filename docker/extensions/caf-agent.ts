@@ -784,9 +784,9 @@ export default function cafAgent(pi:ExtensionAPI){
           if(review.usage)usages.push(review.usage);log("disclosure_reviewed",{operationId,kind:"friend-message",model:destination,outcome:review.released?"ALLOW":review.outcome??"UNAVAILABLE"});
           if(!review.released)return fail(review.reason,"review-withheld",combinedUsage(...usages));action=review.action;
         }else{action=parseCafDisclosureAction(proposed);log("disclosure_direct",{operationId,kind:"friend-message",model:destination,guardMode:"off"});
-          try{lease=await guard.acquireActivity({schemaVersion:1,state:"asking-friend",detail:"one round",surface:"client"},operationSignal);}catch{operationSignal.throwIfAborted();}}
+          try{lease=await guard.acquireActivity({schemaVersion:1,state:"asking-friend",surface:"client"},operationSignal);}catch{operationSignal.throwIfAborted();}}
         if(!standaloneCall(ctx,toolCallId)||config.model!==destination||guard.reviewMode()!==(guarded?"on":"off"))return fail("The active branch, Guard mode, or friend configuration changed before disclosure.","branch-changed",combinedUsage(...usages));
-        if(lease){try{lease.update({schemaVersion:1,state:"asking-friend",detail:"one round",surface:"client"});}catch{/* Presentation cannot authorize or withhold. */}
+        if(lease){try{lease.update({schemaVersion:1,state:"asking-friend",surface:"client"});}catch{/* Presentation cannot authorize or withhold. */}
           if(!lease.active())return fail("Guard Runtime became unavailable before friend transmission.","guard-unavailable",combinedUsage(...usages));}
         const stopSearch=(reason:string,status:string):never=>{friendFailureStatus=status;throw new Error(reason);};
         const search=researchProvider?async(query:string,purpose:string,searchSignal:AbortSignal):Promise<CafResearch>=>{
@@ -801,14 +801,14 @@ export default function cafAgent(pi:ExtensionAPI){
           }else{searchAction=parseCafWebSearchAction(proposedSearch);log("disclosure_direct",{operationId,kind:"web-search",provider:researchProvider,guardMode:"off"});}
           if(!standaloneCall(ctx,toolCallId)||config.model!==destination||webSearchProvider!==researchProvider||guard.reviewMode()!==(guarded?"on":"off"))
             stopSearch("The active branch, Guard mode, or research configuration changed before search.","branch-changed");
-          if(lease){try{lease.update({schemaVersion:1,state:"searching-public-web",detail:researchProvider,surface:"client"});}catch{/* Presentation cannot authorize or withhold. */}
+          if(lease){try{lease.update({schemaVersion:1,state:"searching-the-web",surface:"client"});}catch{/* Presentation cannot authorize or withhold. */}
             if(!lease.active())stopSearch("Guard Runtime became unavailable before web search.","guard-unavailable");}
           log("search_started",{operationId,provider:researchProvider});
           const outcome=await ctx.executeTool("web_search",{query:searchAction.query,provider:researchProvider,numResults:5,includeContent:false,workflow:"none"},{signal:searchSignal});
           if(outcome.result.usage)usages.push(outcome.result.usage);const research=normalizeCafWebSearchResult(outcome,searchAction);researchUsed=true;
           log("search_completed",{operationId,provider:researchProvider,results:research.results.length,answerBytes:Buffer.byteLength(research.answer,"utf8"),usage:usageDiagnostic(outcome.result.usage)});
           if(guard.reviewMode()!==(guarded?"on":"off"))stopSearch("Guard mode changed before the final friend request.","branch-changed");
-          if(lease){try{lease.update({schemaVersion:1,state:"asking-friend",detail:"final research answer",surface:"client"});}catch{/* Presentation cannot authorize or withhold. */}
+          if(lease){try{lease.update({schemaVersion:1,state:"friend-reviewing-search-results",surface:"client"});}catch{/* Presentation cannot authorize or withhold. */}
             if(!lease.active())stopSearch("Guard Runtime became unavailable before the final friend request.","guard-unavailable");}
           return research;
         }:undefined;

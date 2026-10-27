@@ -172,7 +172,16 @@ caf · on                                        friend-model · high
 
 The Guard row determines whether an enabled CAF is reviewed, so the CAF row does
 not repeat derived labels. During Guard review, the Guard row shows review
-activity. During friend or search work, the CAF row shows that activity. Narrow
+activity. During a consultation, the CAF row uses plain-language states:
+
+```text
+caf · asking friend
+caf · searching the web
+caf · friend reviewing search results
+```
+
+After the activity finishes, it returns to `caf · on` or `caf · off`. Consultation
+round details remain available through `/caf-status` and the journal. Narrow
 terminals retain role and state before truncating model details. Non-TUI sessions
 have no widget. Presentation failure never changes mode, review, or transmission.
 
