@@ -56,6 +56,8 @@ expected_extension_layout="$(printf '%s\n' \
     guard/guard-runtime.ts \
     guard/guard-viewer.ts \
     guardian/guardian-agent.ts \
+    guardian/guardian-log-safety.ts \
+    guardian/guardian-log-viewer.ts \
     plan/plan-agent.ts \
     snapshot/snapshot-agent.ts | LC_ALL=C sort)"
 actual_extension_layout="$(find "${ROOT}/docker/extensions" -mindepth 1 \( -type f -o -type l \) \
