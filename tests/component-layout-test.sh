@@ -55,6 +55,7 @@ expected_extension_layout="$(printf '%s\n' \
     guard/guard-evidence.ts \
     guard/guard-journal.ts \
     guard/guard-reviewer-agent.ts \
+    guard/guard-runtime-contract.ts \
     guard/guard-runtime.ts \
     guard/guard-viewer.ts \
     guardian/guardian-agent.ts \

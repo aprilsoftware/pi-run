@@ -221,6 +221,7 @@ RUN npm install -g \
 
 # Copy the Pi-Run extension bundle with shared Guard infrastructure and sibling clients.
 COPY extensions/plan/plan-agent.ts /usr/local/lib/node_modules/pi-run-extensions/plan/
+COPY extensions/guard/guard-runtime-contract.ts /usr/local/lib/node_modules/pi-run-extensions/guard/
 COPY extensions/guard/guard-runtime.ts /usr/local/lib/node_modules/pi-run-extensions/guard/
 COPY extensions/guard/guard-viewer.ts /usr/local/lib/node_modules/pi-run-extensions/guard/
 COPY extensions/guard/guard-journal.ts /usr/local/lib/node_modules/pi-run-extensions/guard/
