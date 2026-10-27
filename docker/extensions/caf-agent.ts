@@ -384,7 +384,7 @@ function cafNumber(value:unknown):number|null{return typeof value==="number"&&Nu
 function cafEvent(value:Record<string,unknown>):string{return cafViewText(value.event,96)??"unknown-event";}
 function cafEventUsage(value:Record<string,unknown>):Record<string,unknown>{return value.usage&&typeof value.usage==="object"&&!Array.isArray(value.usage)?value.usage as Record<string,unknown>:{};}
 function cafLogLine(value:Record<string,unknown>,recordedTimestamp?:string|null):string{
-  const timestamp=cafViewText(recordedTimestamp,64)??"unknown-time",event=cafEvent(value),usage=cafEventUsage(value),fields:string[]=[];
+  const timestamp=cafLogStamp(recordedTimestamp),event=cafEvent(value),usage=cafEventUsage(value),fields:string[]=[];
   for(const [key,item] of [["outcome",value.outcome],["kind",value.kind],["model",value.model],["provider",value.provider],["results",value.results],
     ["answerBytes",value.answerBytes],["durationMs",value.durationMs],["reviewPath",value.reviewPath],["friendRequestStarted",value.friendRequestStarted],
     ["research",value.research],["round",value.round],["guardEvent",value.guardEvent],["level",value.level],["totalTokens",usage.totalTokens]] as [string,unknown][]){
@@ -405,7 +405,7 @@ function cafOutcomeLabel(value:string):string{
   if(value==="answer")return "Answered";if(value==="questions")return "Questions";if(value==="partial")return "Partial";
   return value.split("-").map(part=>part?part[0].toUpperCase()+part.slice(1):part).join(" ");
 }
-function cafLogStamp(value:string):string{const time=Date.parse(value);return Number.isFinite(time)?new Date(time).toISOString().slice(11,19):"unknown";}
+function cafLogStamp(value:string|null|undefined):string{const time=Date.parse(value??"");if(!Number.isFinite(time))return "Time not recorded";const iso=new Date(time).toISOString();return `${iso.slice(0,10)} ${iso.slice(11,19)} UTC`;}
 function cafLogDuration(value:number|null):string{if(value===null)return "—";if(value<1000)return `${Math.round(value)} ms`;if(value<60_000)return `${(value/1000).toFixed(1)} s`;return `${(value/60_000).toFixed(1)} min`;}
 export function groupCafLogRecords(records:readonly Readonly<GuardJournalRecordV1>[]):CafLogOperation[]{
   const grouped=new Map<string,{operationId:string;runId:string;events:Readonly<GuardJournalRecordV1>[]}>();
@@ -425,7 +425,7 @@ export function groupCafLogRecords(records:readonly Readonly<GuardJournalRecordV
 }
 export function cafLogDetail(operation:CafLogOperation,sectionId:string):readonly string[]{
   if(sectionId==="timeline")return ["Times UTC · recorded diagnostics only; journal order is preserved.","",...operation.events.map(record=>cafLogLine(record.value,record.timestamp)),"",`Operation: ${operation.operationId}`,`Run: ${operation.runId}`];
-  const summary=cafOperationSummary(operation),lines=["Call a Friend operation","",`Outcome: ${cafOutcomeLabel(summary.outcome)}`,
+  const summary=cafOperationSummary(operation),lines=["Call a Friend operation","",`Time: ${cafLogStamp(operation.timestamp)}`,`Outcome: ${cafOutcomeLabel(summary.outcome)}`,
     `Destination: ${summary.destination}`,`Response kind: ${summary.kind||"not recorded"}`,`Review path: ${summary.reviewPath}`,
     `Friend request started: ${summary.friendStarted===null?"not recorded":summary.friendStarted?"yes":"no"}`,
     `Public research: ${summary.research===null?"not recorded":summary.research?"yes":"no"}`,`Duration: ${cafLogDuration(summary.durationMs)}`,
@@ -441,7 +441,7 @@ async function flushCafLogView(flush:()=>Promise<void>,signal:AbortSignal):Promi
 export function createCafLogViewRequest(stateDir:string,flush:()=>Promise<void>,initialQuery=""):GuardViewRequestV1{
   let operations:readonly CafLogOperation[]=[];
   return {schemaVersion:1,title:"Call a Friend operations · all retained sessions · UTC",compactTitle:"Call a Friend operations",
-    wideHeader:"  Time      Outcome          Duration  Destination",initialQuery:cafViewText(initialQuery,300)??"",
+    wideHeader:"  UTC date/time             Outcome          Duration  Destination",initialQuery:cafViewText(initialQuery,300)??"",
     fallbackText:`CAF journals: ${join(stateDir,"logs","caf","runs")} (viewer requires Pi's terminal UI).`,
     unavailableText:"CAF log viewer needs Pi's custom terminal UI.",emptyText:"No Call a Friend operations retained.",noMatchesText:"No CAF operations match this search.",
     missingSelectionText:"Selected CAF operation is no longer retained.",incompleteNoticeText:"operation list may be incomplete",

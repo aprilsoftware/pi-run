@@ -886,10 +886,10 @@ export async function readGuardianLogs(stateDir: string, signal?: AbortSignal): 
 function lvLast(g: GuardianLogReview, ...names: string[]): GuardianLogEntry | undefined {
   return [...g.events].reverse().find(e => names.includes(lvEvent(e)));
 }
-function lvStamp(timestamp: string, full = false): string {
+function lvStamp(timestamp: string): string {
   if (!lvTime(timestamp)) return "Time not recorded";
   const iso = new Date(timestamp).toISOString();
-  return full ? `${iso.slice(0, 10)} ${iso.slice(11, 23)} UTC` : iso.slice(11, 19);
+  return `${iso.slice(0, 10)} ${iso.slice(11, 19)} UTC`;
 }
 function lvDuration(ms: unknown): string { const n = lvNumber(ms); return n === null ? "—" : n < 1000 ? `${Math.round(n)} ms` : `${(n / 1000).toFixed(2)} s`; }
 const lvBasis: Record<string, string> = { standing_rules: "Standing instructions", explicit_authorization: "Explicit user authorization", covered_work: "Supporting work within authorized scope", missing_authorization: "Missing authorization", uncertainty: "Material uncertainty", user_refusal: "Existing user restriction" };
@@ -949,7 +949,7 @@ export function guardianLogDetail(g: GuardianLogReview, tab: GuardianLogTab): st
   const s = summarizeGuardianLog(g), lines: string[] = [];
   const pair = (key: string, value: unknown) => lines.push(`${key.padEnd(15)} ${value ?? "Not recorded"}`);
   if (tab === "Summary") {
-    pair("Time", lvStamp(g.timestamp, true)); pair("Review", s.review); pair("Basis", s.basis);
+    pair("Time", lvStamp(g.timestamp)); pair("Review", s.review); pair("Basis", s.basis);
     pair("Review time", lvDuration(s.durationMs)); pair("Confirmation", s.confirmation); pair("Guardian", s.guardianAction);
     if (s.releaseBasis === "human_without_review") lines.push("               User bypassed an incomplete review; not an AI approval.");
     if (s.releaseBasis === "guardian_off") lines.push("               Guardian was off; no AI approval was made.");
@@ -1070,7 +1070,7 @@ export function createGuardianLogViewRequest(stateDir:string,flush:()=>Promise<v
     schemaVersion:1,
     title:"Guardian reviews · all retained sessions · UTC",
     compactTitle:"Guardian reviews",
-    wideHeader:"  Time      Decision        Duration  Reviewed command",
+    wideHeader:"  UTC date/time             Decision        Duration  Reviewed command",
     initialQuery:lvSafeText(initialQuery).replace(/[\r\n\t]/g," ").slice(0,300),
     fallbackText:`Guardian journals: ${join(stateDir,"logs","guardian","runs")} (viewer requires Pi's terminal UI).`,
     unavailableText:"Guardian log viewer needs Pi's custom terminal UI.",
