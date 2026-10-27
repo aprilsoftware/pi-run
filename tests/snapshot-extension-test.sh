@@ -30,7 +30,7 @@ const alias = Object.fromEntries(['pi-agent-core', 'pi-tui'].map(name => [
   `@earendil-works/${name}`, join(piDir, 'node_modules', '@earendil-works', name, 'dist', 'index.js'),
 ]));
 alias['@earendil-works/pi-coding-agent'] = join(piDir, 'dist', 'index.js');
-const extensionPath = join(root, 'docker', 'extensions', 'snapshot-agent.ts');
+const extensionPath = join(root, 'docker', 'extensions', 'snapshot', 'snapshot-agent.ts');
 const module = await createJiti(import.meta.url, { alias, fsCache: false }).import(extensionPath);
 const { loadExtensions } = await import(pathToFileURL(join(piDir, 'dist', 'core', 'extensions', 'loader.js')).href);
 const loaded = await loadExtensions([extensionPath], root);
@@ -243,7 +243,7 @@ REQUEST_ACTION=status output="$(run_launch)"
 grep -Fx -- --session "${MAIN_LOG}" >/dev/null || fail "snapshot did not reopen an exact session"
 grep -E '^/profile/sessions/[0-9a-f-]{36}/pirun\.jsonl$' "${MAIN_LOG}" >/dev/null \
     || fail "snapshot reopened the wrong physical session file"
-grep -Fx -- /usr/local/lib/node_modules/snapshot-agent/snapshot-agent.ts "${MAIN_LOG}" >/dev/null \
+grep -Fx -- /usr/local/lib/node_modules/pi-run-extensions/snapshot/snapshot-agent.ts "${MAIN_LOG}" >/dev/null \
     || fail "snapshot extension was not explicitly loaded"
 grep -F 'dst=/run/pi-run-snapshot' "${MAIN_LOG}" >/dev/null || fail "request directory was not mounted"
 if grep -F 'dst=/snapshots' "${MAIN_LOG}" >/dev/null; then fail "Pi container received snapshot repository access"; fi

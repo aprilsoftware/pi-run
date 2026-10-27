@@ -7,11 +7,11 @@ import { lstat, mkdir, open, realpath, rename, unlink } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { Type } from "typebox";
-import { connectGuardClient, connectGuardReviewClient, type GuardActivityLeaseV1, type GuardReviewDiagnosticSnapshotV1, type GuardReviewResultV1, type GuardViewRequestV1 } from "./guard-runtime.ts";
-import { createSessionGuardJournalWriter, guardJournalWorkspaceId, readWorkspaceGuardJournal, type WorkspaceGuardJournalRecord } from "./guard-journal.ts";
-import { EvidenceBudgetError, EvidenceService, type EvidenceRequest, type EvidenceStep, type LogSink, type ReviewInstruction } from "./guard-evidence.ts";
+import { connectGuardClient, connectGuardReviewClient, type GuardActivityLeaseV1, type GuardReviewDiagnosticSnapshotV1, type GuardReviewResultV1, type GuardViewRequestV1 } from "../guard/guard-runtime.ts";
+import { createSessionGuardJournalWriter, guardJournalWorkspaceId, readWorkspaceGuardJournal, type WorkspaceGuardJournalRecord } from "../guard/guard-journal.ts";
+import { EvidenceBudgetError, EvidenceService, type EvidenceRequest, type EvidenceStep, type LogSink, type ReviewInstruction } from "../guard/guard-evidence.ts";
 import { AgenticGuardReviewer, registerAgenticGuardReviewDomain, type AgenticEvidenceDefinition, type AgenticGuardBackendContext, type AgenticGuardBackendRequest,
-  type AgenticGuardReviewerSelection, type AgenticJson, type AgenticReviewDomain, type AgenticReviewServices } from "./guard-reviewer-agent.ts";
+  type AgenticGuardReviewerSelection, type AgenticJson, type AgenticReviewDomain, type AgenticReviewServices } from "../guard/guard-reviewer-agent.ts";
 
 const THINKING = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 const CONFIG_BYTES = 16 * 1024;

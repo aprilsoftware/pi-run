@@ -16,7 +16,7 @@ const alias = Object.fromEntries(['pi-agent-core', 'pi-tui'].map(name => [
 ]));
 alias['@earendil-works/pi-coding-agent'] = join(piDir, 'dist', 'index.js');
 alias['@earendil-works/pi-ai'] = join(piDir, 'node_modules', '@earendil-works', 'pi-ai', 'dist', 'compat.js');
-const g = await createJiti(import.meta.url, { alias, fsCache: false }).import(join(root, 'docker', 'extensions', 'guardian-agent.ts'));
+const g = await createJiti(import.meta.url, { alias, fsCache: false }).import(join(root, 'docker', 'extensions', 'guardian', 'guardian-agent.ts'));
 function make(messages) {
   const conversation = messages.map(([role, text], order) => ({ id: `M${order + 1}`, role, text, order }));
   const request = {

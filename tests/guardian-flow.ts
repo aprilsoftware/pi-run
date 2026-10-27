@@ -4,8 +4,8 @@ import { chmod, lstat, mkdtemp, mkdir, writeFile, readFile, readdir, rm, symlink
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext, ExtensionUIContext, ToolCallEventResult } from "@earendil-works/pi-coding-agent";
-import guardRuntime, { GUARD_RUNTIME_DISCOVER, type GuardRuntimeV1 } from "../docker/extensions/guard-runtime.ts";
-import { createGuardianExtension, createGuardianLogViewRequest, createLogger, loadGuardianModeConfig, parseGuardianConfig, parseGuardianModeConfig, readGuardianLogs, reviewFailureSummary, saveGuardianModeConfig, type ReviewDecision } from "../docker/extensions/guardian-agent.ts";
+import guardRuntime, { GUARD_RUNTIME_DISCOVER, type GuardRuntimeV1 } from "../docker/extensions/guard/guard-runtime.ts";
+import { createGuardianExtension, createGuardianLogViewRequest, createLogger, loadGuardianModeConfig, parseGuardianConfig, parseGuardianModeConfig, readGuardianLogs, reviewFailureSummary, saveGuardianModeConfig, type ReviewDecision } from "../docker/extensions/guardian/guardian-agent.ts";
 
 type Outcome = ReviewDecision["outcome"] | "unavailable";
 type Handler = (event: any, ctx: ExtensionContext) => unknown | Promise<unknown>;

@@ -16,7 +16,7 @@ import { basename, dirname, join } from 'node:path';
 const [root, piDir, tmp] = process.argv.slice(2);
 const require = createRequire(join(piDir, 'package.json'));
 const { createJiti } = require('jiti');
-const file = join(root, 'docker', 'extensions', 'guard-journal.ts');
+const file = join(root, 'docker', 'extensions', 'guard', 'guard-journal.ts');
 const journal = await createJiti(import.meta.url, { fsCache: false }).import(file);
 const mode = async path => (await stat(path)).mode & 0o777;
 const exists = async path => stat(path).then(() => true, error => error.code === 'ENOENT' ? false : Promise.reject(error));
@@ -103,6 +103,6 @@ const withoutLegacy=await journal.readWorkspaceGuardJournal({schemaVersion:2,sta
 assert.ok(!JSON.stringify(withoutLegacy.records).includes('legacy-v09'));assert.equal(await exists(legacyPath),true);
 assert.equal(journal.createGuardJournalWriter,undefined);assert.equal(journal.readGuardJournal,undefined);assert.equal(journal.maintainGuardJournalRetention,undefined);
 assert.equal(typeof journal.createSessionGuardJournalWriter,'function');assert.equal(typeof journal.readWorkspaceGuardJournal,'function');
-assert.ok((await readFile(join(root,'docker','Dockerfile'),'utf8')).includes('COPY extensions/guard-journal.ts /usr/local/lib/node_modules/guardian-agent/'));
+assert.ok((await readFile(join(root,'docker','Dockerfile'),'utf8')).includes('COPY extensions/guard/guard-journal.ts /usr/local/lib/node_modules/pi-run-extensions/guard/'));
 console.log(`workspace session journal writing, reading, rotation, isolation, bounds, and safety tests passed (${basename(file)})`);
 NODE

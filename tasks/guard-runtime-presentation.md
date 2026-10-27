@@ -22,11 +22,11 @@ multi-line notification, so shared storage did not produce a shared experience.
 The implemented structure is now:
 
 ```text
-docker/extensions/guard-runtime.ts
-└── docker/extensions/guard-viewer.ts   private generic viewer
+docker/extensions/guard/guard-runtime.ts
+└── docker/extensions/guard/guard-viewer.ts   private generic viewer
 
-docker/extensions/guardian-agent.ts    Guardian presentation model
-docker/extensions/caf-agent.ts         CAF presentation model
+docker/extensions/guardian/guardian-agent.ts Guardian presentation model
+docker/extensions/caf/caf-agent.ts           CAF presentation model
 ```
 
 Only Guard Runtime imports and opens the private viewer. Guardian and CAF supply

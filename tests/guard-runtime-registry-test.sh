@@ -19,14 +19,14 @@ const alias = {
   '@earendil-works/pi-coding-agent': join(piDir, 'dist', 'index.js'),
   '@earendil-works/pi-tui': tuiPath,
 };
-const file = join(root, 'docker', 'extensions', 'guard-runtime.ts');
+const file = join(root, 'docker', 'extensions', 'guard', 'guard-runtime.ts');
 const module = await createJiti(import.meta.url, { alias, fsCache: false }).import(file);
 const [runtimeSource,guardianSource,cafSource,dockerfile]=await Promise.all([
-  readFile(file,'utf8'),readFile(join(root,'docker','extensions','guardian-agent.ts'),'utf8'),readFile(join(root,'docker','extensions','caf-agent.ts'),'utf8'),readFile(join(root,'docker','Dockerfile'),'utf8'),
+  readFile(file,'utf8'),readFile(join(root,'docker','extensions','guardian','guardian-agent.ts'),'utf8'),readFile(join(root,'docker','extensions','caf','caf-agent.ts'),'utf8'),readFile(join(root,'docker','Dockerfile'),'utf8'),
 ]);
 assert.match(runtimeSource,/from "\.\/guard-viewer\.ts"/,'Only Guard Runtime may own the private viewer');
-assert.doesNotMatch(guardianSource,/\.ui\.custom\b|openGuardView|from "\.\/guard-viewer\.ts"/,'Guardian must supply semantics through the runtime contract');
-assert.match(dockerfile,/COPY extensions\/guard-viewer\.ts \/usr\/local\/lib\/node_modules\/guardian-agent\//);
+assert.doesNotMatch(guardianSource,/\.ui\.custom\b|openGuardView|from ["'][^"']*guard-viewer\.ts["']/,'Guardian must supply semantics through the runtime contract');
+assert.match(dockerfile,/COPY extensions\/guard\/guard-viewer\.ts \/usr\/local\/lib\/node_modules\/pi-run-extensions\/guard\//);
 assert.match(guardianSource,/name:"guardian-model"/);assert.match(guardianSource,/name:"guardian-thinking"/);assert.match(guardianSource,/guardConnection\.configureReviewer/);
 assert.doesNotMatch(guardianSource,/saveGuardReviewerConfig/,'Guardian commands must persist reviewer settings through Guard Runtime');
 assert.doesNotMatch(runtimeSource,/registerCommand\(["']guard-(?:model|thinking)["']/,'Guard Runtime must not register reviewer commands');

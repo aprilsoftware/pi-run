@@ -48,6 +48,24 @@ done
     || fail "release workflow has no SPDX license identifier"
 [[ "$(sed -n '2p' "${BASH_SOURCE[0]}")" == "${SPDX}" ]] \
     || fail "packaging test has no SPDX license identifier"
+expected_extension_layout="$(printf '%s\n' \
+    caf/caf-agent.ts \
+    guard/guard-evidence.ts \
+    guard/guard-journal.ts \
+    guard/guard-reviewer-agent.ts \
+    guard/guard-runtime.ts \
+    guard/guard-viewer.ts \
+    guardian/guardian-agent.ts \
+    plan/plan-agent.ts \
+    snapshot/snapshot-agent.ts | LC_ALL=C sort)"
+actual_extension_layout="$(find "${ROOT}/docker/extensions" -mindepth 1 \( -type f -o -type l \) \
+    -printf '%P\n' | LC_ALL=C sort)"
+[[ "${actual_extension_layout}" == "${expected_extension_layout}" ]] \
+    || fail "runtime extension source layout differs from the architectural boundary"
+while IFS= read -r extension; do
+    path="${ROOT}/docker/extensions/${extension}"
+    [[ -f "${path}" && ! -L "${path}" ]] || fail "unsafe runtime extension source: ${extension}"
+done <<<"${expected_extension_layout}"
 image_license="${ROOT}/docker/licenses/pi-run-LICENSE"
 [[ -f "${image_license}" && ! -L "${image_license}" ]] \
     || fail "runtime image license is missing or unsafe"

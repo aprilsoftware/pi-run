@@ -23,10 +23,10 @@ const alias = {
   '@earendil-works/pi-ai': join(piDir, 'node_modules', '@earendil-works', 'pi-ai', 'dist', 'compat.js'),
 };
 const jiti = createJiti(import.meta.url, { alias, fsCache: false });
-const g = await jiti.import(join(root, 'docker', 'extensions', 'guardian-agent.ts'));
-const shared = await jiti.import(join(root, 'docker', 'extensions', 'guard-reviewer-agent.ts'));
+const g = await jiti.import(join(root, 'docker', 'extensions', 'guardian', 'guardian-agent.ts'));
+const shared = await jiti.import(join(root, 'docker', 'extensions', 'guard', 'guard-reviewer-agent.ts'));
 const dockerfile = await readFile(join(root, 'docker', 'Dockerfile'), 'utf8');
-assert.ok(dockerfile.includes('COPY extensions/guard-reviewer-agent.ts /usr/local/lib/node_modules/guardian-agent/'));
+assert.ok(dockerfile.includes('COPY extensions/guard/guard-reviewer-agent.ts /usr/local/lib/node_modules/pi-run-extensions/guard/'));
 const core = await import(pathToFileURL(packagePath('pi-agent-core')).href);
 const ai = await import(pathToFileURL(join(piDir, 'node_modules', '@earendil-works', 'pi-ai', 'dist', 'compat.js')).href);
 const {createEventBus}=await import(pathToFileURL(join(piDir,'dist/core/event-bus.js')).href);

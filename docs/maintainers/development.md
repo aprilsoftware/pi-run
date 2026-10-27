@@ -85,7 +85,7 @@ independent services.
 | `docker/Dockerfile` | Versioned runtime toolchain and bundled components |
 | `docker/entrypoint.sh` | Runtime UID/GID mapping, setup, and privilege drop |
 | `docker/egress/` | Versioned restricted-egress sidecar image and firewall/proxy entrypoint |
-| `docker/extensions/` | Planning, Guardian, and snapshot-request extensions |
+| `docker/extensions/` | Guard infrastructure plus sibling Guardian, CAF, Planning, and Snapshot extensions |
 | `docker/skills/` | Runtime-owned core skills |
 | `templates/profiles/default/` | Definitions copied when the data home is initialized |
 | `scripts/build-release` | Reproducible host-application archive and checksum builder |

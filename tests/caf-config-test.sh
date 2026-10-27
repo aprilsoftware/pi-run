@@ -14,17 +14,17 @@ import { pathToFileURL } from 'node:url';
 const [root,piDir,tmp]=process.argv.slice(2),require=createRequire(join(piDir,'package.json')),{createJiti}=require('jiti');
 const alias={'@earendil-works/pi-coding-agent':join(piDir,'dist','index.js'),'@earendil-works/pi-agent-core':join(piDir,'node_modules','@earendil-works','pi-agent-core','dist','index.js'),'@earendil-works/pi-ai':join(piDir,'node_modules','@earendil-works','pi-ai','dist','index.js'),'@earendil-works/pi-tui':join(piDir,'node_modules','@earendil-works','pi-tui','dist','index.js'),typebox:require.resolve('typebox')};
 const jiti=createJiti(import.meta.url,{alias,fsCache:false});
-const cafFile=join(root,'docker/extensions/caf-agent.ts'),guardianFile=join(root,'docker/extensions/guardian-agent.ts'),runtimeFile=join(root,'docker/extensions/guard-runtime.ts'),journalFile=join(root,'docker/extensions/guard-journal.ts'),evidenceFile=join(root,'docker/extensions/guard-evidence.ts');
+const cafFile=join(root,'docker/extensions/caf/caf-agent.ts'),guardianFile=join(root,'docker/extensions/guardian/guardian-agent.ts'),runtimeFile=join(root,'docker/extensions/guard/guard-runtime.ts'),journalFile=join(root,'docker/extensions/guard/guard-journal.ts'),evidenceFile=join(root,'docker/extensions/guard/guard-evidence.ts');
 const [cafSource,guardianSource,evidenceSource,evidenceDockerfile]=await Promise.all([cafFile,guardianFile,evidenceFile,join(root,'docker/Dockerfile')].map(path=>readFile(path,'utf8')));
 assert.doesNotMatch(cafSource,/from\s+["']\.\/guardian-agent\.ts["']/,'CAF must not import Guardian');
 assert.match(cafSource,/from\s+["']@earendil-works\/pi-agent-core["']/,'CAF friend must use the native Pi agent core');assert.match(cafSource,/new Agent\(/,'CAF friend must instantiate a private Agent');
 assert.doesNotMatch(cafSource,/CAF friend call timed out|callCafFriendModel/,'CAF friend must not use the legacy timed model-call workflow');
-assert.match(cafSource,/from\s+["']\.\/guard-evidence\.ts["']/,'CAF must use the shared evidence layer');
-assert.match(guardianSource,/from\s+["']\.\/guard-evidence\.ts["']/,'Guardian must use the shared evidence layer');
+assert.match(cafSource,/from\s+["']\.\.\/guard\/guard-evidence\.ts["']/,'CAF must use the shared evidence layer');
+assert.match(guardianSource,/from\s+["']\.\.\/guard\/guard-evidence\.ts["']/,'Guardian must use the shared evidence layer');
 assert.match(guardianSource,/label:"Guard reviewer model"/);assert.match(guardianSource,/label:"Guard reviewer thinking"/);
 assert.match(cafSource,/label:"Friend model"/);assert.match(cafSource,/label:"Friend thinking"/);
 assert.doesNotMatch(evidenceSource,/from\s+["']\.\/(?:guardian-agent|caf-agent|guard-runtime)\.ts["']/,'shared evidence must not import either client or Guard Runtime');
-assert.match(evidenceDockerfile,/COPY extensions\/guard-evidence\.ts \/usr\/local\/lib\/node_modules\/guardian-agent\//,'shared evidence must be packaged');
+assert.match(evidenceDockerfile,/COPY extensions\/guard\/guard-evidence\.ts \/usr\/local\/lib\/node_modules\/pi-run-extensions\/guard\//,'shared evidence must be packaged');
 const caf=await jiti.import(cafFile),runtime=await jiti.import(runtimeFile),journal=await jiti.import(journalFile),piAi=await import(pathToFileURL(alias['@earendil-works/pi-ai']).href);
 const valid={schemaVersion:1,model:'friend/frontier',thinking:'high'};
 assert.deepEqual(caf.defaultCafConfig(),{schemaVersion:1,model:null,thinking:null});
@@ -298,8 +298,8 @@ branch=[{type:'message',id:'shutdown-user',message:{role:'user',content:[{type:'
 const callsAfterShutdown=friendCalls.length;toolResult=await callTool.execute('friend-call-shutdown',callArgs,new AbortController().signal,undefined,ctx);assert.equal(toolResult.isError,true);assert.equal(toolResult.details.status,'guard-unavailable');assert.equal(friendCalls.length,callsAfterShutdown);
 
 const dockerfile=await readFile(join(root,'docker/Dockerfile'),'utf8'),launcher=await readFile(join(root,'bin/pi-run'),'utf8');
-const guardian='/usr/local/lib/node_modules/guardian-agent/guardian-agent.ts',cafPath='/usr/local/lib/node_modules/guardian-agent/caf-agent.ts';
-assert.ok(dockerfile.includes('COPY extensions/caf-agent.ts /usr/local/lib/node_modules/guardian-agent/'));
+const guardian='/usr/local/lib/node_modules/pi-run-extensions/guardian/guardian-agent.ts',cafPath='/usr/local/lib/node_modules/pi-run-extensions/caf/caf-agent.ts';
+assert.ok(dockerfile.includes('COPY extensions/caf/caf-agent.ts /usr/local/lib/node_modules/pi-run-extensions/caf/'));
 assert.ok(launcher.includes(`--extension ${cafPath}`));assert.ok(launcher.indexOf(guardian)<launcher.indexOf(cafPath));
 console.log('reviewed CAF dialogue, web research, workspace session journals, isolation, limits, and safety tests passed');
 NODE

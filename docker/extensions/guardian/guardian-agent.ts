@@ -13,20 +13,20 @@ import type { ExtensionAPI, ExtensionContext, ToolCallEvent } from "@earendil-wo
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { Text } from "@earendil-works/pi-tui";
 import { connectGuardClient, connectGuardReviewClient, type GuardActivityLeaseV1, type GuardActivityRequestV1,
-  type GuardReviewDiagnosticSnapshotV1, type GuardReviewResultV1, type GuardViewRequestV1 } from "./guard-runtime.ts";
-import { createSessionGuardJournalWriter, guardJournalWorkspaceId, readWorkspaceGuardJournal } from "./guard-journal.ts";
+  type GuardReviewDiagnosticSnapshotV1, type GuardReviewResultV1, type GuardViewRequestV1 } from "../guard/guard-runtime.ts";
+import { createSessionGuardJournalWriter, guardJournalWorkspaceId, readWorkspaceGuardJournal } from "../guard/guard-journal.ts";
 import { AgenticGuardReviewer, adoptLegacyGuardReviewerConfig, defaultGuardReviewerConfig, effectiveAgenticThinking, loadGuardReviewerConfig,
   registerAgenticGuardReviewDomain,
   type AgenticEvidenceDefinition, type AgenticGuardBackendContext, type AgenticGuardBackendRequest,
   type AgenticGuardReviewerSelection, type AgenticReviewDomain, type GuardReviewerConfig, type PiInfrastructure, type ProviderStream,
-} from "./guard-reviewer-agent.ts";
+} from "../guard/guard-reviewer-agent.ts";
 import { EVIDENCE_GUIDES, EvidenceBudgetError, EvidenceService, HistoryIndex, loadEvidenceInstruction, loadNestedEvidenceInstructions,
   type EvidenceLogLevel as LogLevel, type EvidenceOperation, type EvidenceRequest, type EvidenceStep, type LogSink,
-  type ReviewInstruction, type ReviewMessage, type SourceExcerpt } from "./guard-evidence.ts";
-export { EvidenceBudgetError, EvidenceService, HistoryIndex } from "./guard-evidence.ts";
-export type { EvidenceOperation, LogSink, ReviewInstruction, ReviewMessage, SourceExcerpt } from "./guard-evidence.ts";
-export { loadPiInfrastructure } from "./guard-reviewer-agent.ts";
-export type { NativeAgentLike, PiInfrastructure, ProviderStream } from "./guard-reviewer-agent.ts";
+  type ReviewInstruction, type ReviewMessage, type SourceExcerpt } from "../guard/guard-evidence.ts";
+export { EvidenceBudgetError, EvidenceService, HistoryIndex } from "../guard/guard-evidence.ts";
+export type { EvidenceOperation, LogSink, ReviewInstruction, ReviewMessage, SourceExcerpt } from "../guard/guard-evidence.ts";
+export { loadPiInfrastructure } from "../guard/guard-reviewer-agent.ts";
+export type { NativeAgentLike, PiInfrastructure, ProviderStream } from "../guard/guard-reviewer-agent.ts";
 import { constants } from "node:fs";
 import { open, realpath, mkdir, lstat, rename, unlink } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";

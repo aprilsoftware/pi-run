@@ -16,9 +16,9 @@ await mkdir(profile,{mode:0o700});await chmod(profile,0o700);
 const require=createRequire(join(piDir,'package.json')),{createJiti}=require('jiti');
 const alias={'@earendil-works/pi-coding-agent':join(piDir,'dist','index.js'),'@earendil-works/pi-agent-core':join(piDir,'node_modules','@earendil-works','pi-agent-core','dist','index.js'),
   '@earendil-works/pi-ai':join(piDir,'node_modules','@earendil-works','pi-ai','dist','index.js'),'@earendil-works/pi-tui':join(piDir,'node_modules','@earendil-works','pi-tui','dist','index.js'),typebox:require.resolve('typebox')};
-const jiti=createJiti(import.meta.url,{alias,fsCache:false}),runtimeFile=join(root,'docker/extensions/guard-runtime.ts');
+const jiti=createJiti(import.meta.url,{alias,fsCache:false}),runtimeFile=join(root,'docker/extensions/guard/guard-runtime.ts');
 const [runtime,guardian,caf,journal]=await Promise.all([
-  jiti.import(runtimeFile),jiti.import(join(root,'docker/extensions/guardian-agent.ts')),jiti.import(join(root,'docker/extensions/caf-agent.ts')),jiti.import(join(root,'docker/extensions/guard-journal.ts')),
+  jiti.import(runtimeFile),jiti.import(join(root,'docker/extensions/guardian/guardian-agent.ts')),jiti.import(join(root,'docker/extensions/caf/caf-agent.ts')),jiti.import(join(root,'docker/extensions/guard/guard-journal.ts')),
 ]);
 const base=Date.parse('2026-04-02T12:00:00.000Z'),timestamp=index=>new Date(base+index*1000).toISOString();
 const cafWriter=journal.createSessionGuardJournalWriter({schemaVersion:2,stateDir:profile,workspaceId,sessionId,kind:'caf',maxBytes:1024*1024,backups:2,maxPending:1000});

@@ -1025,11 +1025,11 @@ PI_ARGS=(
     --no-extensions
     --extension /usr/local/lib/node_modules/pi-web-access/index.ts
     --extension /usr/local/lib/node_modules/pi-okf/extensions/okf.ts
-    --extension /usr/local/lib/node_modules/plan-agent/plan-agent.ts
-    --extension /usr/local/lib/node_modules/guardian-agent/guard-runtime.ts
-    --extension /usr/local/lib/node_modules/guardian-agent/guardian-agent.ts
-    --extension /usr/local/lib/node_modules/guardian-agent/caf-agent.ts
-    --extension /usr/local/lib/node_modules/snapshot-agent/snapshot-agent.ts
+    --extension /usr/local/lib/node_modules/pi-run-extensions/plan/plan-agent.ts
+    --extension /usr/local/lib/node_modules/pi-run-extensions/guard/guard-runtime.ts
+    --extension /usr/local/lib/node_modules/pi-run-extensions/guardian/guardian-agent.ts
+    --extension /usr/local/lib/node_modules/pi-run-extensions/caf/caf-agent.ts
+    --extension /usr/local/lib/node_modules/pi-run-extensions/snapshot/snapshot-agent.ts
     --no-prompt-templates
     --skill /usr/local/share/pi-run/skills/pi-run
     --skill /usr/local/share/pi-run/skills/profile-management

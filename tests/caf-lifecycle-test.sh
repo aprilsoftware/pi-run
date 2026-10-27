@@ -22,8 +22,8 @@ const {loadExtensions}=await import(pathToFileURL(join(piDir,'dist/core/extensio
 const {ExtensionRunner}=await import(pathToFileURL(join(piDir,'dist/core/extensions/runner.js')).href);
 const {SessionManager}=await import(pathToFileURL(join(piDir,'dist/core/session-manager.js')).href);
 const piAi=await import(pathToFileURL(join(piDir,'node_modules','@earendil-works','pi-ai','dist','index.js')).href);
-const journal=await import(pathToFileURL(join(root,'docker/extensions/guard-journal.ts')).href);
-const runtimeFile=join(root,'docker/extensions/guard-runtime.ts'),cafFile=join(root,'docker/extensions/caf-agent.ts'),modeFixture=join(tmp,'guard-mode-on-fixture.ts');
+const journal=await import(pathToFileURL(join(root,'docker/extensions/guard/guard-journal.ts')).href);
+const runtimeFile=join(root,'docker/extensions/guard/guard-runtime.ts'),cafFile=join(root,'docker/extensions/caf/caf-agent.ts'),modeFixture=join(tmp,'guard-mode-on-fixture.ts');
 await writeFile(modeFixture,`export default function(pi){let runtime;pi.events.on("pi-run:guard-runtime:v1:available",value=>{runtime=value;});pi.events.emit("pi-run:guard-runtime:v1:discover",{schemaVersion:1,accept(value){runtime=value;}});pi.on("session_start",()=>runtime.setReviewMode("on"));}\n`);
 const usage={input:3,output:2,cacheRead:0,cacheWrite:0,totalTokens:5,cost:{input:0.03,output:0.04,cacheRead:0,cacheWrite:0,total:0.07}};
 const primary={provider:'local',id:'primary',api:'openai-completions',reasoning:false,contextWindow:128000,maxTokens:8192},friend={provider:'friend',id:'frontier',api:'openai-completions',reasoning:true,contextWindow:128000,maxTokens:8192},reviewer={provider:'trusted',id:'reviewer',api:'openai-completions',reasoning:false,contextWindow:128000,maxTokens:8192};

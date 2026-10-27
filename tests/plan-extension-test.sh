@@ -20,7 +20,7 @@ const { createJiti } = require('jiti');
 const alias = { '@earendil-works/pi-coding-agent': join(piDir, 'dist', 'index.js'),
     typebox: require.resolve('typebox'), 'typebox/value': require.resolve('typebox/value'),
 };
-const file = join(root, 'docker/extensions/plan-agent.ts');
+const file = join(root, 'docker/extensions/plan/plan-agent.ts');
 const module = await createJiti(import.meta.url, { alias, fsCache: false }).import(file);
 const { loadExtensions } = await import(pathToFileURL(join(piDir, 'dist/core/extensions/loader.js')).href);
 const loaded = await loadExtensions([file], root);
@@ -560,8 +560,8 @@ await nativeCommands.get('plan-show').handler('', nativeRunner.createCommandCont
 assert.ok(nativeMessages.at(-1).content.includes('No active plan'));
 console.log('PASS lifecycle: real Pi confirmation, handoff, native session IDs, branch navigation, and discard');
 // Load Plan, Guard Runtime, and Guardian and verify their widget insertion order.
-const guardRuntimeFile = join(root, 'docker/extensions/guard-runtime.ts');
-const guardianFile = join(root, 'docker/extensions/guardian-agent.ts');
+const guardRuntimeFile = join(root, 'docker/extensions/guard/guard-runtime.ts');
+const guardianFile = join(root, 'docker/extensions/guardian/guardian-agent.ts');
 const planSource = await readFile(file, 'utf8'), guardianSource = await readFile(guardianFile, 'utf8');
 assert.ok(!planSource.includes('pi.events'), 'Planning must not coordinate through extension events');
 assert.ok(!guardianSource.includes('pi-run-plan'), 'Guardian must not depend on planning');
@@ -622,15 +622,15 @@ await layoutRunner.emit({ type: 'session_shutdown' });
 assert.equal(layoutWidgets.size, 0);
 console.log('PASS placement: independent widgets, planning before Guardian, approval/exit, resume/branches, and shutdown');
 const launcher = await readFile(join(root, 'bin/pi-run'), 'utf8');
-const planPath = '/usr/local/lib/node_modules/plan-agent/plan-agent.ts';
-const runtimePath = '/usr/local/lib/node_modules/guardian-agent/guard-runtime.ts';
-const guardianPath = '/usr/local/lib/node_modules/guardian-agent/guardian-agent.ts';
+const planPath = '/usr/local/lib/node_modules/pi-run-extensions/plan/plan-agent.ts';
+const runtimePath = '/usr/local/lib/node_modules/pi-run-extensions/guard/guard-runtime.ts';
+const guardianPath = '/usr/local/lib/node_modules/pi-run-extensions/guardian/guardian-agent.ts';
 assert.ok(launcher.includes(`--extension ${planPath}`));
 assert.ok(launcher.indexOf(planPath) < launcher.indexOf(runtimePath));
 assert.ok(launcher.indexOf(runtimePath) < launcher.indexOf(guardianPath));
 const dockerfile = await readFile(join(root, 'docker/Dockerfile'), 'utf8');
-assert.ok(dockerfile.includes('COPY extensions/plan-agent.ts /usr/local/lib/node_modules/plan-agent/'));
-assert.ok(dockerfile.includes('COPY extensions/guard-runtime.ts /usr/local/lib/node_modules/guardian-agent/'));
+assert.ok(dockerfile.includes('COPY extensions/plan/plan-agent.ts /usr/local/lib/node_modules/pi-run-extensions/plan/'));
+assert.ok(dockerfile.includes('COPY extensions/guard/guard-runtime.ts /usr/local/lib/node_modules/pi-run-extensions/guard/'));
 console.log('PASS planning: loading, commands, prompt, direct/nested hooks, restoration, no-UI, and wiring');
 NODE
 
@@ -640,6 +640,6 @@ printf '%s\n' '#!/bin/sh' 'printf "%s\n" "$@" > "${DOCKER_LOG:?}"' > "${TMP}/fak
 chmod 0755 "${TMP}/fake-bin/docker"
 PATH="${TMP}/fake-bin:${PATH}" PI_RUN_HOME="${TMP}/Pi-Run" DOCKER_LOG="${TMP}/docker.log" \
     "${ROOT}/bin/pi-run" "${TMP}/workspace" >/dev/null
-grep -Fx -- /usr/local/lib/node_modules/plan-agent/plan-agent.ts "${TMP}/docker.log" >/dev/null
-grep -Fx -- /usr/local/lib/node_modules/guardian-agent/guard-runtime.ts "${TMP}/docker.log" >/dev/null
+grep -Fx -- /usr/local/lib/node_modules/pi-run-extensions/plan/plan-agent.ts "${TMP}/docker.log" >/dev/null
+grep -Fx -- /usr/local/lib/node_modules/pi-run-extensions/guard/guard-runtime.ts "${TMP}/docker.log" >/dev/null
 echo 'PASS planning: launcher passes the explicit extension paths'

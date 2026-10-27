@@ -97,7 +97,7 @@ registry.streamSimple = (model, context, options) => {
   return originalStream(model, context, options);
 };
 
-const runtimeFile = join(root, 'docker', 'extensions', 'guard-runtime.ts'), cafFile = join(root, 'docker', 'extensions', 'caf-agent.ts');
+const runtimeFile = join(root, 'docker', 'extensions', 'guard', 'guard-runtime.ts'), cafFile = join(root, 'docker', 'extensions', 'caf', 'caf-agent.ts');
 const loaded = await loadExtensions([runtimeFile, modeFixture, cafFile], workspace);
 assert.deepEqual(loaded.errors, []);assert.equal(loaded.extensions.length, 3);
 const session = SessionManager.inMemory(workspace), runner = new ExtensionRunner(loaded.extensions, loaded.runtime, workspace, session, registry);

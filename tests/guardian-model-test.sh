@@ -111,8 +111,8 @@ const alias = Object.fromEntries(['pi-agent-core', 'pi-tui'].map(name => [
 alias['@earendil-works/pi-coding-agent'] = join(piDir, 'dist', 'index.js');
 alias['@earendil-works/pi-ai'] = join(piDir, 'node_modules', '@earendil-works', 'pi-ai', 'dist', 'compat.js');
 const jiti = createJiti(import.meta.url, { alias, fsCache: false });
-const g = await jiti.import(join(root, 'docker', 'extensions', 'guardian-agent.ts'));
-const shared = await jiti.import(join(root, 'docker', 'extensions', 'guard-reviewer-agent.ts'));
+const g = await jiti.import(join(root, 'docker', 'extensions', 'guardian', 'guardian-agent.ts'));
+const shared = await jiti.import(join(root, 'docker', 'extensions', 'guard', 'guard-reviewer-agent.ts'));
 const safe = value => g.parseGuardianLogChunks([{ name: 'memory', text: JSON.stringify({ event: 'model_test', details: value }) + '\n' }]).entries[0].details;
 const sdkImport = path => import(pathToFileURL(join(piDir, 'dist', path)).href);
 const { ModelRuntime } = await sdkImport('core/model-runtime.js');

@@ -219,16 +219,16 @@ RUN npm install -g \
         "pi-web-access@${PI_WEB_ACCESS_VERSION}" \
         "pi-okf@${PI_OKF_VERSION}"
 
-# Copy Guardian and the core Pi-Run skills into the versioned runtime image.
-COPY extensions/plan-agent.ts /usr/local/lib/node_modules/plan-agent/
-COPY extensions/guard-runtime.ts /usr/local/lib/node_modules/guardian-agent/
-COPY extensions/guard-viewer.ts /usr/local/lib/node_modules/guardian-agent/
-COPY extensions/guard-journal.ts /usr/local/lib/node_modules/guardian-agent/
-COPY extensions/guard-evidence.ts /usr/local/lib/node_modules/guardian-agent/
-COPY extensions/guard-reviewer-agent.ts /usr/local/lib/node_modules/guardian-agent/
-COPY extensions/guardian-agent.ts /usr/local/lib/node_modules/guardian-agent/
-COPY extensions/caf-agent.ts /usr/local/lib/node_modules/guardian-agent/
-COPY extensions/snapshot-agent.ts /usr/local/lib/node_modules/snapshot-agent/
+# Copy the Pi-Run extension bundle with shared Guard infrastructure and sibling clients.
+COPY extensions/plan/plan-agent.ts /usr/local/lib/node_modules/pi-run-extensions/plan/
+COPY extensions/guard/guard-runtime.ts /usr/local/lib/node_modules/pi-run-extensions/guard/
+COPY extensions/guard/guard-viewer.ts /usr/local/lib/node_modules/pi-run-extensions/guard/
+COPY extensions/guard/guard-journal.ts /usr/local/lib/node_modules/pi-run-extensions/guard/
+COPY extensions/guard/guard-evidence.ts /usr/local/lib/node_modules/pi-run-extensions/guard/
+COPY extensions/guard/guard-reviewer-agent.ts /usr/local/lib/node_modules/pi-run-extensions/guard/
+COPY extensions/guardian/guardian-agent.ts /usr/local/lib/node_modules/pi-run-extensions/guardian/
+COPY extensions/caf/caf-agent.ts /usr/local/lib/node_modules/pi-run-extensions/caf/
+COPY extensions/snapshot/snapshot-agent.ts /usr/local/lib/node_modules/pi-run-extensions/snapshot/
 COPY skills/ /usr/local/share/pi-run/skills/
 RUN test -f /usr/local/share/pi-run/skills/pi-run/SKILL.md \
     && test -f /usr/local/share/pi-run/skills/profile-management/SKILL.md \
