@@ -178,6 +178,9 @@ assert.deepEqual(unsafeRead.records, []); assert.ok(unsafeRead.notices.some(noti
 const workspaceA='11111111-1111-4111-8111-111111111111',workspaceB='22222222-2222-4222-8222-222222222222';
 const sessionA='00000000-0000-7000-8000-000000000001',sessionB='00000000-0000-7000-8000-000000000002';
 const scopedState=join(tmp,'workspace-session-profile');await mkdir(scopedState,{mode:0o700});
+const selectedSessionDir=join(scopedState,'sessions',workspaceA);await mkdir(selectedSessionDir,{recursive:true,mode:0o700});
+assert.equal(module.guardJournalWorkspaceId(scopedState,selectedSessionDir),workspaceA);
+for(const sessionDir of [join(scopedState,'sessions','bad'),join(tmp,workspaceA)])assert.throws(()=>module.guardJournalWorkspaceId(scopedState,sessionDir),/Guard journal/);
 for(const options of [null,{},
   {schemaVersion:2,stateDir:scopedState,workspaceId:'../bad',sessionId:sessionA,kind:'guardian'},
   {schemaVersion:2,stateDir:scopedState,workspaceId:workspaceA,sessionId:'bad',kind:'guardian'},

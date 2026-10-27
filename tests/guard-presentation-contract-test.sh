@@ -11,7 +11,7 @@ import { appendFile, chmod, mkdir } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-const [root,piDir,tmp]=process.argv.slice(2),profile=join(tmp,'profile');
+const [root,piDir,tmp]=process.argv.slice(2),profile=join(tmp,'profile'),workspaceId='11111111-1111-4111-8111-111111111111',sessionId='00000000-0000-7000-8000-000000000001';
 await mkdir(profile,{mode:0o700});await chmod(profile,0o700);
 const require=createRequire(join(piDir,'package.json')),{createJiti}=require('jiti');
 const alias={'@earendil-works/pi-coding-agent':join(piDir,'dist','index.js'),'@earendil-works/pi-agent-core':join(piDir,'node_modules','@earendil-works','pi-agent-core','dist','index.js'),
@@ -32,13 +32,13 @@ for(let index=0;index<60;index++){
 cafWriter.write({schemaVersion:1,timestamp:timestamp(sequence++),event:'operation_started',operationId:'partial-operation'});
 cafWriter.write({schemaVersion:1,timestamp:timestamp(sequence++),event:'session_started',mode:'on'});
 await cafWriter.flush();await appendFile(cafWriter.path,'{"malformed"\n');
-const guardianLogger=guardian.createLogger(profile,()=>{}),common={profile:'fixture',sessionId:'presentation-session',processId:7,container:'fixture',toolName:'bash',toolCallId:'call-1',reviewId:'review-1'};
+const guardianLogger=guardian.createLogger(profile,workspaceId,sessionId,()=>{}),common={profile:'fixture',sessionId,processId:7,container:'fixture',toolName:'bash',toolCallId:'call-1',reviewId:'review-1'};
 guardianLogger.write({schemaVersion:1,timestamp:timestamp(sequence++),event:'review_started',message:'Reviewing fixture',...common,details:{action:{command:'printf presentation-fixture'}}});
 guardianLogger.write({schemaVersion:1,timestamp:timestamp(sequence++),event:'review_decision',message:'Fixture allowed',...common,details:{outcome:'ALLOW',basis:'explicit_authorization',reason:'Synthetic presentation fixture.',durationMs:12}});
 guardianLogger.write({schemaVersion:1,timestamp:timestamp(sequence++),event:'review_finished',message:'Review finished',...common,details:{outcome:'ALLOW',decisionAvailable:true,durationMs:12,stage:'validate'}});
 await guardianLogger.flush();
 let guardianFlushes=0,cafFlushes=0;
-const guardianRequest=guardian.createGuardianLogViewRequest(profile,async()=>{guardianFlushes++;await guardianLogger.flush();},'allowed');
+const guardianRequest=guardian.createGuardianLogViewRequest(profile,workspaceId,async()=>{guardianFlushes++;await guardianLogger.flush();},'allowed');
 const cafRequest=caf.createCafLogViewRequest(profile,async()=>{cafFlushes++;await cafWriter.flush();},'answered');
 assert.equal(guardianRequest.initialQuery,'allowed');assert.equal(cafRequest.initialQuery,'answered');
 assert.deepEqual(guardianRequest.sections.map(section=>section.id),['summary','command','evidence','timeline']);

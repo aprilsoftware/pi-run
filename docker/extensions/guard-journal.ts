@@ -2,7 +2,7 @@
 import { constants } from "node:fs";
 import { lstat, mkdir, open, readdir, realpath, rename, rmdir, unlink } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
-import { join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 
 export interface GuardJournalOptionsV1 {
   schemaVersion: 1;
@@ -496,6 +496,12 @@ function journalId(value: unknown, name: string): string {
 function journalKind(value: unknown): GuardJournalKind {
   if (value !== "guardian" && value !== "caf") throw new Error("Invalid Guard journal kind");
   return value;
+}
+export function guardJournalWorkspaceId(stateDir: string, sessionDir: string): string {
+  if (typeof stateDir !== "string" || !stateDir || typeof sessionDir !== "string" || !sessionDir) throw new Error("Invalid Guard journal session directory");
+  const sessions = join(resolve(stateDir), "sessions"), candidate = resolve(sessionDir);
+  if (dirname(candidate) !== sessions) throw new Error("Guard journal session directory is outside the selected profile");
+  return journalId(basename(candidate), "workspace ID");
 }
 
 /** New workspace/session journal contract. v0.9.x run shards are deliberately outside this tree. */

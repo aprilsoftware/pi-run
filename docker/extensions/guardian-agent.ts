@@ -14,7 +14,7 @@ import type { Api, Model } from "@earendil-works/pi-ai";
 import { Text } from "@earendil-works/pi-tui";
 import { connectGuardClient, connectGuardReviewClient, type GuardActivityLeaseV1, type GuardActivityRequestV1,
   type GuardReviewDiagnosticSnapshotV1, type GuardReviewResultV1, type GuardViewRequestV1 } from "./guard-runtime.ts";
-import { createGuardJournalWriter, maintainGuardJournalRetention, readGuardJournal } from "./guard-journal.ts";
+import { createSessionGuardJournalWriter, guardJournalWorkspaceId, readWorkspaceGuardJournal } from "./guard-journal.ts";
 import { AgenticGuardReviewer, adoptLegacyGuardReviewerConfig, defaultGuardReviewerConfig, effectiveAgenticThinking, loadGuardReviewerConfig,
   registerAgenticGuardReviewDomain,
   type AgenticEvidenceDefinition, type AgenticGuardBackendContext, type AgenticGuardBackendRequest,
@@ -234,8 +234,6 @@ export async function saveGuardianModeConfig(stateDir:string,value:GuardianModeC
 
 const MAX_LOG_BYTES = 1024 * 1024;
 const LOG_BACKUPS = 2;
-const GUARDIAN_RETENTION_BYTES = 64 * 1024 * 1024;
-const GUARDIAN_RETENTION_RUNS = 128;
 export type { LogLevel };
 
 function logText(value: string, limit = 2400, tail = false): string {
@@ -329,15 +327,15 @@ function toolResultDetails(value: unknown, isError: boolean, toolName: string): 
     outputOmitted: !isError || !errorExcerpt || errorSource === "omitted_oversize" };
 }
 
-export function createLogger(stateDir: string, warn: (message: string) => void,
-  retention:{maxBytes:number;maxRuns:number}={maxBytes:GUARDIAN_RETENTION_BYTES,maxRuns:GUARDIAN_RETENTION_RUNS}) {
-  const writer=createGuardJournalWriter({schemaVersion:1,stateDir,clientId:"guardian",maxBytes:MAX_LOG_BYTES,backups:LOG_BACKUPS},message=>{
+export function createLogger(stateDir:string,workspaceId:string,sessionId:string,warn:(message:string)=>void,
+  limits:{maxBytes?:number;backups?:number}={}) {
+  const writer=createSessionGuardJournalWriter({schemaVersion:2,stateDir,workspaceId,sessionId,kind:"guardian",
+    maxBytes:limits.maxBytes??MAX_LOG_BYTES,backups:limits.backups??LOG_BACKUPS},message=>{
     try{warn(`${message.replace(/^Guard journal unavailable:/,"Guardian logging unavailable:")}. Reviews and dispute enforcement are unchanged. See /guardian for log status.`);}
     catch{/* UI errors must not affect the review. */}
   });
-  let closePromise:Promise<void>|undefined;
   return {
-    path:writer.path,
+    workspaceId,sessionId,path:writer.path,
     status:()=>{const health=writer.health();return health.lastError?`unavailable; ${health.dropped} record(s) not written: ${health.lastError}`:
       `${health.written?"enabled":"waiting for first write"}${health.dropped?`; ${health.dropped} earlier record(s) not written`:""}${health.pending?`; ${health.pending} pending`:""}`;},
     health:writer.health,
@@ -345,18 +343,7 @@ export function createLogger(stateDir: string, warn: (message: string) => void,
       try{const safe=logValue(entry);writer.write(safe&&typeof safe==="object"&&!Array.isArray(safe)?safe as Record<string,unknown>:undefined as never);}
       catch{writer.write(undefined as never);}
     },
-    flush:writer.flush,
-    close(){
-      if(closePromise)return closePromise;
-      closePromise=(async()=>{
-        await writer.close();if(writer.health().lastError)return;
-        try{
-          const result=await maintainGuardJournalRetention({schemaVersion:1,stateDir,clientId:"guardian",...retention});
-          if(result.status==="unavailable")try{warn(`Guardian journal retention unavailable: ${result.notices.join(" ")}`);}catch{/* Diagnostics only. */}
-        }catch(error){try{warn(`Guardian journal retention unavailable: ${errorText(error)}`);}catch{/* Diagnostics only. */}}
-      })();
-      return closePromise;
-    },
+    flush:writer.flush,close:writer.close,
   };
 }
 
@@ -812,7 +799,7 @@ export function parseGuardianLogChunks(chunks: readonly { name: string; text: st
     }
   }
   entries.sort((a,b)=>lvTime(a.value.timestamp)-lvTime(b.value.timestamp)||(()=>{
-    const aj=lvObject(a.value.journal),bj=lvObject(b.value.journal),ar=lvString(aj.runId),br=lvString(bj.runId);
+    const aj=lvObject(a.value.journal),bj=lvObject(b.value.journal),ar=lvString(aj.writerId),br=lvString(bj.writerId);
     return ar.localeCompare(br)||(lvNumber(aj.sequence)??0)-(lvNumber(bj.sequence)??0)||a.order-b.order;
   })());
   entries.forEach((entry,order)=>{entry.order=order;});
@@ -875,11 +862,11 @@ export function groupGuardianLogs(entries: readonly GuardianLogEntry[]): Guardia
   });
   return [...groups.values()].filter(actualReview).sort((a, b) => lvTime(b.timestamp) - lvTime(a.timestamp) || b.events[0].order - a.events[0].order);
 }
-/** Snapshot bounded per-run Guardian journals without writing or rotating them. */
-export async function readGuardianLogs(stateDir: string, signal?: AbortSignal): Promise<GuardianLogSnapshot> {
-  const journal=await readGuardJournal({schemaVersion:1,stateDir,clientId:"guardian",maxRecords:VIEW_RECORDS},signal);
+/** Snapshot bounded Guardian session journals for one workspace without writing or rotating them. */
+export async function readGuardianLogs(stateDir:string,workspaceId:string,signal?:AbortSignal):Promise<GuardianLogSnapshot> {
+  const journal=await readWorkspaceGuardJournal({schemaVersion:2,stateDir,workspaceId,kind:"guardian",maxRecords:VIEW_RECORDS},signal);
   const sources=new Map<string,string[]>(),chunks:{name:string;text:string}[]=[];
-  for(const record of journal.records){const name=`logs/guardian/${record.source}`,lines=sources.get(name)??[];lines.push(JSON.stringify(record.value));sources.set(name,lines);}
+  for(const record of journal.records){const name=`logs/${workspaceId}/${record.source}`,lines=sources.get(name)??[];lines.push(JSON.stringify(record.value));sources.set(name,lines);}
   for(const [name,lines] of sources)chunks.push({name,text:lines.join("\n")+"\n"});
   return parseGuardianLogChunks(chunks,journal.notices.map(notice=>`Journal: ${notice}`));
 }
@@ -1064,15 +1051,15 @@ async function flushGuardianLogView(flush:()=>Promise<void>,signal:AbortSignal):
   try{await Promise.race([task,new Promise<void>(resolve=>{timer=setTimeout(resolve,500);}),new Promise<never>((_resolve,reject)=>{rejectAbort=reject;signal.addEventListener("abort",abort,{once:true});if(signal.aborted)abort();})]);signal.throwIfAborted();}
   finally{if(timer)clearTimeout(timer);signal.removeEventListener("abort",abort);}
 }
-export function createGuardianLogViewRequest(stateDir:string,flush:()=>Promise<void>,initialQuery=""):GuardViewRequestV1{
+export function createGuardianLogViewRequest(stateDir:string,workspaceId:string,flush:()=>Promise<void>,initialQuery=""):GuardViewRequestV1{
   let snapshot:GuardianLogSnapshot|undefined;
   return {
     schemaVersion:1,
-    title:"Guardian reviews · all retained sessions · UTC",
+    title:"Guardian reviews · current workspace · UTC",
     compactTitle:"Guardian reviews",
     wideHeader:"  UTC date/time             Decision        Duration  Reviewed command",
     initialQuery:lvSafeText(initialQuery).replace(/[\r\n\t]/g," ").slice(0,300),
-    fallbackText:`Guardian journals: ${join(stateDir,"logs","guardian","runs")} (viewer requires Pi's terminal UI).`,
+    fallbackText:`Guardian journals: ${join(stateDir,"logs",workspaceId)} (viewer requires Pi's terminal UI).`,
     unavailableText:"Guardian log viewer needs Pi's custom terminal UI.",
     emptyText:"No Guardian reviews retained. Commands skipped while Guardian was Off are hidden.",
     noMatchesText:"No reviews match this search.",
@@ -1080,7 +1067,7 @@ export function createGuardianLogViewRequest(stateDir:string,flush:()=>Promise<v
     incompleteNoticeText:"review list may be incomplete",
     sections:GUARDIAN_LOG_TABS.map(label=>({id:label.toLowerCase(),label})),
     async load(signal){
-      await flushGuardianLogView(flush,signal);snapshot=await readGuardianLogs(stateDir,signal);
+      await flushGuardianLogView(flush,signal);snapshot=await readGuardianLogs(stateDir,workspaceId,signal);
       return {schemaVersion:1,loadedAt:snapshot.loadedAt,notices:snapshot.notices,rows:snapshot.reviews.map(review=>{
         const summary=summarizeGuardianLog(review),suffix=review.partial?" [partial]":"";
         return {id:review.key,searchText:review.searchText,
@@ -1167,24 +1154,28 @@ export function createGuardianExtension(factory: ReviewerFactory = createPiRevie
     let enabled = false,modeRecorded=false,defaultMode:GuardianDefaultMode="off",defaultModeError:string|undefined,displayState = "Off", displayDetail = ""; // Never inferred from model output.
     // Guard Runtime owns the dialog lifecycle; Guardian supplies only journal semantics.
     function closeLogViewer(): void { guardConnection.closeView(); }
-    async function logsCommand(args: string, ctx: ExtensionContext): Promise<void> {
-      pinSessionMode(ctx);
-      try { await guardConnection.openView(createGuardianLogViewRequest(stateDir,()=>logger.flush(),args.trim().slice(0,300))); }
-      catch (e) { ctx.ui.notify(oneLine(`Cannot open guardian log: ${errorText(e)}`,240),"warning"); }
+    let logUI:ExtensionContext|undefined,logger:ReturnType<typeof createLogger>|undefined,journalError:string|undefined;
+    const warnLog=(message:string)=>{if(logUI)logUI.ui.notify(visible(message),"warning");else console.error(visible(message));};
+    const journalScope=(ctx:ExtensionContext)=>({workspaceId:guardJournalWorkspaceId(stateDir,ctx.sessionManager.getSessionDir()),sessionId:ctx.sessionManager.getSessionId()});
+    async function selectLogger(ctx:ExtensionContext):Promise<void>{
+      const scope=journalScope(ctx);if(logger?.workspaceId===scope.workspaceId&&logger.sessionId===scope.sessionId)return;
+      await logger?.close();logger=createLogger(stateDir,scope.workspaceId,scope.sessionId,warnLog);journalError=undefined;
     }
-    let logUI: ExtensionContext | undefined;
-    const logger = createLogger(stateDir, message => {
-      if (logUI) logUI.ui.notify(visible(message), "warning");
-      else console.error(visible(message));
-    });
+    async function logsCommand(args:string,ctx:ExtensionContext):Promise<void>{
+      pinSessionMode(ctx);
+      try{const scope=journalScope(ctx),active=logger?.workspaceId===scope.workspaceId&&logger.sessionId===scope.sessionId?logger:undefined;
+        await guardConnection.openView(createGuardianLogViewRequest(stateDir,scope.workspaceId,()=>active?.flush()??Promise.resolve(),args.trim().slice(0,300)));}
+      catch(e){ctx.ui.notify(oneLine(`Cannot open guardian log: ${errorText(e)}`,240),"warning");}
+    }
     let sequence = 0;
     function sink(ctx: ExtensionContext, action?: ActionRef): LogSink {
-      logUI = ctx;
+      logUI=ctx;let active:ReturnType<typeof createLogger>|undefined;
+      try{const scope=journalScope(ctx);if(logger?.workspaceId===scope.workspaceId&&logger.sessionId===scope.sessionId)active=logger;}
+      catch(error){journalError=errorText(error);}
       const common = { profile: process.env.PI_RUN_PROFILE || "default",
         sessionId: ctx.sessionManager.getSessionId(), processId: process.pid, container: process.env.HOSTNAME,
         toolName: action?.toolName, toolCallId: action?.toolCallId, reviewId: action?.reviewId, cwd: ctx.cwd };
-      return (level, event, message, details) => logger.write({ timestamp: new Date().toISOString(),
-        ...common, sequence: ++sequence, level, event, message, details });
+      return (level,event,message,details)=>active?.write({timestamp:new Date().toISOString(),...common,sequence:++sequence,level,event,message,details});
     }
     // Only for correlating final reports. Bounded; never a permission cache.
     const traces = new Map<string, Trace>();
@@ -1455,6 +1446,7 @@ export function createGuardianExtension(factory: ReviewerFactory = createPiRevie
 
     pi.on("session_start", async (_event, ctx) => {
       invalidate();dispute=undefined;store.clear();binding.reset?.();last=undefined;config=defaultGuardReviewerConfig();configNeedsWrite=true;
+      try{await selectLogger(ctx);}catch(error){logger=undefined;journalError=errorText(error);tell(ctx,`Guardian logging unavailable: ${journalError}. Reviews and dispute enforcement are unchanged.`,"warning");}
       let configSource="default";
       try{config=await loadGuardReviewerConfig(stateDir);configNeedsWrite=false;configSource="guard_file";}
       catch(e){
@@ -1476,7 +1468,7 @@ export function createGuardianExtension(factory: ReviewerFactory = createPiRevie
       enabled=restored.mode==="on";publishGuardMode(ctx);dispute=enabled?restoredGuardianDispute(ctx):undefined;syncJustificationTool(ctx);
       statusOwner++;status(ctx,dispute?"Dispute":enabled?"On":"Off",dispute?(dispute.phase==="awaiting-user"?"awaiting you":"investigating"):"");
       sink(ctx)("SESSION_START", "session_started", "Guardian ready; logs are diagnostic only", {
-        logPath: logger.path, maxBytes: MAX_LOG_BYTES, backups: LOG_BACKUPS,
+        logPath:logger?.path??"unavailable",maxBytes:MAX_LOG_BYTES,backups:LOG_BACKUPS,
         configPath:join(stateDir,"guard","config.json"),legacyConfigPath:join(stateDir,"guardian","config.json"),configSource,
         mode:restored.mode,modeSource:restored.source,newSessionDefault:defaultMode,defaultModeAvailable:!defaultModeError,model:config.model??"not_selected",thinking:config.thinking??"low",
         reviewScope: "command_execution", toolNames: [...GUARDED_COMMAND_TOOLS],
@@ -1498,12 +1490,12 @@ export function createGuardianExtension(factory: ReviewerFactory = createPiRevie
       traces.clear();
       sink(ctx)("INFO", "session_stopped", "Draining diagnostic logs; forced termination cannot guarantee delivery");
       // Bounded drain with a visible timeout; never hold authorization on disk I/O.
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      try {
-        const drained = await Promise.race([logger.close().then(() => true),
-          new Promise<false>(resolve => { timer = setTimeout(() => resolve(false), 1500); })]);
-        if (!drained) console.error(`Guardian journal shutdown incomplete: ${logger.health().pending} record(s) pending or retention still running at ${logger.path}`);
-      } finally { if (timer) clearTimeout(timer); }
+      let timer:ReturnType<typeof setTimeout>|undefined;const closing=logger;
+      if(!closing)return;
+      try{
+        const drained=await Promise.race([closing.close().then(()=>true),new Promise<false>(resolve=>{timer=setTimeout(()=>resolve(false),1500);})]);
+        if(!drained)console.error(`Guardian journal shutdown incomplete: ${closing.health().pending} record(s) pending at ${closing.path}`);
+      }finally{if(timer)clearTimeout(timer);if(logger===closing)logger=undefined;}
     });
     pi.on("input", (event,ctx) => {
       // Real user feedback reopens normal review, but is not authority by mere presence.
@@ -1796,9 +1788,9 @@ export function createGuardianExtension(factory: ReviewerFactory = createPiRevie
       pinSessionMode(ctx);let description: readonly string[] = [];
       try { description = binding.describe?.(ctx) ?? []; } catch { /* Mode is usable even with no model. */ }
       const fields = description.filter(line => /^(Model|Thinking):/.test(line));
-      const health = logger.health();
-      tell(ctx, [`Guard review · ${enabled ? "On" : "Off"} · Guardian bash/run · CAF ${enabled?"guarded":"direct"}${dispute?` · dispute ${dispute.phase}`:""}`,`New sessions: ${defaultMode}${defaultModeError?` — unavailable (${defaultModeError})`:""}`, ...fields,
-        `Log: ${logger.path}${health.lastError ? " (unavailable)" : ""}`].join("\n"));
+      const health=logger?.health();
+      tell(ctx,[`Guard review · ${enabled?"On":"Off"} · Guardian bash/run · CAF ${enabled?"guarded":"direct"}${dispute?` · dispute ${dispute.phase}`:""}`,`New sessions: ${defaultMode}${defaultModeError?` — unavailable (${defaultModeError})`:""}`,...fields,
+        `Log: ${logger?.path??`unavailable${journalError?` — ${journalError}`:""}`}${health?.lastError?" (unavailable)":""}`].join("\n"));
     }
     pi.registerCommand("guardian-mode", { description: "Turn shared Guard review on/off for this session", handler: modeCommand });
     pi.registerCommand("guardian-default", { description: "Set shared Guard review for genuinely new sessions", handler: defaultModeCommand });

@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { chmod, lstat, mkdtemp, mkdir, writeFile, readFile, readdir, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext, ExtensionUIContext, ToolCallEventResult } from "@earendil-works/pi-coding-agent";
 import guardRuntime, { GUARD_RUNTIME_DISCOVER, type GuardRuntimeV1 } from "../docker/extensions/guard-runtime.ts";
 import { createGuardianExtension, createGuardianLogViewRequest, createLogger, loadGuardianModeConfig, parseGuardianConfig, parseGuardianModeConfig, readGuardianLogs, saveGuardianModeConfig, type ReviewDecision } from "../docker/extensions/guardian-agent.ts";
@@ -23,13 +23,13 @@ type Scenario = keyof typeof scenarios;
 async function runScenario(name: Scenario, realUI?: ExtensionUIContext, withRuntime=true): Promise<void> {
   const scenario = scenarios[name];
   const root = await mkdtemp(join(tmpdir(), "guardian-flow-"));
-  const profile = join(root, "profile"), workspace = join(root, "workspace");
+  const profile=join(root,"profile"),workspace=join(root,"workspace"),workspaceId="11111111-1111-4111-8111-111111111111",sessionDir=join(profile,"sessions",workspaceId);
   const handlers = new Map<string, Handler[]>(), busHandlers = new Map<string, Set<(data:unknown)=>void>>();
   const commands = new Map<string, {handler:(args:string,ctx:ExtensionContext)=>Promise<void>}>();
   const tools = new Map<string,any>();
   let activeTools=["bash","read","edit","write","custom-effect"];
   const calls: string[] = [], reviewedIds: string[] = [], notices: string[] = [], statusLines: string[] = [];
-  let outcome: Outcome = scenario.outcome, sessionId = "guardian-flow-test", reviews = 0, assessmentReviews=0, aborts = 0;
+  let outcome:Outcome=scenario.outcome,sessionId="00000000-0000-7000-8000-000000000001",reviews=0,assessmentReviews=0,aborts=0;
   let viewerCalls=0,viewerText="";
   let runtimeService:GuardRuntimeV1|undefined;
   const userEntry = { type: "message", id: "user-1", message: { role: "user", content: "Synthetic test direction; no action may execute." } };
@@ -44,7 +44,7 @@ async function runScenario(name: Scenario, realUI?: ExtensionUIContext, withRunt
     model:reviewerModel,modelRegistry:{find:(provider:string,id:string)=>provider==="synthetic"&&id==="reviewer"?reviewerModel:undefined,getAvailable:()=>[reviewerModel]},
     abort: () => { aborts++; },
     sessionManager: {
-      getSessionId: () => sessionId, getCwd: () => workspace,
+      getSessionId:()=>sessionId,getSessionDir:()=>sessionDir,getCwd:()=>workspace,
       getLeafId: () => branch.at(-1)?.id, getBranch: () => branch, getEntries: () => entries,
     },
     ui: {
@@ -76,8 +76,8 @@ async function runScenario(name: Scenario, realUI?: ExtensionUIContext, withRunt
     return tools.get("guardian_justify").execute(id,params,undefined,undefined,ctx);
   };
   try {
-    await mkdir(join(profile, "guardian"), { recursive: true, mode: 0o700 });
-    await mkdir(workspace);
+    await mkdir(join(profile,"guardian"),{recursive:true,mode:0o700});
+    await mkdir(sessionDir,{recursive:true,mode:0o700});await mkdir(workspace);
     await writeFile(join(profile, "AGENTS.md"), "Synthetic profile: user direction defines authorization.\n");
     await writeFile(join(profile, "guardian", "guardian.md"), "Synthetic reviewer fixture; never execute actions.\n");
     const config = JSON.stringify({ schemaVersion: 1, mode: "on", model: "synthetic/reviewer", thinking: "low" });
@@ -156,7 +156,7 @@ async function runScenario(name: Scenario, realUI?: ExtensionUIContext, withRunt
       await commands.get("guardian")!.handler("status",ctx);assert.match(notices.at(-1)!,/Usage: \/guardian/);
       await commands.get("guardian-log")!.handler("forced",ctx);
       assert.equal(viewerCalls,1,"Guardian must open logs through the shared runtime viewer");
-      assert.match(viewerText,/Guardian reviews · all retained sessions · UTC/);
+      assert.match(viewerText,/Guardian reviews · current workspace · UTC/);
       assert.match(viewerText,/Read-only · not a confirmation|log read warning/);
       (ctx.ui as any).select=async(title:string,choices:string[])=>{assert.match(title,/Guard review — On/);for(const label of ["Current session — On (turn Off)","New sessions — Off","Status","Logs","Close"])assert.ok(choices.includes(label),label);return "Close";};
       await commands.get("guardian")!.handler("",ctx);
@@ -167,10 +167,10 @@ async function runScenario(name: Scenario, realUI?: ExtensionUIContext, withRunt
       assert.equal(await invoke(),undefined,"Turning Guardian off must bypass review in this session");
       await commands.get("guardian-mode")!.handler("on",ctx);assert.equal(runtimeService?.reviewMode(),"on");
       await commands.get("guardian-default")!.handler("on",ctx);assert.equal((await loadGuardianModeConfig(profile)).defaultMode,"on");
-      entries.splice(0,entries.length);branch=entries;sessionId="guardian-flow-new-session";await dispatch("session_start",{type:"session_start"});entries.push(userEntry);
+      entries.splice(0,entries.length);branch=entries;sessionId="00000000-0000-7000-8000-000000000002";await dispatch("session_start",{type:"session_start"});entries.push(userEntry);
       assert.equal((await invoke())?.block,undefined,"A genuinely new session must use the saved On default");assert.equal(reviews,3);
       await commands.get("guardian-default")!.handler("off",ctx);assert.equal((await invoke())?.block,undefined,"Changing the future default must not alter the current On session");assert.equal(reviews,4);
-      await commands.get("guardian-default")!.handler("on",ctx);entries.splice(0,entries.length,userEntry);branch=entries;sessionId="guardian-flow-legacy-session";
+      await commands.get("guardian-default")!.handler("on",ctx);entries.splice(0,entries.length,userEntry);branch=entries;sessionId="00000000-0000-7000-8000-000000000003";
       await dispatch("session_start",{type:"session_start"});assert.equal(runtimeService?.reviewMode(),"off");assert.equal(await invoke(),undefined,"An existing session without mode metadata must remain Off");assert.equal(reviews,4);
     } else {
       assert.ok(notices.some(message=>message.includes("Guardian stopped this action; nothing was executed")),"Guardian must show its own dispute reason");
@@ -277,18 +277,17 @@ async function runScenario(name: Scenario, realUI?: ExtensionUIContext, withRunt
 
     assert.equal(aborts,0,"Guardian must not abort the acting agent when opening a dispute");
     await dispatch("session_shutdown",{type:"session_shutdown"});handlers.delete("session_shutdown");
-    const snapshot=await readGuardianLogs(profile),events=snapshot.entries.map(entry=>entry.value);
+    const snapshot=await readGuardianLogs(profile,workspaceId),events=snapshot.entries.map(entry=>entry.value);
     assert.ok(snapshot.reviews.length>=1,"Completed actions must be grouped for the read-only log viewer");
-    let viewFlushes=0;const view=createGuardianLogViewRequest(profile,async()=>{viewFlushes++;},"synthetic"),presented=await view.load(new AbortController().signal);
+    let viewFlushes=0;const view=createGuardianLogViewRequest(profile,workspaceId,async()=>{viewFlushes++;},"synthetic"),presented=await view.load(new AbortController().signal);
     await view.load(new AbortController().signal);assert.equal(viewFlushes,2,"Guardian must flush before initial load and refresh");
     assert.equal(presented.rows.length,snapshot.reviews.length,"Guardian must present every grouped review through the runtime contract");
     assert.ok(presented.rows.every(row=>row.searchText&&row.wide&&row.compact));
     assert.match(view.details(presented.rows[0].id,"summary").join("\n"),/Decision|Review|Command/);
     assert.match(view.details(presented.rows[0].id,"timeline").join("\n"),/Times UTC/);
-    const runFiles=await readdir(join(profile,"logs","guardian","runs"));
-    assert.equal(runFiles.filter(name=>name.endsWith(".jsonl")).length,1,"Guardian must write one run shard");
-    assert.equal(runFiles.filter(name=>name.endsWith(".complete")).length,1,"Clean shutdown must complete the run journal");
-    assert.ok(snapshot.files.some(name=>name.startsWith("logs/guardian/runs/")),"Run journals must be visible");
+    const sessionFiles=await readdir(join(profile,"logs",workspaceId,sessionId));
+    assert.deepEqual(sessionFiles,["guardian.jsonl"],"Guardian must write one marker-free session journal");
+    assert.ok(snapshot.files.some(name=>name===`logs/${workspaceId}/${sessionId}/guardian.jsonl`),"Current-workspace session journals must be visible");
     assert.ok(!(await readdir(profile,{recursive:true})).some(name=>String(name).includes(".guardian-log.lock")),"Guardian must not use the shared writer lock");
     const disposition=events.find(e=>e.toolCallId==="synthetic-1"&&["invocation_released","invocation_withheld"].includes(e.event));
     assert.equal(disposition?.event,scenario.released&&withRuntime?"invocation_released":"invocation_withheld");
@@ -310,27 +309,17 @@ async function runScenario(name: Scenario, realUI?: ExtensionUIContext, withRunt
   }
 }
 
-async function testAutomaticRetention():Promise<void>{
-  const root=await mkdtemp(join(tmpdir(),"guardian-retention-")),activeRoot=await mkdtemp(join(tmpdir(),"guardian-retention-active-"));
-  const warnings:string[]=[];
-  try{
-    const paths:string[]=[];
-    for(let index=0;index<3;index++){
-      const logger=createLogger(root,message=>warnings.push(message),{maxBytes:1024*1024,maxRuns:1});paths.push(logger.path);
-      logger.write({timestamp:`2026-01-01T00:00:0${index}.000Z`,event:"retention_fixture",index});
-      await Promise.all([logger.close(),logger.close()]);await new Promise(resolve=>setTimeout(resolve,5));
-    }
-    const runDir=join(root,"logs","guardian","runs"),files=await readdir(runDir);
-    assert.deepEqual(files.sort(),[`${basename(paths.at(-1)!)}.complete`,basename(paths.at(-1)!)].sort(),"Only the newest completed run must remain");
-    assert.match(await readFile(paths.at(-1)!,"utf8"),/"index":2/);
-    const active=createLogger(activeRoot,message=>warnings.push(message),{maxBytes:1024*1024,maxRuns:1});
-    active.write({timestamp:"2026-01-01T00:00:00.000Z",event:"active_fixture"});await active.flush();
-    const completed=createLogger(activeRoot,message=>warnings.push(message),{maxBytes:1024*1024,maxRuns:1});
-    completed.write({timestamp:"2026-01-01T00:00:01.000Z",event:"completed_fixture"});await completed.close();
-    assert.match(await readFile(active.path,"utf8"),/active_fixture/);
-    await assert.rejects(readFile(completed.path,"utf8"),(error:any)=>error?.code==="ENOENT");
-    await active.close();assert.deepEqual(warnings,[]);
-  }finally{await rm(root,{recursive:true,force:true});await rm(activeRoot,{recursive:true,force:true});}
+async function testSessionJournalReuse():Promise<void>{
+  const root=await mkdtemp(join(tmpdir(),"guardian-session-journal-")),warnings:string[]=[];
+  const workspaceId="11111111-1111-4111-8111-111111111111",sessionId="00000000-0000-7000-8000-000000000001";
+  try{await mkdir(root,{recursive:true,mode:0o700});
+    const first=createLogger(root,workspaceId,sessionId,message=>warnings.push(message));
+    first.write({timestamp:"2026-01-01T00:00:00.000Z",event:"first_process"});await first.close();
+    const resumed=createLogger(root,workspaceId,sessionId,message=>warnings.push(message));
+    resumed.write({timestamp:"2026-01-01T00:00:01.000Z",event:"resumed_process"});await resumed.close();
+    assert.equal(first.path,resumed.path);assert.deepEqual((await readdir(join(root,"logs",workspaceId,sessionId))).sort(),["guardian.jsonl"]);
+    const text=await readFile(resumed.path,"utf8");assert.match(text,/first_process/);assert.match(text,/resumed_process/);assert.deepEqual(warnings,[]);
+  }finally{await rm(root,{recursive:true,force:true});}
 }
 
 async function testGuardianModeConfig():Promise<void>{
@@ -349,8 +338,8 @@ export async function runAutomatedTests(): Promise<void> {
     {schemaVersion:2,model:null,thinking:"low"},"Legacy profile mode must migrate out of preferences");
   for(const name of Object.keys(scenarios) as Scenario[]){await runScenario(name);console.log(`PASS guardian-flow: ${name}`);}
   await runScenario("allow",undefined,false);
-  await testGuardianModeConfig();await testAutomaticRetention();
-  console.log("PASS guardian-flow: runtime client, journal retention, unavailable presentation, assessment, cancellation, persistence, human arbitration, and fresh review");
+  await testGuardianModeConfig();await testSessionJournalReuse();
+  console.log("PASS guardian-flow: runtime client, workspace session journals, unavailable presentation, assessment, cancellation, persistence, human arbitration, and fresh review");
 }
 
 /** Opt-in Pi extension; registers a command only, never a tool or live Guardian hook. */
