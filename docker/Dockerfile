@@ -230,6 +230,7 @@ COPY extensions/guard/guard-reviewer-agent.ts /usr/local/lib/node_modules/pi-run
 COPY extensions/guardian/guardian-log-safety.ts /usr/local/lib/node_modules/pi-run-extensions/guardian/
 COPY extensions/guardian/guardian-log-viewer.ts /usr/local/lib/node_modules/pi-run-extensions/guardian/
 COPY extensions/guardian/guardian-review-trace.ts /usr/local/lib/node_modules/pi-run-extensions/guardian/
+COPY extensions/guardian/guardian-reviewer.ts /usr/local/lib/node_modules/pi-run-extensions/guardian/
 COPY extensions/guardian/guardian-agent.ts /usr/local/lib/node_modules/pi-run-extensions/guardian/
 COPY extensions/caf/caf-log-viewer.ts /usr/local/lib/node_modules/pi-run-extensions/caf/
 COPY extensions/caf/caf-protocol.ts /usr/local/lib/node_modules/pi-run-extensions/caf/
