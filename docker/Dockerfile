@@ -229,6 +229,7 @@ COPY extensions/guard/guard-reviewer-agent.ts /usr/local/lib/node_modules/pi-run
 COPY extensions/guardian/guardian-log-safety.ts /usr/local/lib/node_modules/pi-run-extensions/guardian/
 COPY extensions/guardian/guardian-log-viewer.ts /usr/local/lib/node_modules/pi-run-extensions/guardian/
 COPY extensions/guardian/guardian-agent.ts /usr/local/lib/node_modules/pi-run-extensions/guardian/
+COPY extensions/caf/caf-log-viewer.ts /usr/local/lib/node_modules/pi-run-extensions/caf/
 COPY extensions/caf/caf-agent.ts /usr/local/lib/node_modules/pi-run-extensions/caf/
 COPY extensions/snapshot/snapshot-agent.ts /usr/local/lib/node_modules/pi-run-extensions/snapshot/
 COPY skills/ /usr/local/share/pi-run/skills/

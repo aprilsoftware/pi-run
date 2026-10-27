@@ -50,6 +50,7 @@ done
     || fail "packaging test has no SPDX license identifier"
 expected_extension_layout="$(printf '%s\n' \
     caf/caf-agent.ts \
+    caf/caf-log-viewer.ts \
     guard/guard-evidence.ts \
     guard/guard-journal.ts \
     guard/guard-reviewer-agent.ts \
