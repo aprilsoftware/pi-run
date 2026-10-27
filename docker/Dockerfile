@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: MIT
 
-ARG RUST_VERSION=1.95.0
+ARG RUST_VERSION=1.99.1
 
 FROM rust:${RUST_VERSION}-trixie AS rust-toolchain
 ARG RUST_VERSION

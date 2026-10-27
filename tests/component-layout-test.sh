@@ -19,8 +19,8 @@ SPDX='# SPDX-License-Identifier: MIT'
     || fail "Dockerfile has no SPDX license identifier"
 [[ "$(sed -n '1p' "${ROOT}/docker/egress/Dockerfile")" == "${SPDX}" ]] \
     || fail "egress Dockerfile has no SPDX license identifier"
-grep -Fx 'ARG RUST_VERSION=1.95.0' "${ROOT}/docker/Dockerfile" >/dev/null \
-    || fail "runtime image does not pin Rust 1.95.0"
+grep -Fx 'ARG RUST_VERSION=1.99.1' "${ROOT}/docker/Dockerfile" >/dev/null \
+    || fail "runtime image does not pin Rust 1.99.1"
 grep -Fx "FROM rust:\${RUST_VERSION}-trixie AS rust-toolchain" \
     "${ROOT}/docker/Dockerfile" >/dev/null \
     || fail "runtime image does not use the versioned official Rust toolchain stage"
