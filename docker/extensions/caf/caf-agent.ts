@@ -535,7 +535,12 @@ export default function cafAgent(pi:ExtensionAPI){
     parameters:CALL_FRIEND_PARAMETERS,annotations:{readOnlyHint:false,destructiveHint:false,idempotentHint:false,openWorldHint:true},
     async execute(toolCallId,params,signal,_onUpdate,ctx){
       journalContext=ctx;const modeController=new AbortController(),operationSignal=AbortSignal.any([signal??new AbortController().signal,modeController.signal]),usages:Usage[]=[],operationId=randomUUID(),startedAt=Date.now();activeOperations.add(modeController);
-      let lease:GuardActivityLeaseV1|undefined,friendStarted=false,journalOutcome="unknown",finalUsage:Usage|undefined,researchUsed=false,guarded=false,friendFailureStatus="friend-unavailable";
+      type LiveActivity={state:string;surface:"guard"|"client"};
+      let lease:GuardActivityLeaseV1|undefined,liveActivity:LiveActivity|undefined,activityPulse:ReturnType<typeof setInterval>|undefined;
+      let friendStarted=false,journalOutcome="unknown",finalUsage:Usage|undefined,researchUsed=false,guarded=false,friendFailureStatus="friend-unavailable";
+      const activitySnapshot=()=>{const elapsed=Math.floor((Date.now()-startedAt)/1000);return {schemaVersion:1 as const,state:liveActivity!.state,surface:liveActivity!.surface,...(elapsed>0?{detail:`· ${elapsed}s`}:{})};};
+      const startActivity=(state:string,surface:LiveActivity["surface"])=>{liveActivity={state,surface};if(activityPulse===undefined)activityPulse=setInterval(()=>{if(lease?.active()&&liveActivity)try{lease.update(activitySnapshot());}catch{/* Presentation cannot authorize or withhold. */}},1000);};
+      const updateActivity=(state:string,surface:LiveActivity["surface"])=>{liveActivity={state,surface};if(lease)try{lease.update(activitySnapshot());}catch{/* Presentation cannot authorize or withhold. */}};
       const fail=(reason:string,status:string,usage?:Usage,started=false)=>{journalOutcome=operationSignal.aborted?"cancelled":/timed? out/i.test(reason)?"timed-out":status;finalUsage=usage;return toolFailure(reason,status,usage,started);};
       log("operation_started",{sessionId:ctx.sessionManager.getSessionId(),operationId,message:fingerprint(params.message),purpose:fingerprint(params.purpose)});
       try{
@@ -555,19 +560,19 @@ export default function cafAgent(pi:ExtensionAPI){
         let action:Readonly<CafDisclosureAction>;
         if(guarded){
           if(!guard.connected()||!guardReview.connected())return fail("Guard Runtime or shared review service is unavailable.","guard-unavailable");
-          lease=await guard.acquireActivity({schemaVersion:1,state:"reviewing-disclosure",detail:"call friend",surface:"guard"},operationSignal);
+          lease=await guard.acquireActivity({schemaVersion:1,state:"reviewing-disclosure",surface:"guard"},operationSignal);startActivity("reviewing-disclosure","guard");
           const review=await runSharedGuardReview(proposed,parseCafDisclosureAction,ctx,operationSignal,destination,operationId);
           if(review.usage)usages.push(review.usage);log("disclosure_reviewed",{operationId,kind:"friend-message",model:destination,outcome:review.released?"ALLOW":review.outcome??"UNAVAILABLE"});
           if(!review.released)return fail(review.reason,"review-withheld",combinedUsage(...usages));action=review.action;
         }else{action=parseCafDisclosureAction(proposed);log("disclosure_direct",{operationId,kind:"friend-message",model:destination,guardMode:"off"});
-          try{lease=await guard.acquireActivity({schemaVersion:1,state:"asking-friend",surface:"client"},operationSignal);}catch{operationSignal.throwIfAborted();}}
+          try{lease=await guard.acquireActivity({schemaVersion:1,state:"asking-friend",surface:"client"},operationSignal);startActivity("asking-friend","client");}catch{operationSignal.throwIfAborted();}}
         if(!standaloneCall(ctx,toolCallId)||config.model!==destination||guard.reviewMode()!==(guarded?"on":"off"))return fail("The active branch, Guard mode, or friend configuration changed before disclosure.","branch-changed",combinedUsage(...usages));
-        if(lease){try{lease.update({schemaVersion:1,state:"asking-friend",surface:"client"});}catch{/* Presentation cannot authorize or withhold. */}
+        if(lease){updateActivity("asking-friend","client");
           if(!lease.active())return fail("Guard Runtime became unavailable before friend transmission.","guard-unavailable",combinedUsage(...usages));}
         const stopSearch=(reason:string,status:string):never=>{friendFailureStatus=status;throw new Error(reason);};
         const search=researchProvider?async(query:string,purpose:string,searchSignal:AbortSignal):Promise<CafResearch>=>{
           log("friend_responded",{operationId,model:destination,kind:"web-search"});
-          if(lease)try{lease.update({schemaVersion:1,state:"reviewing-disclosure",detail:"web search",surface:"guard"});}catch{/* Presentation cannot authorize or withhold. */}
+          if(lease)updateActivity("reviewing-disclosure","guard");
           const proposedSearch:Readonly<CafWebSearchAction>={schemaVersion:1,kind:"web-search",query,purpose,destination:{tool:"web_search",provider:researchProvider}};
           log("search_disclosure_proposed",{operationId,provider:researchProvider,query:fingerprint(proposedSearch.query),purpose:fingerprint(proposedSearch.purpose)});
           let searchAction:Readonly<CafWebSearchAction>;
@@ -577,14 +582,14 @@ export default function cafAgent(pi:ExtensionAPI){
           }else{searchAction=parseCafWebSearchAction(proposedSearch);log("disclosure_direct",{operationId,kind:"web-search",provider:researchProvider,guardMode:"off"});}
           if(!standaloneCall(ctx,toolCallId)||config.model!==destination||webSearchProvider!==researchProvider||guard.reviewMode()!==(guarded?"on":"off"))
             stopSearch("The active branch, Guard mode, or research configuration changed before search.","branch-changed");
-          if(lease){try{lease.update({schemaVersion:1,state:"searching-the-web",surface:"client"});}catch{/* Presentation cannot authorize or withhold. */}
+          if(lease){updateActivity("searching-the-web","client");
             if(!lease.active())stopSearch("Guard Runtime became unavailable before web search.","guard-unavailable");}
           log("search_started",{operationId,provider:researchProvider});
           const outcome=await ctx.executeTool("web_search",{query:searchAction.query,provider:researchProvider,numResults:5,includeContent:false,workflow:"none"},{signal:searchSignal});
           if(outcome.result.usage)usages.push(outcome.result.usage);const research=normalizeCafWebSearchResult(outcome,searchAction);researchUsed=true;
           log("search_completed",{operationId,provider:researchProvider,results:research.results.length,answerBytes:Buffer.byteLength(research.answer,"utf8"),usage:usageDiagnostic(outcome.result.usage)});
           if(guard.reviewMode()!==(guarded?"on":"off"))stopSearch("Guard mode changed before the final friend request.","branch-changed");
-          if(lease){try{lease.update({schemaVersion:1,state:"friend-reviewing-search-results",surface:"client"});}catch{/* Presentation cannot authorize or withhold. */}
+          if(lease){updateActivity("friend-reviewing-search-results","client");
             if(!lease.active())stopSearch("Guard Runtime became unavailable before the final friend request.","guard-unavailable");}
           return research;
         }:undefined;
@@ -599,7 +604,7 @@ export default function cafAgent(pi:ExtensionAPI){
         return {content:[{type:"text" as const,text:formatFriendResponse(result.response)+(research?formatResearchSources(research):"")}],details:{schemaVersion:1,status:result.response.kind,consultationId,round:roundNumber,model:destination,research:!!research},...(usage?{usage}:{})};
       }catch(error){const reason=message(error),usage=combinedUsage(...usages,error instanceof CafFriendCallError?error.usage:undefined);return fail(friendStarted?`${reason} The friend or research request may have reached its provider; do not retry automatically.`:reason,
         friendStarted?friendFailureStatus:guarded?"review-unavailable":"direct-unavailable",usage,friendStarted);}
-      finally{activeOperations.delete(modeController);modeController.abort(new Error("CAF operation finished"));log("operation_finished",{operationId,outcome:journalOutcome,reviewPath:guarded?"guarded":currentGuardMode==="off"?"direct":"unavailable",friendRequestStarted:friendStarted,research:researchUsed,durationMs:Date.now()-startedAt,usage:usageDiagnostic(finalUsage)});lease?.end();}
+      finally{activeOperations.delete(modeController);modeController.abort(new Error("CAF operation finished"));if(activityPulse!==undefined)clearInterval(activityPulse);log("operation_finished",{operationId,outcome:journalOutcome,reviewPath:guarded?"guarded":currentGuardMode==="off"?"direct":"unavailable",friendRequestStarted:friendStarted,research:researchUsed,durationMs:Date.now()-startedAt,usage:usageDiagnostic(finalUsage)});lease?.end();}
     }});
   pi.registerCommand("caf-mode",{description:"Turn Call a Friend on/off for this session",handler:modeCommand});
   pi.registerCommand("caf-default",{description:"Set Call a Friend mode for genuinely new sessions",handler:defaultModeCommand});

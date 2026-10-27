@@ -175,12 +175,15 @@ not repeat derived labels. During Guard review, the Guard row shows review
 activity. During a consultation, the CAF row uses plain-language states:
 
 ```text
-caf · asking friend
-caf · searching the web
-caf · friend reviewing search results
+guard · reviewing disclosure · 12s
+caf · asking friend · 14s
+caf · searching the web · 20s
+caf · friend reviewing search results · 25s
 ```
 
-After the activity finishes, it returns to `caf · on` or `caf · off`. Consultation
+Elapsed time is continuous across one `call_friend` invocation as activity moves
+between disclosure review, friend, and search stages. After the activity finishes,
+the Guard and CAF rows return to their normal On or Off baselines. Consultation
 round details remain available through `/caf-status` and the journal. Narrow
 terminals retain role and state before truncating model details. Non-TUI sessions
 have no widget. Presentation failure never changes mode, review, or transmission.
