@@ -11,12 +11,14 @@ type Outcome = ReviewDecision["outcome"] | "unavailable";
 type Handler = (event: any, ctx: ExtensionContext) => unknown | Promise<unknown>;
 const scenarios = {
   allow: { outcome: "ALLOW", assessment: null, released: true },
-  ask: { outcome: "ASK", assessment: "ALLOW", released: false },
-  "user-refused": { outcome: "USER_REFUSED", assessment: "USER_REFUSED", released: false },
-  unavailable: { outcome: "unavailable", assessment: "unavailable", released: false },
-  "no-ui": { outcome: "ASK", assessment: "ASK", released: false },
+  ask: { outcome: "ASK", assessment: "ALLOW", position:"contest", released: false },
+  "user-refused": { outcome: "USER_REFUSED", assessment: "USER_REFUSED", position:"contest", released: false },
+  unavailable: { outcome: "unavailable", assessment: "skipped", position:"retract", released: false },
+  "assessment-unavailable": { outcome: "ASK", assessment: "unavailable", position:"contest", released: false },
+  narrow: { outcome: "ASK", assessment: "skipped", position:"narrow", released: false },
+  "no-ui": { outcome: "ASK", assessment: "ASK", position:"contest", released: false },
   fallback: { outcome: "ASK", assessment: null, released: false },
-  "cancel-assessment": { outcome: "ASK", assessment: "delayed", released: false },
+  "cancel-assessment": { outcome: "ASK", assessment: "delayed", position:"contest", released: false },
 } as const;
 type Scenario = keyof typeof scenarios;
 
@@ -208,7 +210,7 @@ async function runScenario(name: Scenario, realUI?: ExtensionUIContext, withRunt
           await assert.rejects(()=>justificationTool.execute("invalid",{position:"contest",explanation:"x".repeat(4001)},undefined,undefined,ctx),/Invalid Guardian justification/);
           await assert.rejects(()=>justificationTool.execute("invalid",{position:"contest",explanation:"bounded",evidence:Array(9).fill("file")},undefined,undefined,ctx),/Invalid Guardian justification/);
         }
-        const params={position:name==="unavailable"?"retract":"contest",explanation:"The fixture action remains intentionally synthetic.",evidence:["fixture-0.txt","fixture-1.txt"]};
+        const params={position:"position" in scenario?scenario.position:"contest",explanation:"The fixture action remains intentionally synthetic.",evidence:["fixture-0.txt","fixture-1.txt"]};
         if(name==="cancel-assessment"){
           const pending=justify(params);
           for(let i=0;i<100&&assessmentReviews===0;i++)await new Promise(resolve=>setTimeout(resolve,0));
@@ -225,33 +227,49 @@ async function runScenario(name: Scenario, realUI?: ExtensionUIContext, withRunt
           assert.equal(reviews,2);cancellationHandled=true;
         }else{
           const result=await justify(params);
-          assert.equal(runtimeService?.activity(),undefined,"Completed assessment must release its Guard activity");
-          assert.equal(result.terminate,true,"Structured justification must terminate automatic agent follow-up");
-          assert.equal(result.details.executed,false);assert.equal(result.details.humanRequired,true);
-          assert.equal(assessmentReviews,1,"Every structured submission must receive one assessment");
-          assert.match(result.content[0].text,/Guardian dispute — awaiting human judgment/);
+          assert.equal(runtimeService?.activity(),undefined,"Completed justification must release its Guard activity");
+          const automatic=["ALLOW","skipped"].includes(String(scenario.assessment)),expectedResolution=scenario.assessment==="ALLOW"?"accepted":name==="unavailable"?"retracted":name==="narrow"?"narrowed":"human-required";
+          assert.equal(result.terminate,automatic?undefined:true,automatic?"Agreement must continue the primary automatically":"Unresolved disagreement must terminate automatic follow-up");
+          assert.equal(result.details.executed,false);assert.equal(result.details.humanRequired,!automatic);assert.equal(result.details.resolution,expectedResolution);
+          assert.equal(assessmentReviews,scenario.assessment==="skipped"?0:1,"Only a contested position receives Guardian reassessment");
+          assert.match(result.content[0].text,automatic?/Guardian challenge resolved/:/Guardian dispute — awaiting human judgment/);
           const rendered=justificationTool.renderResult(result,{},theme,{}).render(120).join("\n");
-          assert.match(rendered,/Agent position: (contest|retract)/);assert.match(rendered,/fixture action remains intentionally synthetic/);
-          const label=scenario.assessment==="ALLOW"?"Concern resolved":scenario.assessment==="ASK"?"Concern remains":scenario.assessment==="USER_REFUSED"?"User restriction remains":"Assessment unavailable";
-          assert.match(rendered,new RegExp(`Guardian assessment: ${label}`));
+          assert.match(rendered,/Agent position: (contest|retract|narrow)/);assert.match(rendered,/fixture action remains intentionally synthetic/);
+          if(scenario.assessment!=="skipped"){
+            const label=scenario.assessment==="ALLOW"?"Concern resolved":scenario.assessment==="ASK"?"Concern remains":scenario.assessment==="USER_REFUSED"?"User restriction remains":"Assessment unavailable";
+            assert.match(rendered,new RegExp(`Guardian assessment: ${label}`));
+          }else assert.doesNotMatch(rendered,/Guardian assessment:/,"Withdrawal must not spend another reviewer request");
           assert.ok(!activeTools.includes("guardian_justify"),"Submitted justification must remove its model tool");
-          const saved=[...entries].reverse().find(e=>e.type==="custom"&&e.customType==="guardian-dispute"&&e.data?.assessment);
-          assert.equal(saved?.data.justification.explanation,params.explanation,"Structured position must persist on the active branch");
-          assert.equal(saved?.data.assessment.status,scenario.assessment==="unavailable"?"unavailable":"completed","Assessment must persist on the active branch");
-          if(scenario.assessment==="unavailable")assert.ok(saved.data.assessment.error.includes(`Diagnostic journal: ${journalPath()}.`),"Assessment failure must expose the exact active journal path");
-          if(name!=="no-ui"){
-            assert.ok(statusLines.some(line=>line.includes("guard · dispute · assessing")),"Status must expose assessment work");
-            assert.ok(statusLines.at(-1)?.includes("guard · dispute · awaiting you"),"Assessment must finish waiting for human judgment");
+          const savedAssessment=[...entries].reverse().find(e=>e.type==="custom"&&e.customType==="guardian-dispute"&&e.data?.assessment);
+          const resolved=[...entries].reverse().find(e=>e.type==="custom"&&e.customType==="guardian-dispute"&&e.data?.state==="resolved");
+          if(automatic){assert.equal(resolved?.data.id,result.details.disputeId,"Agreement must persist a resolved dispute");assert.equal(savedAssessment,undefined,"Resolved disputes must not persist an awaiting-human assessment");}
+          else{
+            assert.equal(savedAssessment?.data.justification.explanation,params.explanation,"Unresolved position must persist on the active branch");
+            assert.equal(savedAssessment?.data.assessment.status,scenario.assessment==="unavailable"?"unavailable":"completed","Unresolved assessment must persist on the active branch");
+            if(scenario.assessment==="unavailable")assert.ok(savedAssessment.data.assessment.error.includes(`Diagnostic journal: ${journalPath()}.`),"Assessment failure must expose the exact active journal path");
           }
-          if(name==="ask"){
-            await dispatch("session_start",{type:"session_start"});
-            assert.ok(statusLines.at(-1)?.includes("guard · dispute · awaiting you"),"Resume must restore the assessed position's waiting state");
-            assert.ok(!activeTools.includes("guardian_justify"),"Resume must not reactivate an assessed submission");
+          if(name!=="no-ui"){
+            if(scenario.assessment!=="skipped")assert.ok(statusLines.some(line=>line.includes("guard · dispute · assessing")),"Contests must expose assessment work");
+            assert.ok(statusLines.at(-1)?.includes(automatic?"guard · on":"guard · dispute · awaiting you"),automatic?"Agreement must restore normal Guard status":"Disagreement must wait for human judgment");
           }
         }
       }else assert.equal(assessmentReviews,0,"Fallback flow must make no assessment call");
 
-      if(!cancellationHandled){
+      const automaticResolution=scenario.assessment==="ALLOW"||scenario.assessment==="skipped";
+      if(!cancellationHandled&&scenario.assessment!==null&&automaticResolution){
+        const reviewsBeforeRetry=reviews;outcome="ALLOW";
+        if(scenario.assessment==="ALLOW"){
+          assert.equal((await invoke())?.block,undefined,"An accepted contest must release one exact retry");
+          assert.equal(reviews,reviewsBeforeRetry,"The exact retry must not spend another reviewer request");
+          assert.equal((await invoke("bash",{command:"printf 'TEST ONLY: changed invocation, never executed\\n'",timeout:1}))?.block,undefined,"A changed command must receive normal review");
+          assert.equal(reviews,reviewsBeforeRetry+1,"Changed arguments must not use the exact retry authorization");
+        }else{
+          const input=name==="narrow"?{command:"printf 'TEST ONLY: narrower invocation, never executed\\n'",timeout:1}:undefined;
+          assert.equal((await invoke("bash",input))?.block,undefined,"A withdrawn action must return to normal review");
+          assert.equal(reviews,reviewsBeforeRetry+1,"Retraction or narrowing must not authorize a later command");
+        }
+        assert.ok(!activeTools.includes("guardian_justify"),"Consensus must close the dispute tool");
+      }else if(!cancellationHandled){
         for(const toolName of ["bash","edit","write","custom-effect"])
           assert.equal((await invoke(toolName,toolName==="bash"?{command:"echo blocked"}:{path:"blocked"}))?.block,true,`${toolName} must be blocked during dispute`);
         assert.equal(reviews,withRuntime?1:0,"Blocked dispute tools must not reach the reviewer");
@@ -304,7 +322,8 @@ async function runScenario(name: Scenario, realUI?: ExtensionUIContext, withRunt
     if(!scenario.released||!withRuntime)assert.ok(events.some(e=>e.toolCallId==="synthetic-1"&&e.event==="dispute_opened"),"Dispute event must stay attached to the blocked review");
     if(scenario.assessment!==null)assert.ok(events.some(e=>e.event==="dispute_justification_submitted"),"Structured justification must be retained in Guardian diagnostics");
     if(["unavailable","delayed"].includes(String(scenario.assessment)))assert.ok(events.some(e=>e.event==="dispute_assessment_unavailable"),"Unavailable assessment must be diagnosed");
-    else if(scenario.assessment!==null)assert.ok(events.some(e=>e.event==="dispute_assessment_decision"&&e.details.outcome===scenario.assessment),"Completed assessment must be diagnosed without release");
+    else if(scenario.assessment!==null&&scenario.assessment!=="skipped")assert.ok(events.some(e=>e.event==="dispute_assessment_decision"&&e.details.outcome===scenario.assessment),"Completed assessment must be diagnosed");
+    if(scenario.assessment==="ALLOW"||scenario.assessment==="skipped")assert.ok(events.some(e=>e.event==="dispute_consensus"),"Autonomous agreement must be diagnosed");
     assert.ok(!events.some(e=>e.event==="confirmation_requested"||e.event==="confirmation_answer"),"Disputes must never create confirmation events");
     assert.ok(!events.some(e=>e.event==="tool_result"),"No execution result may be fabricated");
     assert.equal(await readFile(join(profile,"guardian","config.json"),"utf8"),config);

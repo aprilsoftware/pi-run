@@ -97,8 +97,10 @@ instructions and authorization obligations still apply.
 An open dispute is a separate stop state. It permits at most six direct native
 `read` calls during the same agent run and withholds every other acting-agent
 tool, including normally uncovered tools, except Guardian's model-only
-`guardian_justify` handoff. After justification or settlement, every tool is
-blocked until human feedback clears the dispute.
+`guardian_justify` handoff. After settlement without a position, or after an
+unresolved contest, every tool is blocked until human feedback clears the
+dispute. Retraction, narrowing, or an accepted contest closes the challenge and
+allows the primary to continue.
 
 A review considers the proposed invocation, working directory, current user
 request, relevant conversation history, profile policy, and applicable
@@ -130,27 +132,32 @@ allowance to check file evidence. It then calls `guardian_justify` with a
 bounded evidence references. Tool variants, edits, writes, commands, nested
 tools, and unknown tools cannot route around the latch.
 
-The justification tool is active only while that submission is pending. After
-submission it is removed, status changes to `assessing`, and Guardian starts a
-fresh bounded reviewer pass over the original blocked action, current authority,
-its original concern, and the structured position. The agent's explanation and
-references remain untrusted claims. The same source validation, evidence limits,
-time limits, and fail-closed transport behavior apply to this pass.
+The justification tool is active only while a submission is pending. Retraction
+closes the challenge immediately and executes nothing. Narrowing also withdraws
+the original action; a replacement is a new invocation subject to normal review.
+Neither path spends another reviewer request or requires human arbitration.
+
+A contest changes status to `assessing` and starts a fresh bounded reviewer pass
+over the original blocked action, current authority, original concern, and
+structured position. The explanation and references remain untrusted claims.
+The same source validation, evidence limits, time limits, and fail-closed
+transport behavior apply.
 
 The assessment classifies the position as **Concern resolved** (`ALLOW`),
 **Concern remains** (`ASK`), **User restriction remains** (`USER_REFUSED`), or
-**Assessment unavailable**. These labels are advisory: none releases or replays
-the action. The custom transcript rendering shows the original concern, agent
-position, assessment, and reason. Its result uses Pi's terminate signal so the
-acting agent cannot automatically continue after submission.
+**Assessment unavailable**. `ALLOW` closes the challenge and creates a
+process-local, one-use release for a new invocation matching the exact tool,
+arguments, working directory, session, and unchanged conversation. Guardian
+does not replay the cancelled tool call itself. A mismatch consumes the release
+and receives normal review.
 
-After assessment—or when an agent turn settles without a submission—the dispute
-changes to `awaiting-user`. The active branch stores
-the open or resolved dispute and any submitted position as private extension
-state, excluded from model context. A completed or unavailable assessment is
-stored with the position; a cancelled or late assessment cannot be attached
-after human feedback resolves the dispute. Resume and branch navigation
-reconstruct that branch's state; Guardian mode itself remains session-wide.
+The other assessment outcomes leave the dispute `awaiting-user` and use Pi's
+terminate signal to stop automatic follow-up. The active branch stores open and
+resolved dispute state outside model context. Completed or unavailable unresolved
+assessments are stored with the position; a cancelled or late assessment cannot
+be attached after user feedback resolves the dispute. The one-use exact release
+is process-local and is not restored after reload, resume, or branch navigation.
+Guardian mode itself remains session-wide.
 
 A later genuine user message resolves the latch before starting a fresh turn.
 `/guardian-resume` also resolves it, but deliberately contributes no authority
@@ -163,9 +170,10 @@ invocation.
 
 Missing provider access, timeout, invalid reviewer output, missing instructions,
 or another reviewer failure produces no AI decision. During initial review,
-Guardian withholds the action and opens a dispute regardless of UI mode. During
-justification assessment, it records **Assessment unavailable** and still waits
-for the human. It never offers a bypass that releases an unreviewed invocation.
+Guardian withholds the action and opens a dispute regardless of UI mode. The
+primary may retract or narrow the original without another assessment. A contest
+whose assessment is unavailable still waits for the human. Guardian never offers
+a bypass that releases an unreviewed invocation.
 
 Cancellation caused by session, branch, settings, or action changes does not
 become approval. Use status and logs to identify the interruption before

@@ -44,7 +44,9 @@ const JustificationSchema={type:"object",additionalProperties:false,required:["p
   evidence:{type:"array",maxItems:8,items:{type:"string",minLength:1,maxLength:500,pattern:"\\S"}},
 }} as any;
 type GuardianAssessment={status:"completed";outcome:ReviewDecision["outcome"];reason:string;basis?:ReviewDecision["basis"]}|{status:"unavailable";error:string};
-type JustificationDetails={schemaVersion:1;disputeId:string;guardianReason:string;justification:GuardianJustification;assessment:GuardianAssessment;executed:false;humanRequired:true};
+type JustificationResolution="retracted"|"narrowed"|"accepted"|"human-required";
+type JustificationDetails={schemaVersion:1;disputeId:string;guardianReason:string;justification:GuardianJustification;assessment?:GuardianAssessment;
+  resolution:JustificationResolution;executed:false;humanRequired:boolean};
 const LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 export type Thinking = typeof LEVELS[number];
 export type GuardianConfig = { schemaVersion: 2; model: string | null; thinking: Thinking | null };
@@ -702,7 +704,7 @@ function reviewServices(request:ReviewRequest,signal:AbortSignal,emit:LogSink,st
   return {signal,deadlineAt:trace.deadlineAt,evidence,step,report(event){if(signal.aborted)return;
     if(event.metrics?.requests!==undefined)stats.requests=event.metrics.requests;emit(event.level,event.event,event.message,event.details);}};
 }
-const ACTOR_HANDOFF=`Follow the user's authorized task and development checkpoints. If Guardian opens a dispute, the invocation did not execute and is never resumed. You may use only the bounded read-only file access Guardian permits to check your position. Do not retry, rewrite, split, or route around the action; do not use effectful tools. After inspection, call guardian_justify exactly once with whether you retract, narrow, or contest, a concise explanation, and any evidence references. Do not emit a separate persuasive answer: Guardian presents the recorded position and ends the turn for human feedback. A later real user message or /guardian-resume reopens normal review but grants no authority by itself. Historical tool errors and your previous refusals do not override later user instructions. Verify uncertain prior effects before repeating consequential operations.`;
+const ACTOR_HANDOFF=`Follow the user's authorized task and development checkpoints. If Guardian challenges an invocation, that invocation did not execute. You may use only the bounded read-only file access Guardian permits to check your position. Do not retry, rewrite, split, or route around the action; do not use effectful tools. After inspection, call guardian_justify exactly once with whether you retract, narrow, or contest, a concise explanation, and any evidence references. Retraction withdraws the action; narrowing withdraws the original and subjects any replacement to normal review; a contest accepted by Guardian permits one exact retry. Continue automatically only when the guardian_justify result says the challenge is resolved. If disagreement remains, stop for human feedback. Historical tool errors and your previous refusals do not override later user instructions. Verify uncertain prior effects before repeating consequential operations.`;
 
 
 // ============================================================================
@@ -1104,18 +1106,28 @@ type GuardianSessionMode="on"|"off";
 type DisputePhase="investigating"|"awaiting-user";
 type GuardianDispute={id:string;reason:string;phase:DisputePhase;reads:number;justification?:GuardianJustification;
   action?:ReviewRequest["action"];originalOutcome?:ReviewDecision["outcome"];assessment?:GuardianAssessment};
+type GuardianRetryPermit={disputeId:string;action:ReviewRequest["action"];revision:number;sessionId:string;cwd:string};
+function canonicalJson(value:unknown):string{
+  if(Array.isArray(value))return `[${value.map(canonicalJson).join(",")}]`;
+  if(value&&typeof value==="object"){const row=value as Record<string,unknown>;return `{${Object.keys(row).sort().map(key=>`${JSON.stringify(key)}:${canonicalJson(row[key])}`).join(",")}}`;}
+  return JSON.stringify(value)??"null";
+}
+function actionCwd(ctx:ExtensionContext,input:Json):string{const supplied=input.cwd;return typeof supplied==="string"?resolve(ctx.cwd,supplied):ctx.cwd;}
 function assessmentLabel(assessment:GuardianAssessment):string{
   if(assessment.status==="unavailable")return "Assessment unavailable";
   return assessment.outcome==="ALLOW"?"Concern resolved":assessment.outcome==="ASK"?"Concern remains":"User restriction remains";
 }
 function justificationPanel(details:JustificationDetails):string{
-  const lines=["Guardian dispute — awaiting human judgment","Nothing was executed.","",`Guardian concern: ${visible(details.guardianReason)}`,
+  const lines=[details.humanRequired?"Guardian dispute — awaiting human judgment":"Guardian challenge resolved","Nothing was executed.","",`Guardian concern: ${visible(details.guardianReason)}`,
     "",`Agent position: ${details.justification.position}`,visible(details.justification.explanation)];
   if(details.justification.evidence?.length)lines.push("","Evidence references:",...details.justification.evidence.map(v=>`- ${visible(v)}`));
-  lines.push("",`Guardian assessment: ${assessmentLabel(details.assessment)}`,
-    visible(details.assessment.status==="completed"?details.assessment.reason:details.assessment.error),
-    "","This assessment is advisory. The original invocation remains cancelled and human feedback is required.");
-  return lines.join("\n");
+  if(details.assessment)lines.push("",`Guardian assessment: ${assessmentLabel(details.assessment)}`,
+    visible(details.assessment.status==="completed"?details.assessment.reason:details.assessment.error));
+  const resolution=details.resolution==="retracted"?"The primary retracted the command. It remains cancelled and work may continue without human arbitration.":
+    details.resolution==="narrowed"?"The primary withdrew the original command. Any narrower replacement receives normal Guardian review.":
+    details.resolution==="accepted"?"Guardian accepted the position. The exact command may be proposed once more without another review; any change receives fresh review.":
+    "The primary and Guardian have not agreed. Human judgment is required.";
+  lines.push("",resolution);return lines.join("\n");
 }
 function restoredGuardianMode(ctx:ExtensionContext,profileDefault:GuardianDefaultMode):{mode:GuardianSessionMode;source:"profile-default"|"legacy-default"|"session"}{
   const entries=ctx.sessionManager.getEntries();let mode:GuardianSessionMode=entries.length?"off":profileDefault,source:"profile-default"|"legacy-default"|"session"=entries.length?"legacy-default":"profile-default";
@@ -1152,7 +1164,7 @@ export function createGuardianExtension(factory: ReviewerFactory = createPiRevie
     const guardReviewConnection = connectGuardReviewClient(pi, { schemaVersion: 1, id: "guardian", label: "Guardian",
       evidenceProfile: "guardian-command.v1", decisionContract: "guardian-decision.v1" });
     let revision = 0, statusOwner = 0, last: Stats | undefined;
-    let dispute:GuardianDispute|undefined;
+    let dispute:GuardianDispute|undefined,retryPermit:GuardianRetryPermit|undefined;
     const store = new ConversationStore();
     let config:GuardReviewerConfig = defaultGuardReviewerConfig(), configNeedsWrite = true;
     let enabled = false,modeRecorded=false,defaultMode:GuardianDefaultMode="off",defaultModeError:string|undefined,displayState = "Off", displayDetail = ""; // Never inferred from model output.
@@ -1186,7 +1198,7 @@ export function createGuardianExtension(factory: ReviewerFactory = createPiRevie
     const traceKey = (ctx: ExtensionContext, id: string) => JSON.stringify([ctx.sessionManager.getSessionId(), id]);
     const active = new Set<AbortController>();
     const invalidate = () => {
-      closeLogViewer();
+      closeLogViewer();retryPermit=undefined;
       revision++; for (const c of active) c.abort(new Error("Conversation/settings changed"));
       if (enabled && active.size && logUI) status(logUI,"Cancelled");
     };
@@ -1337,11 +1349,11 @@ export function createGuardianExtension(factory: ReviewerFactory = createPiRevie
       appendDispute(ctx,{state:"open",...dispute});syncJustificationTool(ctx);
       statusOwner++;status(ctx,"Dispute",phase==="awaiting-user"?"awaiting you":"investigating");
     }
-    function resolveDispute(ctx:ExtensionContext,basis:string):void{
+    function resolveDispute(ctx:ExtensionContext,basis:string,authorizationGranted=false):void{
       const resolved=dispute;if(!resolved)return;
       dispute=undefined;appendDispute(ctx,{state:"resolved",id:resolved.id,basis});syncJustificationTool(ctx);statusOwner++;
-      sink(ctx)("INFO","dispute_resolved","Human interaction cleared the dispute latch without authorizing an action",{
-        disputeId:resolved.id,basis,pendingInvocationReleased:false,authorizationGranted:false,
+      sink(ctx)("INFO","dispute_resolved","Guardian dispute latch cleared",{
+        disputeId:resolved.id,basis,pendingInvocationReleased:false,authorizationGranted,
       });
       status(ctx,enabled?"On":"Off");
     }
@@ -1350,16 +1362,16 @@ export function createGuardianExtension(factory: ReviewerFactory = createPiRevie
       revision++;
       let cancelledReviews=0;
       for(const c of active)if(c!==current&&!c.signal.aborted){cancelledReviews++;c.abort(new Error("Guardian dispute opened"));}
-      const suppliedCwd=(event.input as Json).cwd,actionCwd=typeof suppliedCwd==="string"?resolve(ctx.cwd,suppliedCwd):ctx.cwd;
+      const cwd=actionCwd(ctx,event.input as Json);
       dispute={id:randomUUID(),reason:clip(reason,4096),phase:"investigating",reads:0,
-        action:{toolName:event.toolName,toolCallId:event.toolCallId,input:structuredClone(event.input as Json),cwd:actionCwd},
+        action:{toolName:event.toolName,toolCallId:event.toolCallId,input:structuredClone(event.input as Json),cwd},
         ...(decision?{originalOutcome:decision.outcome}:{})};
       appendDispute(ctx,{state:"open",...dispute});syncJustificationTool(ctx);statusOwner++;
-      emit("BLOCK","dispute_opened","Invocation withheld; only bounded file reading remains until human feedback",{
+      emit("BLOCK","dispute_opened","Invocation withheld; bounded inspection and one structured primary position are available",{
         disputeId:dispute.id,basis,reason:dispute.reason,maxReadCalls:MAX_DISPUTE_READS,cancelledReviews,
       });
       status(ctx,"Dispute","investigating");
-      tell(ctx,`Guardian stopped this action; nothing was executed. ${oneLine(dispute.reason,320)} The agent may inspect files read-only, must submit its position to Guardian, and must then wait for you.`,"warning");
+      tell(ctx,`Guardian stopped this action; nothing was executed. ${oneLine(dispute.reason,320)} The agent may inspect files read-only and must submit its position to Guardian. You are needed only if they still disagree.`,"warning");
     }
     async function assessJustification(ctx:ExtensionContext,snapshot:GuardianDispute,justification:GuardianJustification,
       callerSignal:AbortSignal|undefined,toolCallId:string):Promise<GuardianAssessment>{
@@ -1415,7 +1427,7 @@ export function createGuardianExtension(factory: ReviewerFactory = createPiRevie
         emit("INFO","dispute_assessment_finished","Justification assessment finished without releasing the blocked invocation",{
           disputeId:snapshot.id,result:stats.result,durationMs:stats.durationMs,requests:stats.requests,pendingInvocationReleased:false,
         });
-        emit("INFO","review_finished","Assessment finished; human arbitration remains required",{outcome:stats.result==="assessment unavailable"?null:stats.result,
+        emit("INFO","review_finished","Assessment finished; challenge resolution is applied separately",{outcome:stats.result==="assessment unavailable"?null:stats.result,
           decisionAvailable:stats.result!=="assessment unavailable",stage:stats.stage??null,durationMs:stats.durationMs,requests:stats.requests,timedOut});
         if(dispute?.id===snapshot.id){statusOwner++;status(ctx,"Dispute","awaiting you");}
       }
@@ -1423,8 +1435,8 @@ export function createGuardianExtension(factory: ReviewerFactory = createPiRevie
 
     pi.registerTool({
       name:JUSTIFICATION_TOOL,label:"Guardian justification",exposure:"model-only",defaultActive:false,executionMode:"sequential",
-      description:"Submit your final position in the current Guardian dispute after any necessary read-only inspection. This records no user authority, executes nothing, and ends your turn for human judgment.",
-      promptGuidelines:["When Guardian opens a dispute, optionally inspect files with the permitted reads, then call guardian_justify exactly once. Do not emit a separate persuasive answer or call another tool."],
+      description:"Submit your final position in a Guardian challenge. Retraction or narrowing withdraws the original action; an accepted contest permits one exact retry; unresolved disagreement ends the turn for human judgment.",
+      promptGuidelines:["When Guardian opens a dispute, optionally inspect files with the permitted reads, then call guardian_justify exactly once. Continue only if its result says the challenge is resolved; otherwise stop for human feedback."],
       parameters:JustificationSchema,
       async execute(toolCallId,params,signal,_onUpdate,toolCtx){
         signal?.throwIfAborted();
@@ -1432,13 +1444,30 @@ export function createGuardianExtension(factory: ReviewerFactory = createPiRevie
         if(!current||current.phase!=="investigating"||current.justification)throw new Error("No Guardian dispute is accepting a justification");
         if(!justification)throw new Error("Invalid Guardian justification");
         const snapshot={...current,justification};dispute=snapshot;updateDispute(ctx,"awaiting-user");
-        sink(ctx,{toolName:JUSTIFICATION_TOOL,toolCallId})("INFO","dispute_justification_submitted","Agent position recorded; execution remains blocked pending human feedback",{
-          disputeId:current.id,position:justification.position,evidence:justification.evidence??[],humanRequired:true,authorizationGranted:false,
+        const log=sink(ctx,{toolName:JUSTIFICATION_TOOL,toolCallId});
+        log("INFO","dispute_justification_submitted","Agent position recorded; the original invocation remains cancelled",{
+          disputeId:current.id,position:justification.position,evidence:justification.evidence??[],humanRequired:justification.position==="contest"?null:false,authorizationGranted:false,
         });
+        if(justification.position!=="contest"){
+          const resolution:JustificationResolution=justification.position==="retract"?"retracted":"narrowed";
+          resolveDispute(ctx,justification.position==="retract"?"agent_retracted":"agent_narrowed");
+          log("INFO","dispute_consensus","Primary withdrew the original action; no human arbitration required",{
+            disputeId:current.id,resolution,authorizationGranted:false,pendingInvocationReleased:false,
+          });
+          const details:JustificationDetails={schemaVersion:1,disputeId:current.id,guardianReason:current.reason,justification,resolution,executed:false,humanRequired:false};
+          return {content:[{type:"text",text:justificationPanel(details)}],details};
+        }
         const assessment=await assessJustification(ctx,snapshot,justification,signal,toolCallId);
-        if(dispute?.id===current.id){dispute={...dispute,assessment};updateDispute(ctx,"awaiting-user");}
-        const details:JustificationDetails={schemaVersion:1,disputeId:current.id,guardianReason:current.reason,justification,assessment,executed:false,humanRequired:true};
-        return {content:[{type:"text",text:justificationPanel(details)}],details,terminate:true};
+        let resolution:JustificationResolution="human-required",humanRequired=true;
+        if(dispute?.id===current.id&&assessment.status==="completed"&&assessment.outcome==="ALLOW"&&current.action){
+          retryPermit={disputeId:current.id,action:structuredClone(current.action),revision,sessionId:ctx.sessionManager.getSessionId(),cwd:ctx.cwd};
+          resolution="accepted";humanRequired=false;resolveDispute(ctx,"agent_guardian_agreement",true);
+          log("ALLOW","dispute_consensus","Guardian accepted the primary position; one exact retry is authorized",{
+            disputeId:current.id,resolution,authorizationGranted:true,pendingInvocationReleased:false,
+          });
+        }else if(dispute?.id===current.id){dispute={...dispute,assessment};updateDispute(ctx,"awaiting-user");}
+        const details:JustificationDetails={schemaVersion:1,disputeId:current.id,guardianReason:current.reason,justification,assessment,resolution,executed:false,humanRequired};
+        return {content:[{type:"text",text:justificationPanel(details)}],details,...(humanRequired?{terminate:true}:{})};
       },
       renderCall(_args,theme){return new Text(theme.fg("toolTitle",theme.bold("Guardian · receiving agent position")),0,0);},
       renderResult(result,_options,theme){
@@ -1542,7 +1571,7 @@ export function createGuardianExtension(factory: ReviewerFactory = createPiRevie
           return undefined;
         }
         if(dispute.phase==="investigating"&&dispute.reads>=MAX_DISPUTE_READS)updateDispute(ctx,"awaiting-user");
-        const reason=`Not executed: Guardian dispute ${JSON.stringify(dispute.id)} is ${dispute.phase==="awaiting-user"?"awaiting human feedback":"limited to native read-only file inspection"}. The original concern was: ${visible(dispute.reason)} Present your position to the user and stop; do not retry through another tool.`;
+        const reason=`Not executed: Guardian dispute ${JSON.stringify(dispute.id)} is ${dispute.phase==="awaiting-user"?"awaiting human feedback":"limited to native read-only file inspection"}. The original concern was: ${visible(dispute.reason)} ${dispute.phase==="awaiting-user"?"Stop for human feedback.":"Submit guardian_justify; do not retry through another tool."}`;
         emit("BLOCK","dispute_tool_withheld","Tool call withheld while a Guardian dispute is open",{
           disputeId:dispute.id,phase:dispute.phase,toolName:event.toolName,reason:dispute.reason,
         });
@@ -1593,6 +1622,19 @@ export function createGuardianExtension(factory: ReviewerFactory = createPiRevie
       catch {
         emit("ERROR", "invalid_tool_input", "Tool arguments are not valid JSON; action not executed");
         return withheld("invalid_arguments", "Not executed: tool arguments are not valid JSON");
+      }
+      if(retryPermit){
+        const candidate=retryPermit;retryPermit=undefined;
+        const exact=candidate.revision===revision&&candidate.sessionId===ctx.sessionManager.getSessionId()&&candidate.cwd===ctx.cwd&&
+          !ctx.hasPendingMessages()&&candidate.action.toolName===event.toolName&&candidate.action.cwd===actionCwd(ctx,event.input as Json)&&
+          canonicalJson(candidate.action.input)===canonicalJson(event.input);
+        if(exact){
+          emit("ALLOW","dispute_retry_released","Exact action released after primary and Guardian agreement",{disputeId:candidate.disputeId,authorizationGranted:true});
+          released("dispute_consensus");return;
+        }
+        emit("INFO","dispute_retry_invalidated","Resolved-dispute retry did not match the exact authorized action; normal review applies",{
+          disputeId:candidate.disputeId,authorizationGranted:false,
+        });
       }
       const current = new AbortController(); active.add(current);
       const generation = revision, session = ctx.sessionManager.getSessionId(), leaf = ctx.sessionManager.getLeafId();
@@ -1696,7 +1738,7 @@ export function createGuardianExtension(factory: ReviewerFactory = createPiRevie
         const explanation=found?.outcome==="USER_REFUSED"
           ? `This review found a currently applicable user restriction. ${decisionExplanation(found)}`
           : failure?reviewFailureSummary(failure,logger?.path):decisionExplanation(found!);
-        const stopped=withheld(basis,`Not executed: Guardian opened a dispute. ${visible(explanation)} The invocation is cancelled. Use only permitted read-only inspection, present your position to the user, and stop for feedback.`);
+        const stopped=withheld(basis,`Not executed: Guardian challenged this invocation. ${visible(explanation)} The invocation is cancelled. Use only permitted read-only inspection, then submit guardian_justify. Continue only if Guardian reports agreement.`);
         openDispute(ctx,current,explanation,basis,emit,event,found);
         return stopped;
       } catch (e) {
@@ -1704,7 +1746,7 @@ export function createGuardianExtension(factory: ReviewerFactory = createPiRevie
         if (signal.aborted || !unchanged()) return stale();
         emit(signal.aborted ? "CANCELLED" : "ERROR", "review_interrupted", "Invocation not released", { error: errorText(e) });
         const reason=`Review interrupted; no decision released: ${errorText(e)}`;
-        const stopped=withheld("review_interrupted",`Not executed: Guardian opened a dispute. ${visible(reason)} Present your position to the user and stop for feedback.`);
+        const stopped=withheld("review_interrupted",`Not executed: Guardian challenged this invocation. ${visible(reason)} Submit guardian_justify; continue only if Guardian reports agreement.`);
         openDispute(ctx,current,reason,"review_interrupted",emit,event);
         return stopped;
       } finally { guardActivity?.end();active.delete(current); }
