@@ -205,8 +205,9 @@ call_friend({ message, purpose })
 ```
 
 It accepts no automatic attachments or implicit context. CAF reviews the exact
-serialized message, then appends it to a private context containing only prior
-reviewed CAF exchanges and the friend's research results.
+serialized message, then starts a fresh native Pi `Agent` with a private
+transcript containing only that message, bounded prior reviewed CAF exchanges,
+and any research returned through the agent's restricted tools.
 
 During one round the friend may receive constrained functions such as:
 
@@ -256,7 +257,7 @@ The implementation bounds:
 - message and cumulative disclosed bytes;
 - friend requests, output tokens, research calls, and fetched content;
 - questions per round and rounds per consultation;
-- elapsed time and concurrent work; and
+- provider requests and concurrent work; and
 - retained diagnostics and session content.
 
 A provisional target is at most three friend questions per round and three
@@ -295,6 +296,8 @@ Each stage was implemented through a separate approved increment:
 6. [x] Add reviewed friend dialogue and `caf_ask_primary`.
 7. [x] Add one reviewed `caf_web_search` operation with bounded source results.
 8. [x] Validate the native Pi lifecycle with fake primary, friend, and search providers.
+9. [x] Replace the timed nested friend-completion workflow with a bounded native
+   Pi Agent whose reviewed search continues in the same private transcript.
 
 Completion of this experimental sequence does not authorize a release,
 publication, real-provider test, or the next product increment.
@@ -324,7 +327,8 @@ tool-call interoperability, and whether friend credentials should move to a
 broker.
 
 The architecture now has equal ordinary Guard Runtime clients, one sequential
-status surface, separate journals, explicit external CAF boundaries, bounded
-agent dialogue, native fake-provider lifecycle coverage, and documented limits.
+status surface, separate journals, explicit external CAF boundaries, a native
+bounded friend-agent loop, native fake-provider lifecycle coverage, and
+documented limits.
 This is experimental evidence, not a sandbox, confidentiality proof, or release
 readiness claim.

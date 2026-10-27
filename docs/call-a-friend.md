@@ -5,8 +5,10 @@ model for bounded advisory reasoning without automatically transferring the
 primary transcript, workspace, profile knowledge, tools, or credentials. The
 primary remains authoritative and responsible for checking the answer.
 
-CAF is application-level orchestration. It is not a sandbox, a confidentiality
-proof, or evidence that either model or provider handles data correctly.
+Each released invocation runs the friend through a fresh native Pi `Agent` with
+its own private transcript and a deliberately restricted tool set. CAF remains
+application-level orchestration: it is not a sandbox, a confidentiality proof,
+or evidence that either model or provider handles data correctly.
 
 ## Understand CAF and Guard
 
@@ -147,11 +149,12 @@ With Guard On, that search action receives a fresh Guard review; approval of the
 friend destination never authorizes the search destination. With Guard Off, CAF
 sends the bounded query to the search provider without a reviewer request.
 
-After release, CAF calls `web_search` with one query, at most five results, no
-page content, no curator, and no proxy override. It sends bounded titles,
-snippets, URLs, and any bounded provider answer to one final friend request with
-no tools. The primary receives the advisory answer plus a CAF-generated source
-list.
+After release, the friend agent calls `web_search` with one query, at most five
+results, no page content, no curator, and no proxy override. Bounded titles,
+snippets, URLs, and any bounded provider answer return as a tool result inside
+the same private agent transcript. CAF removes the agent's tools before its
+final model request. The primary receives the advisory answer plus a
+CAF-generated source list.
 
 Search results and pages are untrusted. CAF does not fetch result URLs, perform
 source checks, validate claims behind snippets, or permit a second search in the
@@ -185,7 +188,10 @@ branch's CAF consultation state.
 
 A normal exit may resume the consultation later. Malformed retained state,
 friend-model changes during a pending consultation, and exhausted round budgets
-fail closed.
+fail closed. If a friend or CAF research request has started, a later failure
+ends the primary's automatic turn so that only the user can decide whether to
+retry or use another method. Failures before external transmission still allow
+the primary to report or correct the local problem.
 
 ## Diagnostics
 
@@ -221,6 +227,8 @@ same process, and CAF's context separation is not an operating-system boundary.
 
 Current public research is intentionally limited to one canonical search. There
 is no friend page fetching, arbitrary URL access, shell, filesystem, internal
-network, arbitrary MCP access, or autonomous research loop.
+network, arbitrary MCP access, or autonomous research loop. CAF imposes no
+wall-clock deadline on the friend agent's model response; explicit provider
+failure and user, mode, or session cancellation still stop the run.
 
 [Documentation index](index.md) · [Guardian](guardian.md) · [Security](security.md)
