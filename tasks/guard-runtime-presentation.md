@@ -4,9 +4,9 @@
 
 This document records the implemented presentation boundary for Guard Runtime,
 Guardian, and Call a Friend (CAF). The correction was implemented after v0.9.1
-on `experiment/call-a-friend` and checkpointed in `12daf89` and `ebada28`. It has
-not been versioned, built, installed, pushed, tagged, published, or released by
-those commits.
+on `experiment/call-a-friend` and checkpointed in `12daf89` and `ebada28`. It is
+now part of the v0.9.3 candidate source, but has not been pushed, tagged,
+published, released, or deployed.
 
 The work corrected an ownership gap found after v0.9.1 while preserving separate
 Guardian and CAF policy, journals, decisions, and effects. Each implementation
@@ -22,11 +22,25 @@ multi-line notification, so shared storage did not produce a shared experience.
 The implemented structure is now:
 
 ```text
-docker/extensions/guard/guard-runtime.ts
-└── docker/extensions/guard/guard-viewer.ts   private generic viewer
+docker/extensions/guard/
+├── guard-runtime-contract.ts  public contracts and wire validation
+├── guard-runtime.ts           coordination and client registration
+├── guard-viewer.ts            private generic viewer
+├── guard-journal.ts           shared storage mechanics
+├── guard-evidence.ts          neutral bounded evidence primitives
+└── guard-reviewer-agent.ts    generic reviewer-agent harness
 
-docker/extensions/guardian/guardian-agent.ts Guardian presentation model
-docker/extensions/caf/caf-agent.ts           CAF presentation model
+docker/extensions/guardian/
+├── guardian-agent.ts          command, dispute, and retry controller
+├── guardian-reviewer.ts       Guardian reviewer domain and binding
+├── guardian-review-trace.ts   diagnostics and timeout/result handling
+├── guardian-log-viewer.ts     Guardian presentation model
+└── guardian-log-safety.ts     bounded log rendering helpers
+
+docker/extensions/caf/
+├── caf-agent.ts               transmission and lifecycle controller
+├── caf-protocol.ts            contracts, parsing, and restoration
+└── caf-log-viewer.ts          CAF presentation model
 ```
 
 Only Guard Runtime imports and opens the private viewer. Guardian and CAF supply
@@ -145,8 +159,7 @@ in the Guard Runtime presentation service.
 
 ## Runtime contract
 
-The exact TypeScript shape is decided during implementation, but registration
-must expose an operation equivalent to:
+The implemented TypeScript contract exposes an operation equivalent to:
 
 ```text
 client.openView({
@@ -210,15 +223,16 @@ location. It does not dump an arbitrary journal into the transcript.
 
 ## Dependency rules
 
-The target dependency direction is:
+The implemented dependency direction is:
 
 ```text
 Guardian ─┐
-          ├──> Guard Runtime contract ──> private Guard viewer
-CAF ──────┘
+          ├──> Guard Runtime contract <── Guard Runtime ──> private Guard viewer
+CAF ──────┘                              │
+                                        └──> generic reviewer harness
 
 Guardian ─┐
-          ├──> Guard Journal
+          ├──> Guard Journal and neutral Guard Evidence
 CAF ──────┘
 ```
 
@@ -264,10 +278,12 @@ mode semantics, release publication, or unrelated UI frameworks.
 Focused offline validation covered the shared presentation contract, runtime
 registry and lifecycle, journal bounds, Guardian flow/reviewer/evidence/reference
 fixtures, CAF configuration and lifecycle, command registration, privacy fields,
-dependency direction, Bash syntax, ShellCheck, and diff hygiene. The Guardian
-model fixture definitions passed while live reviewer calls remained explicitly
-disabled. No real-provider call, image build, installation, or release validation
-is claimed by this architecture checkpoint.
+dependency direction, Bash syntax, ShellCheck, and diff hygiene. That architecture
+checkpoint did not claim live-provider, image-build, installation, or release
+validation. Later v0.9.3 candidate work added successful local runtime and egress
+image smoke tests, real-Docker managed-worktree E2E coverage, guarded CAF, and
+representative live Guardian decisions; it still did not install, publish, or
+release anything.
 
 ## Acceptance criteria
 

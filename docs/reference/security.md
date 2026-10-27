@@ -172,9 +172,9 @@ host bundle; it does not limit which peers those authorities can authenticate.
 ## Managed discovery and executable trust
 
 Pi-Run launches Pi with broad extension, skill, and prompt-template discovery
-disabled. It then explicitly loads bundled web access, OKF, Planning, Guardian,
-and snapshot extensions; core skills; every validated profile-local skill; and
-selected validated global skills.
+disabled. It then explicitly loads bundled web access, OKF, Planning, Guard
+Runtime, Guardian, Call a Friend, and snapshot extensions; core skills; every
+validated profile-local skill; and selected validated global skills.
 
 Structural validation checks paths, types, frontmatter, links, and size where
 applicable. It does not prove that instructions, scripts, extensions, or fetched

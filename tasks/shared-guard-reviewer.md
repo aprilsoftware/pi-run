@@ -2,17 +2,17 @@
 
 ## Status and correction
 
-This document proposes a post-v0.9 correction to the Guard Runtime and Call a
-Friend (CAF) trust architecture. It does not authorize implementation,
-migration, provider calls, publication, or release work. Shipped v0.9 behavior
-remains described by [the original CAF task](call-a-friend.md).
+This document records the implemented shared-reviewer correction to the Guard
+Runtime and Call a Friend (CAF) trust architecture. The historical stage notes
+do not authorize migration, provider calls, publication, or release work.
+Current user behavior is documented in the Guardian and Call a Friend guides.
 
-The current Guard Runtime coordinates clients, activity, status, and shared
-journal mechanics, but does not own review execution. Guardian runs an agentic
-reviewer with bounded evidence tools. CAF instead asks the current primary model
-for a non-agentic disclosure decision. That is narrower than the original
-shared-runtime design and can collapse the provider boundary when the primary
-and friend use the same destination.
+Before the correction, Guard Runtime coordinated clients, activity, status, and
+shared journal mechanics but did not own review execution. Guardian ran an
+agentic reviewer with bounded evidence tools, while CAF asked the current primary
+model for a non-agentic disclosure decision. That was narrower than the original
+shared-runtime design and could collapse the provider boundary when the primary
+and friend used the same destination.
 
 A reviewer must receive the candidate disclosure before deciding whether to
 allow it. Any evidence it investigates is also sent to its model provider. A
@@ -63,8 +63,8 @@ CAF behavior.
 
 ## Runtime review contract
 
-The versioned runtime should extend registration and activity leases with an
-operation equivalent to:
+The versioned runtime extends registration and activity leases with an operation
+equivalent to:
 
 ```text
 review({
@@ -233,9 +233,10 @@ review/friend/research lease exists at a time.
 ## Journals and retained state
 
 Guardian and CAF retain separate `/guardian-log` and `/caf-log` semantic views
-and `logs/<client>/runs/<run-id>.jsonl*`; there is no `/guard-log`. The shared
-Runtime dialog owns interaction and rendering mechanics without combining the
-journals or interpreting client events. CAF journals continue to exclude
+and `logs/<workspace-id>/<session-id>/{guardian,caf}.jsonl*`; there is no
+`/guard-log`. The shared Runtime dialog owns interaction and rendering mechanics
+without combining the journals or interpreting client events. Existing v0.9.x
+run journals remain untouched and unread. CAF journals continue to exclude
 payloads, policies, authorization text, evidence, answers, and search results
 while recording bounded hashes, sizes, stages, decisions, usage, duration, and
 whether an external request started. Guardian retains its documented private
@@ -368,7 +369,7 @@ contacts a real provider, pushes, tags, installs, or releases.
 
 ## Acceptance criteria
 
-The correction is complete only when tests demonstrate:
+The correction was accepted with tests demonstrating:
 
 - both clients use the configured Guard reviewer service while Guard is On;
 - either client can be absent without breaking the runtime or other client;
@@ -394,6 +395,9 @@ The correction is complete only when tests demonstrate:
   withholding, cancellation, branch changes, friend calls, questions, search,
   persistence, and shutdown.
 
-Real-provider testing remains a separate disclosure, cost, network, and release
-decision. Passing it would show interoperability, not prove provider separation,
-confidentiality, or sandboxing.
+A later bounded v0.9.3 candidate check passed guarded CAF with one friend request
+and representative live Guardian `ALLOW`, `ASK`, `USER_REFUSED`, and accepted-
+contest decisions. Broader provider and restricted-network testing remains a
+separate disclosure, cost, network, and release decision. Passing any such test
+shows only bounded interoperability, not provider separation, confidentiality,
+or sandboxing.

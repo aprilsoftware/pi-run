@@ -31,9 +31,12 @@ the version-derived release image. It uses the normal Pi-Run data home unless
 you provide a temporary `PI_RUN_HOME` or `--home` value.
 
 The image contains Pi, baseline extensions, core skills, Restic, and a broad
-development and operations toolchain. Credentials, workspaces, selected skills,
-and optional host resources remain separate runtime inputs; an installed tool
-does not grant authority to use a service.
+development and operations toolchain. Rust comes from the version-pinned
+official `rust:${RUST_VERSION}-trixie` build stage; the current image includes
+Rust 1.99.1 with Cargo, Rustup, Rustfmt, and Clippy for the mapped non-root user.
+Credentials, workspaces, selected skills, and optional host resources remain
+separate runtime inputs; an installed tool does not grant authority to use a
+service.
 
 Build the versioned egress sidecar separately from the same Docker context:
 
@@ -85,7 +88,10 @@ independent services.
 | `docker/Dockerfile` | Versioned runtime toolchain and bundled components |
 | `docker/entrypoint.sh` | Runtime UID/GID mapping, setup, and privilege drop |
 | `docker/egress/` | Versioned restricted-egress sidecar image and firewall/proxy entrypoint |
-| `docker/extensions/` | Guard infrastructure plus sibling Guardian, CAF, Planning, and Snapshot extensions |
+| `docker/extensions/guard/` | Runtime contracts, reviewer routing, evidence, journals, activity/status, and shared viewer mechanics |
+| `docker/extensions/guardian/` | Guardian command/dispute controller, reviewer domain, review tracing, and log presentation |
+| `docker/extensions/caf/` | CAF friend/transmission controller, protocol helpers, and log presentation |
+| `docker/extensions/plan/`, `snapshot/` | Planning and Snapshot extension entrypoints |
 | `docker/skills/` | Runtime-owned core skills |
 | `templates/profiles/default/` | Definitions copied when the data home is initialized |
 | `scripts/build-release` | Reproducible host-application archive and checksum builder |
@@ -115,9 +121,12 @@ for test in tests/*-test.sh; do
 done
 ```
 
-Some scripts exercise TypeScript extensions through their shell harnesses. Keep
-temporary fixtures outside the repository, unset unrelated credentials, and
-inspect the final Git diff. A skipped optional integration is not a pass; report
+Some scripts exercise TypeScript extensions through their shell harnesses. The
+repository does not currently define a complete TypeScript project/type-check
+step, so behavioral harnesses, transformed-source checks, dependency assertions,
+and exact packaged-layout tests remain important. Keep temporary fixtures
+outside the repository, unset unrelated credentials, and inspect the final Git
+diff. A skipped optional integration is not a pass; report
 it separately. Do not substitute a live provider, remote host, registry, or
 snapshot repository for an existing fake fixture.
 
