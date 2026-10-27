@@ -41,11 +41,13 @@ every covered action. When Guard review is On, one explicitly selected,
 evidence-aware Pi reviewer examines Guardian-covered `bash` and `run` calls and
 CAF disclosures against the current request and applicable instructions.
 Guardian releases supported commands; otherwise it permanently cancels the
-invocation and opens a dispute. The acting agent can inspect bounded file
-evidence and submit a structured position, which Guard reassesses without
-granting authority or releasing the action. The human provides the final
-direction. Guard review is session-scoped and starts Off unless the profile's
-new-session default was deliberately changed.
+invocation and opens a challenge. The acting agent can inspect bounded file
+evidence and retract, narrow, or contest its proposal. Retraction and narrowing
+withdraw the original without human arbitration; Guard reassesses a contest and
+permits one exact retry only when the concern is resolved. The human provides
+final direction when disagreement remains or reassessment is unavailable. Guard
+review is session-scoped and starts Off unless the profile's new-session default
+was deliberately changed.
 
 Guardian is not a sandbox or an infallible security decision-maker. The temporary
 container narrows filesystem exposure, but selected mounts contain real host
@@ -74,9 +76,9 @@ resources, and other infrastructure need their own recovery mechanisms.
   policy, and conversations while leaving other profiles out of view.
 - **Shared Guard review:** one explicitly configured reviewer can check
   acting-agent `bash` and `run` calls plus Call a Friend disclosures. Supported
-  commands proceed; disputed invocations are cancelled and left for human
-  direction. Guard review starts Off, and an enabled CAF makes no reviewer call
-  while it remains Off.
+  commands proceed; challenged invocations are cancelled, and only unresolved
+  disputes require human direction. Guard review starts Off, and an enabled CAF
+  makes no reviewer call while it remains Off.
 - **Call a Friend:** the private primary agent can send one bounded disclosure
   to a separately configured advisory model, with constrained questions,
   continuations, and optional public search. Guard reviews each destination

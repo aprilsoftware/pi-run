@@ -64,12 +64,13 @@ The new profile receives:
 
 - `profile.json`, with the new name;
 - `AGENTS.md` instructions;
-- `guardian/guardian.md` review policy; and
+- `guardian/guardian.md` review policy;
+- `caf/caf.md` disclosure policy, when the source has one; and
 - validated profile-local skills.
 
-Provider authentication, SSH keys, settings, Git configuration, Guardian
-preferences and logs, and sessions are **not copied**. Authenticate and configure
-the new profile deliberately.
+Provider authentication, SSH keys, settings, Git configuration, Guard/Guardian
+and CAF preferences and logs, and sessions are **not copied**. Authenticate and
+configure the new profile deliberately.
 
 Shared-folder and network configuration are inherited, so review both before
 first launch. The global skill filter resets to `null`, meaning all installed

@@ -120,9 +120,10 @@ guarantee correct interpretation.
 ## Review outcomes and dispute lifecycle
 
 A valid decision either allows the invocation or withholds it. `ASK` and
-`USER_REFUSED` both open a human-arbitrated dispute; the latter records that an
-applicable user restriction already exists. Guardian never releases either case
-through a confirmation dialog.
+`USER_REFUSED` both open a challenge; the latter records that an applicable user
+restriction already exists. The acting agent may retract, narrow, or contest as
+described below, and only unresolved outcomes require human arbitration.
+Guardian never releases either case through a confirmation dialog.
 
 The blocked invocation is permanently cancelled. Guardian records and displays
 its reason independently, cancels sibling command reviews, and enters the

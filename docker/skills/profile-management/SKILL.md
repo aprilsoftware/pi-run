@@ -38,12 +38,10 @@ tell the user which host command to run for profile, skill, or SSH management.
 │   ├── config.json
 │   └── mode.json
 ├── logs/
-│   ├── guardian/
-│   │   └── runs/
-│   │       └── <run-id>.jsonl*
-│   └── caf/
-│       └── runs/
-│           └── <run-id>.jsonl*
+│   └── <workspace-id>/
+│       └── <session-id>/
+│           ├── guardian.jsonl*
+│           └── caf.jsonl*
 └── sessions/
 ```
 
@@ -153,9 +151,10 @@ pi-run profile create <name>
 pi-run profile create <name> --from <source-profile>
 ```
 
-Creation copies only `profile.json`, `AGENTS.md`, `guardian/guardian.md`, and
-profile-local skills; private runtime state starts empty. It resets `skills` to
-`null`, so a new profile initially loads every global skill. Use encrypted
+Creation copies only `profile.json`, `AGENTS.md`, `guardian/guardian.md`,
+`caf/caf.md` when present, and profile-local skills; private runtime state starts
+empty. It resets `skills` to `null`, so a new profile initially loads every
+global skill. Use encrypted
 Pi-Run snapshots rather than copying complete profile directories for backup or
 workstation transfer.
 

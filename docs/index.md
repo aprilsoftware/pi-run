@@ -30,10 +30,11 @@ this profile boundary.
 Guard is an optional shared review layer. While it is On, one explicitly
 selected evidence-aware reviewer handles Guardian-covered `bash` and `run` calls
 and Call a Friend disclosures. Guardian releases supported commands without
-interruption; otherwise it cancels the invocation and opens a human-arbitrated
-dispute. The agent's structured position receives an advisory reassessment but
-cannot grant itself authority or release the action. Guard review starts Off and
-is not a sandbox.
+interruption; otherwise it cancels the invocation and opens a challenge. The
+agent may retract, narrow, or contest its proposal. Retraction and narrowing
+withdraw the original; an accepted contest permits one exact retry. Human
+arbitration is needed only when disagreement remains or reassessment is
+unavailable. Guard review starts Off and is not a sandbox.
 
 Call a Friend lets the private primary agent request bounded advice from a
 separately configured model. While Guard is On, each primary-to-friend
