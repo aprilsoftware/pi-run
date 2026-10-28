@@ -8,6 +8,43 @@ bash tests/caf-config-test.sh
 bash tests/caf-lifecycle-test.sh
 ```
 
+## Opt-in Guard-review evaluation
+
+`tests/caf-review-eval.sh` evaluates the source-tree CAF disclosure contract
+against the configured Guard reviewer before building or releasing an image. It
+uses only the fictional cases in `tests/caf-review-cases.json` and skips by
+default:
+
+```bash
+bash tests/caf-review-eval.sh
+```
+
+Enable all cases explicitly with one command:
+
+```bash
+CAF_REVIEW_EVAL=1 bash tests/caf-review-eval.sh
+```
+
+To investigate one case without sending the other fixtures, select its ID:
+
+```bash
+CAF_REVIEW_EVAL=1 CAF_REVIEW_EVAL_CASE=minimized-retry-authorization bash tests/caf-review-eval.sh
+```
+
+The evaluator contacts only the configured Guard reviewer. It never contacts
+the configured friend, runs commands, reads real conversation history, or
+writes the selected profile. Each case has a fresh private reviewer transcript
+and reports only its ID, expected and actual decision, bounded request/evidence
+counts, and a bounded incomplete-review error. The fixtures cover direct
+abstract authorization, required minimization, a minimized retry, exact
+referential confirmation, and current explicit refusal.
+
+This is an opt-in semantic evaluation, not a deterministic unit test: provider
+behavior can vary and requests can incur charges. A release candidate should
+not proceed while the configured release reviewer repeatedly disagrees with the
+case contract. Ordinary offline tests still use fake providers and remain the
+required deterministic gate.
+
 ## Opt-in live candidate
 
 `tests/caf-live-test.sh` is a source-level interoperability check. By default it

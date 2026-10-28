@@ -301,7 +301,7 @@ export class AgenticGuardReviewer<Request, Evidence, Decision> {
     const metrics: AgenticReviewMetrics & Required<Pick<AgenticReviewMetrics,"requests"|"evidenceCalls"|"inputBytes">> = { requests: 0, evidenceCalls: 0, inputBytes: 0 };
     const options = this.options, domain = options.domain, evidence = services.evidence;
     let agent: NativeAgentLike | undefined, completed: Decision | undefined;
-    let lastError = "Reviewer did not supply a decision", corrections = 0, latestCalls: any[] = [];
+    let lastError = "Reviewer did not supply a decision", corrections = 0, truncationCorrections = 0, latestCalls: any[] = [];
     const providerRuns=new Set<Promise<void>>();
     let phase: ReviewerPhase = "investigating";
     const emit = (level: "INFO" | "INVESTIGATE" | "ERROR", event: string, message: string, details?: AgenticJson) =>
@@ -413,9 +413,18 @@ export class AgenticGuardReviewer<Request, Evidence, Decision> {
         if (phase === "closed") return;
         if (event.type === "message_end" && event.message?.role === "assistant") {
           const message = event.message; latestCalls = (message.content ?? []).filter((block: any) => block.type === "toolCall");
-          if (!["toolUse", "stop", "error", "aborted"].includes(message.stopReason)) {
+          if (message.stopReason === "length" && phase !== "completed" && truncationCorrections++ === 0 && metrics.requests < MAX_MODEL_REQUESTS) {
+            lastError = "Reviewer response reached its output limit before a decision"; phase = "decision-only";
+            emit("ERROR", "incomplete_model_response", "Truncated response cannot authorize; scheduling one bounded decision-only continuation", {
+              stopReason: message.stopReason, recoveryScheduled: true, remainingRequests: MAX_MODEL_REQUESTS - metrics.requests,
+            });
+            agent?.followUp({ role: "user", timestamp: Date.now(),
+              content: "Harness recovery (not user authority): the previous response reached its output limit. Return exactly one final decision now from available evidence. Do not investigate further." });
+          } else if (!["toolUse", "stop", "error", "aborted"].includes(message.stopReason)) {
             lastError = `Reviewer response ended with ${String(message.stopReason)}; no complete decision accepted`;
-            phase = "closed"; emit("ERROR", "incomplete_model_response", "Truncated/deferred response cannot authorize execution", { stopReason: message.stopReason });
+            phase = "closed"; emit("ERROR", "incomplete_model_response", "Truncated/deferred response cannot authorize execution", {
+              stopReason: message.stopReason, recoveryScheduled: false,
+            });
           }
           for (const call of latestCalls) emit("INFO", "reviewer_function_received", "Native Pi private tool call", { functionName: call.name, functionCallId: call.id, arguments: call.arguments });
           if (phase !== "completed" && !latestCalls.length && message.stopReason === "stop") {

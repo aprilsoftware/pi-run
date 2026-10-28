@@ -270,6 +270,20 @@ try {
   assert.equal(chronologyCorrected.events.filter(event => event.event === 'model_request').at(-1)?.details?.finalDecisionOnly, true);
   console.log('PASS guardian-reviewer: final correction omits stale complete citations with unread chronology');
 
+  const recoveredTruncation = await assess(round => round === 1
+    ? streamed(assistant([{ type: 'text', text: 'Synthetic reasoning truncated before a decision.' }], 'length'))
+    : streamed(assistant([{ type: 'toolCall', id: 'decision-after-length', name: 'guardian_decide', arguments: {
+      outcome: 'ASK', basis: 'uncertainty', reason: 'Recovered with a bounded decision-only response.',
+      userMessageIds: [], instructionRefs: [],
+    } }])));
+  assert.equal(recoveredTruncation.result.status, 'completed');
+  assert.equal(recoveredTruncation.result.decision.outcome, 'ASK');
+  assert.equal(recoveredTruncation.requests, 2);
+  const truncationEvent=recoveredTruncation.events.find(event=>event.event==='incomplete_model_response');
+  assert.equal(truncationEvent?.details?.stopReason,'length');assert.equal(truncationEvent?.details?.recoveryScheduled,true);
+  assert.equal(recoveredTruncation.events.filter(event=>event.event==='model_request').at(-1)?.details?.finalDecisionOnly,true);
+  console.log('PASS guardian-reviewer: one truncated response receives a bounded decision-only continuation');
+
   const interrupted = await assess(() => streamed({
     ...assistant([{ type: 'toolCall', id: 'partial-decision', name: 'guardian_decide', arguments: {
       outcome: 'ALLOW', basis: 'standing_rules', reason: 'Partial decision must not be accepted.',
