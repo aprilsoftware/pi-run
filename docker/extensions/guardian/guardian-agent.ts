@@ -9,12 +9,12 @@
  * Private evidence reads/searches remain available within a command review.
  * All reviewer filesystem tools are local, bounded, and read-only. This is not a sandbox.
  */
-import type { ExtensionAPI, ExtensionContext, ToolCallEvent } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, SessionStartEvent, ToolCallEvent } from "@earendil-works/pi-coding-agent";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { Text } from "@earendil-works/pi-tui";
 import { connectGuardClient, connectGuardReviewClient, type GuardActivityLeaseV1, type GuardActivityRequestV1,
   type GuardReviewDiagnosticSnapshotV1, type GuardReviewResultV1 } from "../guard/guard-runtime.ts";
-import { createSessionGuardJournalWriter, guardJournalWorkspaceId } from "../guard/guard-journal.ts";
+import { guardJournalWorkspaceId } from "../guard/guard-journal.ts";
 import { LOG_BACKUPS, MAX_LOG_BYTES, ReviewTimeoutError, ReviewTrace, abortable, actionPreview, createLogger, errorText, guardianDiagnosticReference, oneLine, reviewFailureSummary, toolResultDetails, validBudget, visible } from "./guardian-review-trace.ts";
 export { ReviewTimeoutError, ReviewTrace, createLogger, reviewFailureSummary } from "./guardian-review-trace.ts";
 import { LEVELS, ConversationStore, PiAgentReviewer, createPiReviewerBinding, decisionExplanation, freeze, plain, prepareReview, resolveProvider, reviewServices, textArg, validateReviewResult, within, type Decision, type GuardianConfig, type GuardianConfigPatch, type GuardianReviewer, type Json, type ReviewDecision, type ReviewerBinding, type ReviewerControl, type ReviewerFactory, type ReviewerHost, type ReviewRequest, type ReviewResult, type ReviewServices, type Stats, type Thinking } from "./guardian-reviewer.ts";
@@ -220,8 +220,14 @@ function justificationPanel(details:JustificationDetails):string{
     "The primary and Guardian have not agreed. Human judgment is required.";
   lines.push("",resolution);return lines.join("\n");
 }
-function restoredGuardianMode(ctx:ExtensionContext,profileDefault:GuardianDefaultMode):{mode:GuardianSessionMode;source:"profile-default"|"legacy-default"|"session"}{
-  const entries=ctx.sessionManager.getEntries();let mode:GuardianSessionMode=entries.length?"off":profileDefault,source:"profile-default"|"legacy-default"|"session"=entries.length?"legacy-default":"profile-default";
+async function guardianUsesProfileDefault(event:SessionStartEvent,ctx:ExtensionContext):Promise<boolean>{
+  if(event.reason==="new")return true;
+  if(event.reason==="resume"||event.reason==="fork")return false;
+  const path=ctx.sessionManager.getSessionFile();if(!path)return true;
+  try{await lstat(path);return false;}catch(error){return (error as NodeJS.ErrnoException).code==="ENOENT";}
+}
+function restoredGuardianMode(ctx:ExtensionContext,profileDefault:GuardianDefaultMode,useProfileDefault:boolean):{mode:GuardianSessionMode;source:"profile-default"|"legacy-default"|"session"}{
+  const entries=ctx.sessionManager.getEntries();let mode:GuardianSessionMode=useProfileDefault?profileDefault:"off",source:"profile-default"|"legacy-default"|"session"=useProfileDefault?"profile-default":"legacy-default";
   for(const entry of entries)if(entry.type==="custom"&&entry.customType===GUARDIAN_MODE_ENTRY){
     const candidate=(entry.data as {mode?:unknown}|undefined)?.mode;
     if(candidate==="on"||candidate==="off"){mode=candidate;source="session";}
@@ -568,7 +574,7 @@ export function createGuardianExtension(factory: ReviewerFactory = createPiRevie
       },
     });
 
-    pi.on("session_start", async (_event, ctx) => {
+    pi.on("session_start", async (event, ctx) => {
       invalidate();dispute=undefined;store.clear();binding.reset?.();last=undefined;config=defaultGuardReviewerConfig();configNeedsWrite=true;
       try{await selectLogger(ctx);}catch(error){logger=undefined;journalError=errorText(error);tell(ctx,`Guardian logging unavailable: ${journalError}. Reviews and dispute enforcement are unchanged.`,"warning");}
       let configSource="default";
@@ -588,7 +594,7 @@ export function createGuardianExtension(factory: ReviewerFactory = createPiRevie
       }
       try{defaultMode=(await loadGuardianModeConfig(stateDir)).defaultMode;defaultModeError=undefined;}
       catch(error){defaultMode="off";defaultModeError=errorText(error);tell(ctx,`Guardian new-session default unavailable; using Off: ${defaultModeError}`,"warning");}
-      const restored=restoredGuardianMode(ctx,defaultMode);modeRecorded=restored.source==="session";
+      const restored=restoredGuardianMode(ctx,defaultMode,await guardianUsesProfileDefault(event,ctx));modeRecorded=restored.source==="session";
       enabled=restored.mode==="on";publishGuardMode(ctx);dispute=enabled?restoredGuardianDispute(ctx):undefined;syncJustificationTool(ctx);
       statusOwner++;status(ctx,dispute?"Dispute":enabled?"On":"Off",dispute?(dispute.phase==="awaiting-user"?"awaiting you":"investigating"):"");
       sink(ctx)("SESSION_START", "session_started", "Guardian ready; logs are diagnostic only", {
@@ -598,7 +604,7 @@ export function createGuardianExtension(factory: ReviewerFactory = createPiRevie
         reviewScope: "command_execution", toolNames: [...GUARDED_COMMAND_TOOLS],
       });
     });
-    pi.on("session_tree", (_e, ctx) => { invalidate();store.clear();const restored=restoredGuardianMode(ctx,defaultMode);
+    pi.on("session_tree", (_e, ctx) => { invalidate();store.clear();const restored=restoredGuardianMode(ctx,defaultMode,false);
       if(restored.source==="session"){modeRecorded=true;enabled=restored.mode==="on";}
       publishGuardMode(ctx);dispute=enabled?restoredGuardianDispute(ctx):undefined;syncJustificationTool(ctx);statusOwner++;last=undefined;
       status(ctx,dispute?"Dispute":enabled?"On":"Off",dispute?(dispute.phase==="awaiting-user"?"awaiting you":"investigating"):""); });
@@ -939,9 +945,8 @@ export function createGuardianExtension(factory: ReviewerFactory = createPiRevie
         const value = args.trim().toLowerCase();
         if (["on", "off"].includes(value)) { await setMode(ctx, value === "on"); return; }
         if(value.startsWith("default ")){await defaultModeCommand(value.slice(8),ctx);return;}
-        if (value === "log" || value === "logs") { await logsCommand("", ctx); return; }
         if (!value && !ctx.hasUI) { shortStatus(ctx); return; }
-        if (value) { tell(ctx, "Usage: /guardian [on|off|default on|off|log]"); return; }
+        if (value) { tell(ctx, "Usage: /guardian [on|off|default on|off]"); return; }
         // No status dump, trace counts or last-error wall of text. The first menu
         // item can always toggle reviewing, even if the selected model is invalid.
         const choices = [

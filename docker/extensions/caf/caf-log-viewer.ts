@@ -75,7 +75,7 @@ export function createCafLogViewRequest(stateDir:string,workspaceId:string,flush
   let operations:readonly CafLogOperation[]=[];
   return {schemaVersion:1,title:"Call a Friend operations · current workspace · UTC",compactTitle:"Call a Friend operations",
     wideHeader:"  UTC date/time             Outcome          Duration  Destination",initialQuery:cafViewText(initialQuery,300)??"",
-    fallbackText:`CAF journals: ${join(stateDir,"logs",workspaceId)} (viewer requires Pi's terminal UI).`,
+    fallbackText:`CAF journal: ${join(stateDir,"logs",workspaceId,"caf.jsonl")} (viewer requires Pi's terminal UI).`,
     unavailableText:"CAF log viewer needs Pi's custom terminal UI.",emptyText:"No Call a Friend operations in this workspace.",noMatchesText:"No CAF operations match this search.",
     missingSelectionText:"Selected CAF operation is no longer available.",incompleteNoticeText:"operation list may be incomplete",
     sections:[{id:"summary",label:"Summary"},{id:"timeline",label:"Timeline"}],

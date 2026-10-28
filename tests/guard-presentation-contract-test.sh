@@ -21,7 +21,7 @@ const [runtime,guardian,caf,journal]=await Promise.all([
   jiti.import(runtimeFile),jiti.import(join(root,'docker/extensions/guardian/guardian-agent.ts')),jiti.import(join(root,'docker/extensions/caf/caf-agent.ts')),jiti.import(join(root,'docker/extensions/guard/guard-journal.ts')),
 ]);
 const base=Date.parse('2026-04-02T12:00:00.000Z'),timestamp=index=>new Date(base+index*1000).toISOString();
-const cafWriter=journal.createSessionGuardJournalWriter({schemaVersion:2,stateDir:profile,workspaceId,sessionId,kind:'caf',maxBytes:1024*1024,backups:2,maxPending:1000});
+const cafWriter=journal.createWorkspaceGuardJournalWriter({schemaVersion:2,stateDir:profile,workspaceId,sessionId,kind:'caf',maxBytes:1024*1024,backups:2,maxPending:1000});
 let sequence=0;
 for(let index=0;index<60;index++){
   const operationId=`operation-${String(index).padStart(2,'0')}`,time=timestamp(sequence++);
@@ -70,7 +70,9 @@ assert.match(rendered[0].list,/Guardian reviews/);assert.match(rendered[0].list,
 assert.match(rendered[1].list,/Call a Friend operations/);assert.match(rendered[1].list,/Search: answered/);assert.match(rendered[1].detail,/Summary|Call a Friend operation/);
 const notifications=[],printContext={mode:'print',hasUI:false,ui:{setWidget(){},notify(text,level){notifications.push({text,level});}}};
 await emit('session_tree',{type:'session_tree'},printContext);const before=[guardianFlushes,cafFlushes];await guardianClient.openView(guardianRequest);await cafClient.openView(cafRequest);
-assert.deepEqual([guardianFlushes,cafFlushes],before,'Non-TUI fallback must not load journals');assert.equal(notifications.length,2);assert.match(notifications[0].text,/Guardian journals:/);assert.match(notifications[1].text,/CAF journals:/);
+assert.deepEqual([guardianFlushes,cafFlushes],before,'Non-TUI fallback must not load journals');assert.equal(notifications.length,2);
+assert.equal(notifications[0].text,`Guardian journal: ${join(profile,'logs',workspaceId,'guardian.jsonl')} (viewer requires Pi's terminal UI).`);
+assert.equal(notifications[1].text,`CAF journal: ${join(profile,'logs',workspaceId,'caf.jsonl')} (viewer requires Pi's terminal UI).`);
 await emit('session_shutdown',{type:'session_shutdown',reason:'exit'},printContext);await Promise.all([guardianLogger.close(),cafWriter.close()]);
 console.log('shared Guardian and CAF presentation contract, bounds, privacy, search, lifecycle, and fallback passed');
 NODE

@@ -165,7 +165,7 @@ export function groupGuardianLogs(entries: readonly GuardianLogEntry[]): Guardia
   });
   return [...groups.values()].filter(actualReview).sort((a, b) => lvTime(b.timestamp) - lvTime(a.timestamp) || b.events[0].order - a.events[0].order);
 }
-/** Snapshot bounded Guardian session journals for one workspace without writing or rotating them. */
+/** Snapshot the bounded Guardian workspace journal without writing or rotating it. */
 export async function readGuardianLogs(stateDir:string,workspaceId:string,signal?:AbortSignal):Promise<GuardianLogSnapshot> {
   const journal=await readWorkspaceGuardJournal({schemaVersion:2,stateDir,workspaceId,kind:"guardian",maxRecords:VIEW_RECORDS},signal);
   const sources=new Map<string,string[]>(),chunks:{name:string;text:string}[]=[];
@@ -362,7 +362,7 @@ export function createGuardianLogViewRequest(stateDir:string,workspaceId:string,
     compactTitle:"Guardian reviews",
     wideHeader:"  UTC date/time             Decision        Duration  Reviewed command",
     initialQuery:lvSafeText(initialQuery).replace(/[\r\n\t]/g," ").slice(0,300),
-    fallbackText:`Guardian journals: ${join(stateDir,"logs",workspaceId)} (viewer requires Pi's terminal UI).`,
+    fallbackText:`Guardian journal: ${join(stateDir,"logs",workspaceId,"guardian.jsonl")} (viewer requires Pi's terminal UI).`,
     unavailableText:"Guardian log viewer needs Pi's custom terminal UI.",
     emptyText:"No Guardian reviews retained. Commands skipped while Guardian was Off are hidden.",
     noMatchesText:"No reviews match this search.",

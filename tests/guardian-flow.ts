@@ -31,8 +31,8 @@ async function runScenario(name: Scenario, realUI?: ExtensionUIContext, withRunt
   const tools = new Map<string,any>();
   let activeTools=["bash","read","edit","write","custom-effect"];
   const calls: string[] = [], reviewedIds: string[] = [], notices: string[] = [], statusLines: string[] = [];
-  let outcome:Outcome=scenario.outcome,sessionId="00000000-0000-7000-8000-000000000001",reviews=0,assessmentReviews=0,aborts=0;
-  const journalPath=()=>join(profile,"logs",workspaceId,sessionId,"guardian.jsonl");
+  let outcome:Outcome=scenario.outcome,sessionId="00000000-0000-7000-8000-000000000001",sessionFile=join(sessionDir,"session-1.jsonl"),reviews=0,assessmentReviews=0,aborts=0;
+  const journalPath=()=>join(profile,"logs",workspaceId,"guardian.jsonl");
   let viewerCalls=0,viewerText="";
   let runtimeService:GuardRuntimeV1|undefined;
   const userEntry = { type: "message", id: "user-1", message: { role: "user", content: "Synthetic test direction; no action may execute." } };
@@ -47,7 +47,7 @@ async function runScenario(name: Scenario, realUI?: ExtensionUIContext, withRunt
     model:reviewerModel,modelRegistry:{find:(provider:string,id:string)=>provider==="synthetic"&&id==="reviewer"?reviewerModel:undefined,getAvailable:()=>[reviewerModel]},
     abort: () => { aborts++; },
     sessionManager: {
-      getSessionId:()=>sessionId,getSessionDir:()=>sessionDir,getCwd:()=>workspace,
+      getSessionId:()=>sessionId,getSessionDir:()=>sessionDir,getSessionFile:()=>sessionFile,getCwd:()=>workspace,
       getLeafId: () => branch.at(-1)?.id, getBranch: () => branch, getEntries: () => entries,
     },
     ui: {
@@ -141,7 +141,7 @@ async function runScenario(name: Scenario, realUI?: ExtensionUIContext, withRunt
       if (previous === undefined) delete process.env.PI_RUN_PROFILE_DIR;
       else process.env.PI_RUN_PROFILE_DIR = previous;
     }
-    await dispatch("session_start", { type: "session_start" });
+    await dispatch("session_start", { type: "session_start", reason: "resume" });
     if(withRuntime)assert.equal(runtimeService?.reviewMode(),"on","Guardian session mode must publish the shared Guard review mode");
     assert.deepEqual([...widgets.keys()],name!=="no-ui"&&withRuntime?["guard-runtime"]:[],
       "Guardian status must use only the shared runtime widget");
@@ -157,7 +157,7 @@ async function runScenario(name: Scenario, realUI?: ExtensionUIContext, withRunt
       assert.ok(commands.has("guardian-default"),"Guardian must expose a dedicated new-session default command");
       assert.ok(commands.has("guardian-status"),"Guardian must expose a dedicated autocomplete-visible status command");
       await commands.get("guardian-status")!.handler("",ctx);assert.match(notices.at(-1)!,/Guard review · On/);
-      await commands.get("guardian")!.handler("status",ctx);assert.match(notices.at(-1)!,/Usage: \/guardian/);
+      for(const alias of ["status","log","logs"]){const before=viewerCalls;await commands.get("guardian")!.handler(alias,ctx);assert.match(notices.at(-1)!,/Usage: \/guardian/);assert.equal(viewerCalls,before,`/guardian ${alias} must not open logs`);}
       await commands.get("guardian-log")!.handler("forced",ctx);
       assert.equal(viewerCalls,1,"Guardian must open logs through the shared runtime viewer");
       assert.match(viewerText,/Guardian reviews · current workspace · UTC/);
@@ -171,11 +171,13 @@ async function runScenario(name: Scenario, realUI?: ExtensionUIContext, withRunt
       assert.equal(await invoke(),undefined,"Turning Guardian off must bypass review in this session");
       await commands.get("guardian-mode")!.handler("on",ctx);assert.equal(runtimeService?.reviewMode(),"on");
       await commands.get("guardian-default")!.handler("on",ctx);assert.equal((await loadGuardianModeConfig(profile)).defaultMode,"on");
-      entries.splice(0,entries.length);branch=entries;sessionId="00000000-0000-7000-8000-000000000002";await dispatch("session_start",{type:"session_start"});entries.push(userEntry);
-      assert.equal((await invoke())?.block,undefined,"A genuinely new session must use the saved On default");assert.equal(reviews,3);
+      entries.splice(0,entries.length,{type:"model_change",id:"model-2",provider:"synthetic",modelId:"reviewer"},{type:"thinking_level_change",id:"thinking-2",thinkingLevel:"low"});branch=entries;
+      sessionId="00000000-0000-7000-8000-000000000002";sessionFile=join(sessionDir,"session-2.jsonl");await dispatch("session_start",{type:"session_start",reason:"startup"});entries.push(userEntry);
+      assert.equal((await invoke())?.block,undefined,"A genuinely new startup with Pi setup entries must use the saved On default");assert.equal(reviews,3);
       await commands.get("guardian-default")!.handler("off",ctx);assert.equal((await invoke())?.block,undefined,"Changing the future default must not alter the current On session");assert.equal(reviews,4);
-      await commands.get("guardian-default")!.handler("on",ctx);entries.splice(0,entries.length,userEntry);branch=entries;sessionId="00000000-0000-7000-8000-000000000003";
-      await dispatch("session_start",{type:"session_start"});assert.equal(runtimeService?.reviewMode(),"off");assert.equal(await invoke(),undefined,"An existing session without mode metadata must remain Off");assert.equal(reviews,4);
+      await commands.get("guardian-default")!.handler("on",ctx);entries.splice(0,entries.length,{type:"model_change",id:"model-3",provider:"synthetic",modelId:"reviewer"},userEntry);branch=entries;
+      sessionId="00000000-0000-7000-8000-000000000003";sessionFile=join(sessionDir,"session-3.jsonl");await writeFile(sessionFile,'{"type":"session"}\n');
+      await dispatch("session_start",{type:"session_start",reason:"startup"});assert.equal(runtimeService?.reviewMode(),"off");assert.equal(await invoke(),undefined,"An existing session without mode metadata must remain Off");assert.equal(reviews,4);
     } else {
       assert.ok(notices.some(message=>message.includes("Guardian stopped this action; nothing was executed")),"Guardian must show its own dispute reason");
       if(name==="unavailable"){
@@ -188,7 +190,7 @@ async function runScenario(name: Scenario, realUI?: ExtensionUIContext, withRunt
       assert.ok(activeTools.includes("guardian_justify"),"An investigating dispute must activate structured justification");
 
       if(name==="ask"){
-        await dispatch("session_start",{type:"session_start"});
+        await dispatch("session_start",{type:"session_start",reason:"resume"});
         assert.ok(statusLines.at(-1)?.includes("guard · dispute · investigating"),"Resume must restore an open dispute");
         branch=[userEntry];await dispatch("session_tree",{type:"session_tree"});
         assert.ok(statusLines.at(-1)?.includes("guard · on"),"A branch without the dispute must remain usable");
@@ -311,10 +313,10 @@ async function runScenario(name: Scenario, realUI?: ExtensionUIContext, withRunt
     assert.ok(presented.rows.every(row=>row.searchText&&row.wide&&row.compact));
     assert.match(view.details(presented.rows[0].id,"summary").join("\n"),/Decision|Review|Command/);
     assert.match(view.details(presented.rows[0].id,"timeline").join("\n"),/Times UTC/);
-    const sessionFiles=await readdir(join(profile,"logs",workspaceId,sessionId));
-    assert.deepEqual(sessionFiles,["guardian.jsonl"],"Guardian must write one marker-free session journal");
-    assert.ok(snapshot.files.some(name=>name===`logs/${workspaceId}/${sessionId}/guardian.jsonl`),"Current-workspace session journals must be visible");
-    assert.ok(!(await readdir(profile,{recursive:true})).some(name=>String(name).includes(".guardian-log.lock")),"Guardian must not use the shared writer lock");
+    const workspaceFiles=await readdir(join(profile,"logs",workspaceId));
+    assert.deepEqual(workspaceFiles,["guardian.jsonl"],"Guardian must write one marker-free workspace journal");
+    assert.ok(snapshot.files.some(name=>name===`logs/${workspaceId}/guardian.jsonl`),"The current-workspace journal must be visible");
+    assert.ok(!(await readdir(profile,{recursive:true})).some(name=>String(name).includes(".guardian-journal.lock")),"Guardian must release the workspace writer lock");
     const disposition=events.find(e=>e.toolCallId==="synthetic-1"&&["invocation_released","invocation_withheld"].includes(e.event));
     assert.equal(disposition?.event,scenario.released&&withRuntime?"invocation_released":"invocation_withheld");
     const basis=!withRuntime?"review_unavailable":name==="allow"?"reviewer_decision":name==="user-refused"?"existing_user_refusal":name==="unavailable"?"review_unavailable":"reviewer_dispute";
@@ -337,14 +339,14 @@ async function runScenario(name: Scenario, realUI?: ExtensionUIContext, withRunt
 }
 
 async function testSessionJournalReuse():Promise<void>{
-  const root=await mkdtemp(join(tmpdir(),"guardian-session-journal-")),warnings:string[]=[];
+  const root=await mkdtemp(join(tmpdir(),"guardian-workspace-journal-")),warnings:string[]=[];
   const workspaceId="11111111-1111-4111-8111-111111111111",sessionId="00000000-0000-7000-8000-000000000001";
   try{await mkdir(root,{recursive:true,mode:0o700});
     const first=createLogger(root,workspaceId,sessionId,message=>warnings.push(message));
     first.write({timestamp:"2026-01-01T00:00:00.000Z",event:"first_process"});await first.close();
     const resumed=createLogger(root,workspaceId,sessionId,message=>warnings.push(message));
     resumed.write({timestamp:"2026-01-01T00:00:01.000Z",event:"resumed_process"});await resumed.close();
-    assert.equal(first.path,resumed.path);assert.deepEqual((await readdir(join(root,"logs",workspaceId,sessionId))).sort(),["guardian.jsonl"]);
+    assert.equal(first.path,resumed.path);assert.deepEqual((await readdir(join(root,"logs",workspaceId))).sort(),["guardian.jsonl"]);
     const text=await readFile(resumed.path,"utf8");assert.match(text,/first_process/);assert.match(text,/resumed_process/);assert.deepEqual(warnings,[]);
   }finally{await rm(root,{recursive:true,force:true});}
 }
@@ -361,7 +363,7 @@ async function testGuardianModeConfig():Promise<void>{
 }
 
 export async function runAutomatedTests(): Promise<void> {
-  const diagnosticPath="/profile/logs/11111111-1111-4111-8111-111111111111/00000000-0000-7000-8000-000000000001/guardian.jsonl";
+  const diagnosticPath="/profile/logs/11111111-1111-4111-8111-111111111111/guardian.jsonl";
   assert.equal(reviewFailureSummary("provider unavailable",diagnosticPath),`Review could not complete. Diagnostic journal: ${diagnosticPath}.`);
   assert.equal(reviewFailureSummary("review timed out",diagnosticPath),`Review timed out. Diagnostic journal: ${diagnosticPath}.`);
   assert.equal(reviewFailureSummary("invalid reviewer response",diagnosticPath),`Reviewer response was invalid. Diagnostic journal: ${diagnosticPath}.`);
@@ -371,7 +373,7 @@ export async function runAutomatedTests(): Promise<void> {
   for(const name of Object.keys(scenarios) as Scenario[]){await runScenario(name);console.log(`PASS guardian-flow: ${name}`);}
   await runScenario("allow",undefined,false);
   await testGuardianModeConfig();await testSessionJournalReuse();
-  console.log("PASS guardian-flow: runtime client, workspace session journals, unavailable presentation, assessment, cancellation, persistence, human arbitration, and fresh review");
+  console.log("PASS guardian-flow: runtime client, workspace journals, unavailable presentation, assessment, cancellation, persistence, human arbitration, and fresh review");
 }
 
 /** Opt-in Pi extension; registers a command only, never a tool or live Guardian hook. */

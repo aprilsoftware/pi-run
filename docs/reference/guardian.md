@@ -200,9 +200,9 @@ task or change operating-system permissions.
 ## Retained review logs
 
 `/guardian-log` opens a read-only browser of retained review attempts across Pi
-sessions belonging to the current workspace. `/guardian log` is an alias, and
-`/guardian-log <search terms>` applies an initial filter. Calls skipped while
-Guardian was Off and raw diagnostic-only records do not appear as reviews.
+sessions belonging to the current workspace. `/guardian-log <search terms>`
+applies an initial filter. Calls skipped while Guardian was Off and raw
+diagnostic-only records do not appear as reviews.
 
 | Key | Action |
 | --- | --- |
@@ -225,20 +225,27 @@ missing conversation content, or reconstruct data no longer retained. It
 requires Pi's terminal UI. Opening a dispute closes the log browser so its reason
 is not obscured.
 
-Each Pi session writes its bounded Guardian stream under
-`logs/<workspace-id>/<session-id>/guardian.jsonl`, with up to two rotated
-segments at about 1 MiB each. A resumed session appends to the same file, and
-`/guardian-log` merges Guardian streams from the current workspace
-chronologically. Separate sessions do not share a writer lock. Concurrently
-resuming the same saved session has the same unsupported file-writing semantics
-as Pi's session file itself; the journal adds no separate lock.
+Guardian writes one bounded stream per workspace under
+`logs/<workspace-id>/guardian.jsonl`, with up to two rotated segments at about
+1 MiB each. Session identity remains inside each record, not in the path. During
+each append or rotation, the writer creates
+`<profile>/logs/<workspace-id>/.guardian-journal.lock/` as a private `0700`
+coordination directory containing one private `0600` random-token file. It is
+removed when that serialized operation finishes; it is neither a completion
+marker nor retained journal state. A lock older than 30 seconds is atomically
+isolated and removed only after ownership, type, mode, link, and token-name
+validation. An unsafe or still-busy lock rejects that diagnostic write without
+changing Guardian review or authorization behavior. `/guardian-log` presents
+the retained records chronologically. Outside Pi's terminal UI, `/guardian-log`
+reports the exact active file path. Review and assessment failures likewise
+report that exact path so an agent can refer to the diagnostic file directly.
 
-Rotation applies only to an unusually large individual session file. There is
-no profile-wide pruning, completion marker, or retention lock. Existing v0.9.x
-run journals remain untouched and are not read. Rotation, partial writes,
-process interruption, display limits, missing tool results, and logging failures
-can create gaps. Logging failure does not alter a review decision or dispute
-state.
+Rotation applies only to an unusually large workspace file. There is no
+profile-wide pruning, completion marker, or retention process. Earlier
+run-shard and nested session-directory journals remain untouched and are not
+read. Rotation, partial writes, process interruption, display limits, missing
+tool results, and logging failures can create gaps. Logging failure does not
+alter a review decision or dispute state.
 
 Treat logs as private. They can contain commands, paths, selected conversation
 text, evidence excerpts, model details, and errors. Redaction is best effort,

@@ -200,23 +200,35 @@ branch's CAF consultation state.
 
 A normal exit may resume the consultation later. Malformed retained state,
 friend-model changes during a pending consultation, and exhausted round budgets
-fail closed. If a friend or CAF research request has started, a later failure
-ends the primary's automatic turn so that only the user can decide whether to
-retry or use another method. Failures before external transmission still allow
-the primary to report or correct the local problem.
+fail closed. Every unsuccessful `call_friend` ends the primary's automatic turn,
+including failures before external transmission, so that only the user can
+decide whether to retry or use another method. The result records whether a
+friend request started. Configuration, disclosure-policy, and branch-state
+failures identify the unavailable state and report the exact active CAF journal
+path when diagnostics are available.
 
 ## Diagnostics
 
-`/caf-log` shows bounded recent diagnostics merged from Pi sessions belonging
-to the current workspace:
+`/caf-log` shows bounded recent diagnostics from Pi sessions belonging to the
+current workspace:
 
 ```text
-<profile>/logs/<workspace-id>/<session-id>/caf.jsonl*
+<profile>/logs/<workspace-id>/caf.jsonl*
 ```
 
-A resumed session appends to the same file. Unusually large individual files
-rotate locally; there is no profile-wide journal pruning or completion marker.
-Existing v0.9.x run journals remain untouched and are not read.
+The active file is shared by that workspace's Pi sessions. During each append
+or rotation, the writer creates
+`<profile>/logs/<workspace-id>/.caf-journal.lock/` as a private `0700`
+coordination directory containing one private `0600` random-token file. It is
+removed when that serialized operation finishes; it is neither a completion
+marker nor retained journal state. A lock older than 30 seconds is atomically
+isolated and removed only after ownership, type, mode, link, and token-name
+validation. An unsafe or still-busy lock rejects that diagnostic write without
+changing CAF review or release behavior. Session identity remains inside each
+record, not in the path. Unusually large files rotate locally; there is no
+profile-wide journal pruning or completion marker. Earlier run-shard and nested
+session-directory journals remain untouched and are not read. Outside Pi's
+terminal UI, `/caf-log` reports the exact active `caf.jsonl` path.
 
 Records include operation identities, destinations, whether the path used Guard
 review, outcomes, byte counts, SHA-256 payload hashes, usage, duration, and

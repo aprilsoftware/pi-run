@@ -233,14 +233,17 @@ review/friend/research lease exists at a time.
 ## Journals and retained state
 
 Guardian and CAF retain separate `/guardian-log` and `/caf-log` semantic views
-and `logs/<workspace-id>/<session-id>/{guardian,caf}.jsonl*`; there is no
-`/guard-log`. The shared Runtime dialog owns interaction and rendering mechanics
-without combining the journals or interpreting client events. Existing v0.9.x
-run journals remain untouched and unread. CAF journals continue to exclude
-payloads, policies, authorization text, evidence, answers, and search results
-while recording bounded hashes, sizes, stages, decisions, usage, duration, and
-whether an external request started. Guardian retains its documented private
-evidence diagnostics. Journal or presentation failure never changes review.
+and `logs/<workspace-id>/{guardian,caf}.jsonl*`; there is no `/guard-log`.
+Session identity stays inside records while private per-client workspace locks
+serialize appends and rotation. Non-TUI views report the exact active file. The
+shared Runtime dialog owns interaction and rendering mechanics without combining
+the journals or interpreting client events. Earlier run-shard and nested
+session-directory journals remain untouched and unread. CAF journals continue
+to exclude payloads, policies, authorization text, evidence, answers, and search
+results while recording bounded hashes, sizes, stages, decisions, usage,
+duration, and whether an external request started. Guardian retains its
+documented private evidence diagnostics. Journal or presentation failure never
+changes review.
 
 Finalized CAF rounds remain branch-local and excluded from ordinary primary
 context. Guard investigation evidence is not persisted in CAF rounds.

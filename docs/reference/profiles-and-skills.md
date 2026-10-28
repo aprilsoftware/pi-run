@@ -123,9 +123,8 @@ profiles/<name>/
 │   └── mode.json
 ├── logs/
 │   └── <workspace-id>/
-│       └── <session-id>/
-│           ├── caf.jsonl*
-│           └── guardian.jsonl*
+│       ├── caf.jsonl*
+│       └── guardian.jsonl*
 └── sessions/
     └── <workspace-id>/
 ```
@@ -205,8 +204,11 @@ reviewer context. Offline and restricted network policy remains authoritative.
 The friend has no filesystem, shell, arbitrary Pi, or MCP tools, and public
 results cannot expand its capabilities. There is no recursive primary invocation
 or unbounded autonomous loop. Guarded refusal and failures before release make
-no corresponding external request. Failures after a request starts report that
-uncertain external effect and must not be retried automatically. Turning Guard
+no corresponding external request. Every unsuccessful `call_friend` ends the
+primary's automatic turn; the result records whether a friend request started so
+the user can distinguish a local withholding from an uncertain external effect.
+Configuration, disclosure-policy, and branch-state failures identify the failed
+state and report the exact active CAF journal path when available. Turning Guard
 or CAF mode during active work cancels it without retrying under the new mode.
 
 Successful answers, question requests, and bounded research evidence are stored
@@ -217,10 +219,10 @@ rounds on the selected branch, marks a pending consultation as awaiting the
 primary or at its round limit, and reports malformed state as unavailable.
 
 CAF diagnostics use the shared journal implementation but remain separate from
-Guardian under `logs/<workspace-id>/<session-id>/caf.jsonl*`. `/caf-log` merges
-a bounded set of CAF session streams from the current workspace and presents
-recent review, friend, search, persistence, cancellation, and failure events.
-There is no combined `/guard-log`.
+Guardian under `logs/<workspace-id>/caf.jsonl*`. `/caf-log` presents bounded
+recent review, friend, search, persistence, cancellation, and failure events
+from the current workspace. There is no combined `/guard-log`. Outside Pi's
+terminal UI, `/caf-log` reports the exact active file path.
 
 CAF journal records contain operation and session identifiers, destinations,
 outcomes, byte counts, SHA-256 payload hashes, bounded usage, duration, and
@@ -228,19 +230,20 @@ research-result counts. They do not contain exact messages, purposes, queries,
 policies, authorization evidence, friend answers, search results, credentials,
 or workspace content. Hashes permit equality correlation and do not constitute
 a confidentiality guarantee. Exact finalized exchanges remain branch-local
-session metadata. A resumed session appends to its fixed CAF stream, and only an
-unusually large individual file rotates. There is no completion marker,
-profile-wide pruning, or retention lock. Journal write, read, or presentation
-failure never changes CAF review, release, or tool-result behavior. Existing
-v0.9.x Guardian and CAF run journals are neither read nor migrated.
+session metadata. Sessions in one workspace share its fixed CAF stream; a
+private writer lock serializes appends and rotation while session identity stays
+inside each record. There is no completion marker or profile-wide pruning.
+Journal write, read, or presentation failure never changes CAF review, release,
+or tool-result behavior. Earlier run-shard and nested session-directory journals
+are neither read nor migrated.
 
 ### Current CAF limits
 
 CAF has native Pi lifecycle coverage using fake primary, friend, and search
 providers. That coverage includes branch restoration, reviewed continuation,
-nested search, session-context exclusion, session-journal append on resume, and
-process-local lifecycle handling. It is not evidence of interoperability with
-every real provider or of provider-side confidentiality, retention, or
+nested search, session-context exclusion, workspace-journal append on resume,
+and process-local lifecycle handling. It is not evidence of interoperability
+with every real provider or of provider-side confidentiality, retention, or
 tool-call behavior.
 
 CAF remains application-level orchestration rather than a sandbox. The shared

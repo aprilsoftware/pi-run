@@ -39,9 +39,8 @@ tell the user which host command to run for profile, skill, or SSH management.
 │   └── mode.json
 ├── logs/
 │   └── <workspace-id>/
-│       └── <session-id>/
-│           ├── guardian.jsonl*
-│           └── caf.jsonl*
+│       ├── guardian.jsonl*
+│       └── caf.jsonl*
 └── sessions/
 ```
 

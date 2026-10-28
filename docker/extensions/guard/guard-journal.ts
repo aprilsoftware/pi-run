@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 import { constants } from "node:fs";
-import { lstat, mkdir, open, readdir, realpath, rename, unlink } from "node:fs/promises";
+import { lstat, mkdir, open, readdir, realpath, rename, rmdir, unlink } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { basename, dirname, join, resolve } from "node:path";
 
@@ -15,6 +15,9 @@ const DEFAULT_MAX_BYTES = 1024 * 1024;
 const DEFAULT_BACKUPS = 2;
 const DEFAULT_MAX_PENDING = 128;
 const MAX_RECORD_BYTES = 32 * 1024;
+const LOCK_STALE_MS = 30_000;
+const LOCK_ATTEMPTS = 100;
+const LOCK_WAIT_MS = 10;
 
 function errorText(value: unknown): string {
   return value instanceof Error ? value.message : String(value);
@@ -73,7 +76,7 @@ function readNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;
 }
 export type GuardJournalKind = "guardian" | "caf";
-export interface SessionGuardJournalOptions {
+export interface WorkspaceGuardJournalOptions {
   schemaVersion: 2;
   stateDir: string;
   workspaceId: string;
@@ -83,7 +86,7 @@ export interface SessionGuardJournalOptions {
   backups?: number;
   maxPending?: number;
 }
-export interface SessionGuardJournalWriter {
+export interface WorkspaceGuardJournalWriter {
   readonly schemaVersion: 2;
   readonly workspaceId: string;
   readonly sessionId: string;
@@ -131,6 +134,53 @@ function journalKind(value: unknown): GuardJournalKind {
   if (value !== "guardian" && value !== "caf") throw new Error("Invalid Guard journal kind");
   return value;
 }
+function wait(milliseconds: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, milliseconds));
+}
+async function removeStaleLock(path: string): Promise<void> {
+  for (const entry of await readdir(path, { withFileTypes: true })) {
+    const entryPath = join(path, entry.name), stat = await lstat(entryPath);
+    if (!JOURNAL_ID.test(entry.name) || !entry.isFile() || !stat.isFile() || stat.isSymbolicLink() ||
+        stat.nlink !== 1 || !ownedByProcess(stat.uid) || (stat.mode & 0o777) !== 0o600) {
+      throw new Error(`Unsafe stale Guard journal lock: ${path}`);
+    }
+    await unlink(entryPath);
+  }
+  await rmdir(path);
+}
+async function acquireJournalLock(workspacePath: string, kind: GuardJournalKind): Promise<() => Promise<void>> {
+  const path = join(workspacePath, `.${kind}-journal.lock`), token = randomUUID(), tokenPath = join(path, token);
+  for (let attempt = 0; attempt < LOCK_ATTEMPTS; attempt++) {
+    try {
+      await mkdir(path, { mode: 0o700 });
+      let handle: Awaited<ReturnType<typeof open>> | undefined;
+      try {
+        handle = await open(tokenPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+        await handle.writeFile(`${token}\n`, "utf8");
+      } catch (error) {
+        await handle?.close().catch(() => {}); await rmdir(path).catch(() => {}); throw error;
+      } finally { await handle?.close(); }
+      return async () => {
+        try { await unlink(tokenPath); } catch (error) { if (!missing(error)) throw error; else return; }
+        try { await rmdir(path); } catch (error) { if (!missing(error) && (error as NodeJS.ErrnoException).code !== "ENOTEMPTY") throw error; }
+      };
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      let stat;
+      try { stat = await lstat(path); } catch (statError) { if (missing(statError)) continue; throw statError; }
+      if (!stat.isDirectory() || stat.isSymbolicLink() || !ownedByProcess(stat.uid) || (stat.mode & 0o777) !== 0o700) {
+        throw new Error(`Unsafe Guard journal lock: ${path}`);
+      }
+      if (Date.now() - stat.mtimeMs > LOCK_STALE_MS) {
+        const stale = `${path}.stale.${token}`;
+        try { await rename(path, stale); } catch (renameError) { if (missing(renameError)) continue; throw renameError; }
+        await removeStaleLock(stale); continue;
+      }
+      await wait(LOCK_WAIT_MS);
+    }
+  }
+  throw new Error(`Guard journal lock is busy: ${path}`);
+}
 export function guardJournalWorkspaceId(stateDir: string, sessionDir: string): string {
   if (typeof stateDir !== "string" || !stateDir || typeof sessionDir !== "string" || !sessionDir) throw new Error("Invalid Guard journal session directory");
   const sessions = join(resolve(stateDir), "sessions"), candidate = resolve(sessionDir);
@@ -138,20 +188,20 @@ export function guardJournalWorkspaceId(stateDir: string, sessionDir: string): s
   return journalId(basename(candidate), "workspace ID");
 }
 
-/** Workspace/session journal contract. v0.9.x run shards are deliberately outside this tree. */
-export function createSessionGuardJournalWriter(
-  options: SessionGuardJournalOptions,
+/** Workspace journal contract. Session identity is retained in records, never in paths. */
+export function createWorkspaceGuardJournalWriter(
+  options: WorkspaceGuardJournalOptions,
   warn: (message: string) => void = () => {},
-): SessionGuardJournalWriter {
+): WorkspaceGuardJournalWriter {
   if (!options || options.schemaVersion !== 2 || typeof options.stateDir !== "string" || !options.stateDir) {
-    throw new Error("Invalid Guard journal session options");
+    throw new Error("Invalid Guard journal workspace options");
   }
   const workspaceId = journalId(options.workspaceId, "workspace ID"), sessionId = journalId(options.sessionId, "session ID");
   const kind = journalKind(options.kind), maxBytes = validateInteger(options.maxBytes ?? DEFAULT_MAX_BYTES, 256, 64 * 1024 * 1024, "size limit");
   const backups = validateInteger(options.backups ?? DEFAULT_BACKUPS, 0, 8, "backup count");
   const maxPending = validateInteger(options.maxPending ?? DEFAULT_MAX_PENDING, 1, 1024, "queue limit");
   const stateDir = resolve(options.stateDir), writerId = randomUUID();
-  const sessionPath = join(stateDir, "logs", workspaceId, sessionId), path = join(sessionPath, `${kind}.jsonl`);
+  const workspacePath = join(stateDir, "logs", workspaceId), path = join(workspacePath, `${kind}.jsonl`);
   let queue: Promise<void> = Promise.resolve(), pending = 0, dropped = 0, written = 0, sequence = 0;
   let lastError: string | undefined, warned = false, closed = false, closePromise: Promise<void> | undefined;
 
@@ -159,8 +209,7 @@ export function createSessionGuardJournalWriter(
     const stateStat = await lstat(stateDir), resolvedState = await realpath(stateDir);
     if (!stateStat.isDirectory() || stateStat.isSymbolicLink() || resolvedState !== stateDir) throw new Error("Guard journal state directory is redirected");
     const logs = await privateChild(resolvedState, "logs"), workspace = await privateChild(logs, workspaceId);
-    const session = await privateChild(workspace, sessionId);
-    if (session !== sessionPath) throw new Error("Guard journal session path is redirected");
+    if (workspace !== workspacePath) throw new Error("Guard journal workspace path is redirected");
   }
   async function create(line: string): Promise<void> {
     const handle = await open(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
@@ -172,33 +221,36 @@ export function createSessionGuardJournalWriter(
   }
   async function append(line: string): Promise<void> {
     await directories();
-    let current = await regularFile(path);
-    if (!current) { await create(line); return; }
-    if (current.size + Buffer.byteLength(line) > maxBytes) {
-      for (let index = 1; index <= backups; index++) await regularFile(`${path}.${index}`);
-      if (backups > 0) {
-        try { await unlink(`${path}.${backups}`); } catch (error) { if (!missing(error)) throw error; }
-        for (let index = backups - 1; index >= 0; index--) {
-          const from = index === 0 ? path : `${path}.${index}`;
-          try { await rename(from, `${path}.${index + 1}`); } catch (error) { if (!missing(error)) throw error; }
-        }
-      } else await unlink(path);
-      await create(line); return;
-    }
-    const handle = await open(path, constants.O_WRONLY | constants.O_APPEND | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    const release = await acquireJournalLock(workspacePath, kind);
     try {
-      current = await handle.stat();
-      if (!current.isFile() || current.nlink !== 1 || !ownedByProcess(current.uid) || (current.mode & 0o777) !== 0o600) {
-        throw new Error("Unsafe Guard journal file");
+      let current = await regularFile(path);
+      if (!current) { await create(line); return; }
+      if (current.size + Buffer.byteLength(line) > maxBytes) {
+        for (let index = 1; index <= backups; index++) await regularFile(`${path}.${index}`);
+        if (backups > 0) {
+          try { await unlink(`${path}.${backups}`); } catch (error) { if (!missing(error)) throw error; }
+          for (let index = backups - 1; index >= 0; index--) {
+            const from = index === 0 ? path : `${path}.${index}`;
+            try { await rename(from, `${path}.${index + 1}`); } catch (error) { if (!missing(error)) throw error; }
+          }
+        } else await unlink(path);
+        await create(line); return;
       }
-      await handle.writeFile(line, "utf8");
-    } finally { await handle.close(); }
+      const handle = await open(path, constants.O_WRONLY | constants.O_APPEND | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+      try {
+        current = await handle.stat();
+        if (!current.isFile() || current.nlink !== 1 || !ownedByProcess(current.uid) || (current.mode & 0o777) !== 0o600) {
+          throw new Error("Unsafe Guard journal file");
+        }
+        await handle.writeFile(line, "utf8");
+      } finally { await handle.close(); }
+    } finally { await release(); }
   }
   function failure(error: unknown): void {
     lastError = errorText(error); dropped++;
     if (!warned) { warned = true; try { warn(`Guard journal unavailable: ${lastError}`); } catch { /* Diagnostics only. */ } }
   }
-  const writer: SessionGuardJournalWriter = Object.freeze({
+  const writer: WorkspaceGuardJournalWriter = Object.freeze({
     schemaVersion: 2 as const, workspaceId, sessionId, kind, path,
     write(entry) {
       if (closed) { failure(new Error("Guard journal writer is closed")); return; }
@@ -224,7 +276,7 @@ export function createSessionGuardJournalWriter(
   return writer;
 }
 
-type WorkspaceReadCandidate = ReadCandidate & { sessionId: string };
+type WorkspaceReadCandidate = ReadCandidate;
 export async function readWorkspaceGuardJournal(options: WorkspaceGuardJournalReadOptions, signal?: AbortSignal): Promise<WorkspaceGuardJournalSnapshot> {
   if (!options || options.schemaVersion !== 2 || typeof options.stateDir !== "string" || !options.stateDir) throw new Error("Invalid Guard journal workspace read options");
   const workspaceId = journalId(options.workspaceId, "workspace ID"), kind = journalKind(options.kind);
@@ -246,20 +298,22 @@ export async function readWorkspaceGuardJournal(options: WorkspaceGuardJournalRe
     if (!await readableDirectory(logs) || !await readableDirectory(workspace)) return snapshot([], []);
     for (const entry of await readdir(workspace, { withFileTypes: true })) {
       signal?.throwIfAborted();
-      const sessionId = entry.name, sessionPath = join(workspace, sessionId);
-      if (!JOURNAL_ID.test(sessionId)) { notices.push(`${entry.name}: unexpected workspace log entry omitted.`); continue; }
-      try {
-        if (!entry.isDirectory() || !await readableDirectory(sessionPath)) throw new Error("unsafe session directory");
-        for (const file of await readdir(sessionPath, { withFileTypes: true })) {
-          const own = new RegExp(`^${kind}\\.jsonl(?:\\.[1-8])?$`).test(file.name);
-          if (!own) { if (!/^(?:guardian|caf)\.jsonl(?:\.[1-8])?$/.test(file.name)) notices.push(`${sessionId}/${file.name}: unexpected entry omitted.`); continue; }
-          const path = join(sessionPath, file.name), source = `${sessionId}/${file.name}`, stat = await lstat(path);
-          if (!file.isFile() || !stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || !ownedByProcess(stat.uid) || (stat.mode & 0o777) !== 0o600) {
-            throw new Error(`unsafe file: ${source}`);
-          }
-          candidates.push({ path, source, sessionId, size: stat.size, mtimeMs: stat.mtimeMs, dev: stat.dev, ino: stat.ino });
+      const own = new RegExp(`^${kind}\\.jsonl(?:\\.[1-8])?$`).test(entry.name);
+      if (!own) {
+        if (entry.isDirectory() && JOURNAL_ID.test(entry.name)) continue;
+        if (!/^(?:guardian|caf)\.jsonl(?:\.[1-8])?$/.test(entry.name) &&
+            !/^\.(?:guardian|caf)-journal\.lock(?:\.stale\.[0-9a-f-]+)?$/.test(entry.name)) {
+          notices.push(`${entry.name}: unexpected workspace log entry omitted.`);
         }
-      } catch (error) { notices.push(`${sessionId}: ${errorText(error)}; omitted.`); }
+        continue;
+      }
+      try {
+        const path = join(workspace, entry.name), source = entry.name, stat = await lstat(path);
+        if (!entry.isFile() || !stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || !ownedByProcess(stat.uid) || (stat.mode & 0o777) !== 0o600) {
+          throw new Error(`unsafe file: ${source}`);
+        }
+        candidates.push({ path, source, size: stat.size, mtimeMs: stat.mtimeMs, dev: stat.dev, ino: stat.ino });
+      } catch (error) { notices.push(`${entry.name}: ${errorText(error)}; omitted.`); }
     }
   } catch (error) {
     if (signal?.aborted) throw signal.reason;
@@ -289,11 +343,12 @@ export async function readWorkspaceGuardJournal(options: WorkspaceGuardJournalRe
         try {
           const value = JSON.parse(lines[index]); if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("not an object");
           const journal = value.journal && typeof value.journal === "object" && !Array.isArray(value.journal) ? value.journal as Record<string, unknown> : {};
-          if (journal.schemaVersion !== 2 || journal.kind !== kind || journal.workspaceId !== workspaceId || journal.sessionId !== candidate.sessionId) throw new Error("wrong journal identity");
-          const writerId = journalId(journal.writerId, "writer ID"), rawTimestamp = typeof value.timestamp === "string" ? value.timestamp : null;
+          if (journal.schemaVersion !== 2 || journal.kind !== kind || journal.workspaceId !== workspaceId) throw new Error("wrong journal identity");
+          const sessionId = journalId(journal.sessionId, "session ID"), writerId = journalId(journal.writerId, "writer ID");
+          const rawTimestamp = typeof value.timestamp === "string" ? value.timestamp : null;
           const time = rawTimestamp === null ? 0 : Date.parse(rawTimestamp), sequence = readNumber(journal.sequence);
           records.push({ value, source: candidate.source, line: start > 0 ? null : index + 1, timestamp: Number.isFinite(time) ? rawTimestamp : null,
-            sessionId: candidate.sessionId, writerId, sequence, time: Number.isFinite(time) ? time : 0 });
+            sessionId, writerId, sequence, time: Number.isFinite(time) ? time : 0 });
         } catch { malformed++; }
       }
       const current = await lstat(candidate.path);

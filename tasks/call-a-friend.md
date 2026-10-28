@@ -150,9 +150,8 @@ profiles/<name>/
 │   └── mode.json
 ├── logs/
 │   └── <workspace-id>/
-│       └── <session-id>/
-│           ├── guardian.jsonl*
-│           └── caf.jsonl*
+│       ├── guardian.jsonl*
+│       └── caf.jsonl*
 └── sessions/
     └── <workspace-id>/
 ```
@@ -172,26 +171,25 @@ stores bounded diagnostics such as decisions, payload hashes and sizes,
 destination identity, research operations, usage, duration, and failure. It is
 not a second complete transcript or search-result store.
 
-### Session writers and rotation
+### Workspace writers and rotation
 
-Guardian and CAF each write a fixed stream inside the active Pi session's log
-directory. A resumed session appends to the same file. Different sessions write
-different files without a profile-wide writer lock; concurrent resume of one
-saved session follows Pi's existing unsupported concurrent session-file writing
-semantics rather than adding journal-specific locking. Events retain writer,
-process, workspace, and session identities. `/guardian-log` and `/caf-log`
-validate their own regular files and merge session streams from the current
-workspace chronologically.
+Guardian and CAF each write a fixed stream inside the active workspace's log
+directory. Events retain writer, process, workspace, and session identities, but
+the session ID is record data rather than a path component. A private lock per
+client and workspace serializes appends and rotation across Pi processes.
+`/guardian-log` and `/caf-log` validate their own regular files and present the
+current workspace's retained records chronologically. Their non-TUI fallbacks
+report the exact active journal path.
 
-Only unusually large individual session files rotate. There is no completion
-marker, profile-wide pruning, or maintenance lock. Unsafe ownership, links,
-unexpected file types, and redirected directories fail closed. Activity leases
-and status remain process-local and never coordinate unrelated Pi-Run sessions
-through the profile filesystem.
+Only unusually large workspace files rotate. There is no completion marker,
+profile-wide pruning, or separate retention process. Unsafe ownership, links,
+unexpected file types, redirected directories, and unsafe locks fail closed.
+Activity leases and status remain process-local and never coordinate unrelated
+Pi-Run sessions through the profile filesystem.
 
-Existing v0.9.x run journals are non-vital diagnostics and are intentionally
-left untouched, unread, and unmigrated. The journal layout does not change
-schema 1 in `profile.json`.
+Earlier run-shard and nested session-directory journals are non-vital
+diagnostics and are intentionally left untouched, unread, and unmigrated. The
+journal layout does not change schema 1 in `profile.json`.
 
 ## CAF conversation protocol
 
@@ -266,6 +264,13 @@ a configured reviewer and complete `ALLOW`; Guard Off deliberately uses the
 bounded direct path without a reviewer. Provider failure is not permission.
 Cancellation aborts active model and research work and records a clear outcome.
 
+Every unsuccessful `call_friend` returns Pi's terminate signal, including local
+pre-transmission failures, so the primary cannot automatically retry or substitute
+another tool. The result separately records whether a friend request started.
+Configuration, disclosure-policy, and branch-state failures identify the failed
+state and include the exact active CAF journal path when diagnostics are
+available.
+
 CAF configuration remains accessible when the friend is unavailable, but
 `call_friend` fails closed. Interrupted rounds are not complete answers. Resume
 reconstructs only finalized CAF entries on the selected branch.
@@ -282,7 +287,8 @@ Each stage was implemented through a separate approved increment:
 2. [x] Extract common mechanics while preserving Guardian behavior.
 3. [x] Register Guardian command review as an ordinary client and prove parity.
 4. [x] Use separate Guardian and CAF diagnostics without legacy-log migration;
-   the later session-journal correction made them session-owned and workspace-viewed.
+   later storage corrections made them fixed workspace streams with session
+   identity retained inside records.
 5. [x] Add isolated CAF configuration and conversation without network calls.
 6. [x] Add reviewed friend dialogue and `caf_ask_primary`.
 7. [x] Add one reviewed `caf_web_search` operation with bounded source results.

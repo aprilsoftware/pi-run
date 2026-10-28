@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-import { createSessionGuardJournalWriter } from "../guard/guard-journal.ts";
+import { createWorkspaceGuardJournalWriter } from "../guard/guard-journal.ts";
 import { guardianLogText, guardianLogValue } from "./guardian-log-safety.ts";
 import type { EvidenceLogLevel as LogLevel, LogSink } from "../guard/guard-evidence.ts";
 
@@ -75,7 +75,7 @@ export function toolResultDetails(value: unknown, isError: boolean, toolName: st
 
 export function createLogger(stateDir:string,workspaceId:string,sessionId:string,warn:(message:string)=>void,
   limits:{maxBytes?:number;backups?:number}={}) {
-  const writer=createSessionGuardJournalWriter({schemaVersion:2,stateDir,workspaceId,sessionId,kind:"guardian",
+  const writer=createWorkspaceGuardJournalWriter({schemaVersion:2,stateDir,workspaceId,sessionId,kind:"guardian",
     maxBytes:limits.maxBytes??MAX_LOG_BYTES,backups:limits.backups??LOG_BACKUPS},message=>{
     try{warn(`${message.replace(/^Guard journal unavailable:/,"Guardian logging unavailable:")}. Reviews and dispute enforcement are unchanged. See /guardian for log status.`);}
     catch{/* UI errors must not affect the review. */}

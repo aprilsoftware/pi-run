@@ -5,8 +5,8 @@
 This document records the implemented presentation boundary for Guard Runtime,
 Guardian, and Call a Friend (CAF). The correction was implemented after v0.9.1
 on `experiment/call-a-friend` and checkpointed in `12daf89` and `ebada28`. It is
-now part of the v0.9.3 candidate source, but has not been pushed, tagged,
-published, released, or deployed.
+part of the v0.9.3 candidate source. A source commit does not itself authorize
+tagging, publication, release, or deployment.
 
 The work corrected an ownership gap found after v0.9.1 while preserving separate
 Guardian and CAF policy, journals, decisions, and effects. Each implementation
@@ -133,10 +133,10 @@ Runtime provides interaction and rendering.
 
 `guard-journal.ts` owns:
 
-- session-owned Guardian and CAF streams with bounded per-file rotation;
+- fixed workspace Guardian and CAF streams with bounded per-file rotation;
 - bounded current-workspace reading and deterministic merge order;
-- regular-file, ownership, mode, and link checks; and
-- session-writer concurrency behavior.
+- regular-file, ownership, mode, link, and private-lock checks; and
+- cross-process writer serialization with session identity retained in records.
 
 It must not import Pi TUI, create overlays, define navigation, or understand
 Guardian/CAF events. A journal snapshot is storage data, not a view model.
@@ -255,16 +255,17 @@ Each stage is independently reviewed, implemented, validated, and stopped:
 1. [x] Add the bounded runtime presentation contract and private generic viewer;
    migrate Guardian without changing visible behavior.
 2. [x] Add the CAF journal adapter and route `/caf-log` through the same runtime
-   viewer while preserving journal privacy. A later storage correction removed
-   compatibility reading in favor of session-owned, workspace-viewed journals.
+   viewer while preserving journal privacy. Later storage corrections removed
+   compatibility reading and session path components in favor of fixed
+   workspace journals.
 3. [x] Add cross-client presentation contract tests and harmonize log loading,
    refresh, search, bounds, and non-TUI behavior.
 4. [x] Extract shared evidence machinery so CAF no longer imports Guardian.
 5. [x] Move shared reviewer controls behind Runtime-owned capabilities while
    keeping `/guardian-model` and `/guardian-thinking` canonical.
-6. [x] Harmonize role labels and status discovery. `/guardian-status` and
-   `/caf-status` are dedicated autocomplete-visible commands; the nested
-   `/guardian status` and `/caf status` forms were removed.
+6. [x] Harmonize role labels and command discovery. `/guardian-status`,
+   `/caf-status`, `/guardian-log`, and `/caf-log` are dedicated
+   autocomplete-visible commands; the nested status and log forms were removed.
 
 The resulting menus keep their semantic ownership. Guardian configures the
 shared reviewer; CAF configures only the friend. Both expose read-only status,

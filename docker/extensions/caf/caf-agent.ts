@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: MIT
 import type { Api, Model, Usage, UserMessage } from "@earendil-works/pi-ai";
 import { Agent, type AgentTool } from "@earendil-works/pi-agent-core";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, SessionStartEvent } from "@earendil-works/pi-coding-agent";
 import { constants } from "node:fs";
 import { lstat, mkdir, open, realpath, rename, unlink } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { Type } from "typebox";
 import { connectGuardClient, connectGuardReviewClient, type GuardActivityLeaseV1, type GuardReviewDiagnosticSnapshotV1, type GuardReviewResultV1 } from "../guard/guard-runtime.ts";
-import { createSessionGuardJournalWriter, guardJournalWorkspaceId } from "../guard/guard-journal.ts";
+import { createWorkspaceGuardJournalWriter, guardJournalWorkspaceId } from "../guard/guard-journal.ts";
 import { cafViewText, createCafLogViewRequest } from "./caf-log-viewer.ts";
 export { cafLogDetail, createCafLogViewRequest, groupCafLogRecords } from "./caf-log-viewer.ts";
 export type { CafLogOperation } from "./caf-log-viewer.ts";
@@ -350,8 +350,14 @@ export async function saveCafModeConfig(stateDir:string,value:CafModeConfig):Pro
   catch(error){await file?.close().catch(()=>{});await unlink(temporary).catch(()=>{});throw error;}
 }
 const CAF_MODE_ENTRY="pi-run-caf-mode";
-function restoredCafMode(ctx:ExtensionContext,profileDefault:CafMode):{mode:CafMode;source:"profile-default"|"legacy-default"|"session"}{
-  const entries=ctx.sessionManager.getEntries(),initial=entries.length?"off":profileDefault;let mode:CafMode=initial,source:"profile-default"|"legacy-default"|"session"=entries.length?"legacy-default":"profile-default";
+async function cafUsesProfileDefault(event:SessionStartEvent,ctx:ExtensionContext):Promise<boolean>{
+  if(event.reason==="new")return true;
+  if(event.reason==="resume"||event.reason==="fork")return false;
+  const path=ctx.sessionManager.getSessionFile();if(!path)return true;
+  try{await lstat(path);return false;}catch(error){return (error as NodeJS.ErrnoException).code==="ENOENT";}
+}
+function restoredCafMode(ctx:ExtensionContext,profileDefault:CafMode,useProfileDefault:boolean):{mode:CafMode;source:"profile-default"|"legacy-default"|"session"}{
+  const entries=ctx.sessionManager.getEntries();let mode:CafMode=useProfileDefault?profileDefault:"off",source:"profile-default"|"legacy-default"|"session"=useProfileDefault?"profile-default":"legacy-default";
   for(const entry of entries)if(entry.type==="custom"&&(entry as BranchEntry).customType===CAF_MODE_ENTRY){const candidate=((entry as BranchEntry).data as {mode?:unknown}|undefined)?.mode;
     if(candidate==="on"||candidate==="off"){mode=candidate;source="session";}}
   return {mode,source};
@@ -364,14 +370,14 @@ export default function cafAgent(pi:ExtensionAPI){
   let config=defaultCafConfig(),configError:string|undefined,policy:Readonly<CafPolicy>=freeze({source:"built-in",text:null}),policyError:string|undefined;
   let enabled=false,modeRecorded=false,defaultMode:CafMode="off",defaultModeError:string|undefined,conversation:readonly CafRound[]=[],conversationError:string|undefined,webSearchProvider:string|undefined,webSearchError:string|undefined,journalContext:ExtensionContext|undefined;
   let currentGuardMode:"unknown"|"on"|"off"="unknown",stopGuardMode:(()=>void)|undefined;
-  let journal:ReturnType<typeof createSessionGuardJournalWriter>|undefined,journalError:string|undefined;
+  let journal:ReturnType<typeof createWorkspaceGuardJournalWriter>|undefined,journalError:string|undefined;
   const activeOperations=new Set<AbortController>();
   const tell=(ctx:ExtensionContext,text:string,level:"info"|"warning"|"error"="info")=>ctx.ui.notify(text,level);
   const warnJournal=(warning:string)=>{const notice=`${warning.replace(/^Guard journal unavailable:/,"CAF diagnostics unavailable:")}. CAF authorization and release behavior are unchanged.`;
     try{journalContext?tell(journalContext,notice,"warning"):console.error(notice);}catch{/* Diagnostics cannot affect CAF. */}};
   const journalScope=(ctx:ExtensionContext)=>({workspaceId:guardJournalWorkspaceId(stateDir,ctx.sessionManager.getSessionDir()),sessionId:ctx.sessionManager.getSessionId()});
   const selectJournal=async(ctx:ExtensionContext)=>{const scope=journalScope(ctx);if(journal?.workspaceId===scope.workspaceId&&journal.sessionId===scope.sessionId)return;
-    await journal?.close();journal=createSessionGuardJournalWriter({schemaVersion:2,stateDir,...scope,kind:"caf",maxBytes:CAF_LOG_BYTES,backups:CAF_LOG_BACKUPS},warnJournal);journalError=undefined;};
+    await journal?.close();journal=createWorkspaceGuardJournalWriter({schemaVersion:2,stateDir,...scope,kind:"caf",maxBytes:CAF_LOG_BYTES,backups:CAF_LOG_BACKUPS},warnJournal);journalError=undefined;};
   const log=(event:string,details:Record<string,unknown>={})=>{try{journal?.write({schemaVersion:1,timestamp:new Date().toISOString(),event,...details});}catch{/* Diagnostics cannot affect CAF. */}};
   type PendingGuardReview={request:Readonly<CafGuardReviewRequest>;friendModel:string;sessionId:string;cwd:string;claimed:boolean};
   const pendingGuardReviews=new Map<string,PendingGuardReview>();
@@ -504,16 +510,16 @@ export default function cafAgent(pi:ExtensionAPI){
     const thinking=value==="default"?null:value as CafThinking;
     if(await persist(ctx,{...config,thinking}))tell(ctx,`CAF thinking: ${thinking??"default"} (saved).`);
   };
-  pi.on("session_start",async(_event,ctx)=>{journalContext=ctx;try{await selectJournal(ctx);}catch(error){journal=undefined;journalError=message(error);tell(ctx,`CAF diagnostics unavailable: ${journalError}. CAF authorization and release behavior are unchanged.`,"warning");}
+  pi.on("session_start",async(event,ctx)=>{journalContext=ctx;try{await selectJournal(ctx);}catch(error){journal=undefined;journalError=message(error);tell(ctx,`CAF diagnostics unavailable: ${journalError}. CAF authorization and release behavior are unchanged.`,"warning");}
     try{config=await loadCafConfig(stateDir);configError=undefined;}
     catch(error){config=defaultCafConfig();configError=message(error);tell(ctx,`CAF configuration unavailable: ${configError}`,"warning");}
     try{defaultMode=(await loadCafModeConfig(stateDir)).defaultMode;defaultModeError=undefined;}catch(error){defaultMode="off";defaultModeError=message(error);tell(ctx,`CAF new-session default unavailable; using Off: ${defaultModeError}`,"warning");}
-    const restoredMode=restoredCafMode(ctx,defaultMode);modeRecorded=restoredMode.source==="session";enabled=restoredMode.mode==="on";observeGuardMode(ctx);
+    const restoredMode=restoredCafMode(ctx,defaultMode,await cafUsesProfileDefault(event,ctx));modeRecorded=restoredMode.source==="session";enabled=restoredMode.mode==="on";observeGuardMode(ctx);
     try{policy=await loadCafPolicy(stateDir);policyError=undefined;}catch(error){policy=freeze({source:"built-in",text:null});policyError=message(error);tell(ctx,`CAF policy unavailable: ${policyError}`,"warning");}
     try{webSearchProvider=await loadCafWebSearchProvider(stateDir);webSearchError=undefined;}catch(error){webSearchProvider=undefined;webSearchError=message(error);}
     restore(ctx,true);refreshCafBaseline(ctx);log("session_started",{sessionId:ctx.sessionManager.getSessionId(),mode:enabled?"on":"off",modeSource:restoredMode.source,newSessionDefault:defaultMode,model:config.model??"unconfigured",searchProvider:webSearchProvider??null,
       policy:policyError?"unavailable":policy.source,conversation:conversationError?"unavailable":conversation.length});});
-  pi.on("session_tree",(_event,ctx)=>{journalContext=ctx;const previous=enabled,restored=restoredCafMode(ctx,defaultMode);
+  pi.on("session_tree",(_event,ctx)=>{journalContext=ctx;const previous=enabled,restored=restoredCafMode(ctx,defaultMode,false);
     if(restored.source==="session"){modeRecorded=true;enabled=restored.mode==="on";}
     if(previous&&!enabled)for(const controller of activeOperations)controller.abort(new Error("CAF session mode changed to Off"));restore(ctx,true);refreshCafBaseline(ctx);log("branch_selected",{sessionId:ctx.sessionManager.getSessionId(),mode:enabled?"on":"off",conversation:conversationError?"unavailable":conversation.length});});
   pi.on("input",(_event,ctx)=>{pinSessionMode(ctx);});
@@ -523,7 +529,7 @@ export default function cafAgent(pi:ExtensionAPI){
       if(!drained)console.error(`CAF journal shutdown incomplete: ${closing.health().pending} record(s) pending at ${closing.path}`);
     }finally{if(timer)clearTimeout(timer);if(journal===closing)journal=undefined;}});
   const toolFailure=(reason:string,status:string,usage?:Usage,started=false)=>({content:[{type:"text" as const,text:`Call a Friend withheld: ${reason}`}],
-    details:{schemaVersion:1,status,friendRequestStarted:started},isError:true,...(started?{terminate:true}:{}),...(usage?{usage}:{})});
+    details:{schemaVersion:1,status,friendRequestStarted:started},isError:true,terminate:true,...(usage?{usage}:{})});
   const logsCommand=async(args:string,ctx:ExtensionContext)=>{journalContext=ctx;pinSessionMode(ctx);
     try{const scope=journalScope(ctx),active=journal?.workspaceId===scope.workspaceId&&journal.sessionId===scope.sessionId?journal:undefined;
       await guard.openView(createCafLogViewRequest(stateDir,scope.workspaceId,()=>active?.flush()??Promise.resolve(),args.trim().slice(0,300)));}
@@ -547,7 +553,10 @@ export default function cafAgent(pi:ExtensionAPI){
         if(!pinSessionMode(ctx)||!enabled)return fail("CAF is Off for this session. Use /caf-mode on to enable friend calls.","mode-off");
         if(!standaloneCall(ctx,toolCallId))return fail("call_friend must be the only tool call in its assistant message.","not-standalone");
         currentGuardMode=guard.reviewMode();if(currentGuardMode==="unknown")return fail("Guard mode is unavailable; CAF cannot determine review behavior.","guard-unavailable");guarded=currentGuardMode==="on";
-        if(configError||conversationError||(guarded&&policyError))return fail(`CAF configuration${guarded?", policy,":" or"} branch state is unavailable.`,"state-unavailable");
+        const stateFailures=[configError?`Configuration unavailable: ${cafViewText(configError,220)??"unknown error"}`:undefined,
+          guarded&&policyError?`Disclosure policy unavailable: ${cafViewText(policyError,220)??"unknown error"}`:undefined,
+          conversationError?`Branch state unavailable: ${cafViewText(conversationError,220)??"unknown error"}`:undefined].filter((value):value is string=>!!value);
+        if(stateFailures.length)return fail(`${stateFailures.join("; ")}.${journal?.path?` CAF journal: ${journal.path}.`:""}`,"state-unavailable");
         if(!config.model)return fail("No friend model is configured. Use /caf model <provider/model>.","model-unconfigured");
         const destination=config.model,friendThinking=config.thinking,pending=pendingRound();
         if(pending?.round===3)return fail("This consultation reached its three-round limit.","round-limit");
@@ -613,9 +622,9 @@ export default function cafAgent(pi:ExtensionAPI){
   pi.registerCommand("caf",{description:"Call a Friend menu: mode, default, model, thinking, status and logs",handler:async(args,ctx)=>{
     pinSessionMode(ctx);const [action="",...rest]=args.trim().split(/\s+/),value=rest.join(" ").trim();
     if(action==="on"||action==="off"){await setMode(ctx,action==="on");return;}if(action==="mode"){await modeCommand(value,ctx);return;}
-    if(action==="default"){await defaultModeCommand(value,ctx);return;}if(action==="log"||action==="logs"){await logsCommand(value,ctx);return;}
+    if(action==="default"){await defaultModeCommand(value,ctx);return;}
     if(action==="model"){await setModel(value,ctx);return;}if(action==="thinking"){await setThinking(value,ctx);return;}
-    if(action){tell(ctx,"Usage: /caf [on|off|mode on|off|default on|off|log|model <provider/model>|thinking <level>]","error");return;}
+    if(action){tell(ctx,"Usage: /caf [on|off|mode on|off|default on|off|model <provider/model>|thinking <level>]","error");return;}
     if(!ctx.hasUI){await status(ctx);return;}
     const split=await separation();if(split.warning)tell(ctx,split.warning,"warning");
     const choices=[{id:enabled?"mode-off":"mode-on",label:`Current session — ${enabled?"On (turn Off)":"Off (turn On)"}`},{id:"default",label:`New sessions — ${defaultMode==="on"?"On":"Off"}`},
