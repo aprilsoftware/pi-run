@@ -200,12 +200,16 @@ branch's CAF consultation state.
 
 A normal exit may resume the consultation later. Malformed retained state,
 friend-model changes during a pending consultation, and exhausted round budgets
-fail closed. Every unsuccessful `call_friend` ends the primary's automatic turn,
-including failures before external transmission, so that only the user can
-decide whether to retry or use another method. The result records whether a
-friend request started. Configuration, disclosure-policy, and branch-state
-failures identify the unavailable state and report the exact active CAF journal
-path when diagnostics are available.
+fail closed. An unsuccessful `call_friend` returns a structured explain-only
+failure with `retryAllowed: false`. Before an ordinary automatic follow-up, CAF
+removes every model-visible tool so the primary can only explain the failure and
+end its turn; the prior tool set is restored after the agent settles. If that
+restricted loadout cannot be established, CAF retains Pi's strict terminate
+signal instead. User cancellation can still prevent the explanatory follow-up.
+The result records whether a friend request started, distinguishing local
+withholding from a possible external effect. Configuration, disclosure-policy,
+and branch-state failures identify the unavailable state and report the exact
+active CAF journal path when diagnostics are available.
 
 ## Diagnostics
 
@@ -253,6 +257,7 @@ Current public research is intentionally limited to one canonical search. There
 is no friend page fetching, arbitrary URL access, shell, filesystem, internal
 network, arbitrary MCP access, or autonomous research loop. CAF imposes no
 wall-clock deadline on the friend agent's model response; explicit provider
-failure and user, mode, or session cancellation still stop the run.
+failure stops the CAF operation and enters bounded failure reporting, while
+user, mode, or session cancellation can stop the run outright.
 
 [Documentation index](index.md) · [Guardian](guardian.md) · [Security](security.md)

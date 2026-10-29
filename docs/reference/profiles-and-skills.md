@@ -204,12 +204,16 @@ reviewer context. Offline and restricted network policy remains authoritative.
 The friend has no filesystem, shell, arbitrary Pi, or MCP tools, and public
 results cannot expand its capabilities. There is no recursive primary invocation
 or unbounded autonomous loop. Guarded refusal and failures before release make
-no corresponding external request. Every unsuccessful `call_friend` ends the
-primary's automatic turn; the result records whether a friend request started so
-the user can distinguish a local withholding from an uncertain external effect.
-Configuration, disclosure-policy, and branch-state failures identify the failed
-state and report the exact active CAF journal path when available. Turning Guard
-or CAF mode during active work cancels it without retrying under the new mode.
+no corresponding external request. An unsuccessful `call_friend` reports
+`retryAllowed: false` and, when the run remains active, temporarily removes all
+model-visible tools for one explain-only primary response. Tools return only
+after the agent settles. If CAF cannot establish that restricted loadout, it
+uses Pi's strict terminate signal instead. The result records whether a friend
+request started so the user can distinguish local withholding from an uncertain
+external effect. Configuration, disclosure-policy, and branch-state failures
+identify the failed state and report the exact active CAF journal path when
+available. Turning Guard or CAF mode during active work cancels it without
+retrying under the new mode.
 
 Successful answers, question requests, and bounded research evidence are stored
 as finalized branch-local session metadata while the tool result supplies the

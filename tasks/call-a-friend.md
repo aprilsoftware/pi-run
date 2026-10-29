@@ -264,12 +264,15 @@ a configured reviewer and complete `ALLOW`; Guard Off deliberately uses the
 bounded direct path without a reviewer. Provider failure is not permission.
 Cancellation aborts active model and research work and records a clear outcome.
 
-Every unsuccessful `call_friend` returns Pi's terminate signal, including local
-pre-transmission failures, so the primary cannot automatically retry or substitute
-another tool. The result separately records whether a friend request started.
-Configuration, disclosure-policy, and branch-state failures identify the failed
-state and include the exact active CAF journal path when diagnostics are
-available.
+Every unsuccessful `call_friend` reports `retryAllowed: false`. For ordinary
+failures while the primary run remains active, CAF removes all model-visible
+tools and permits one explain-only automatic follow-up; it restores the prior
+tool set only after the agent settles. This prevents same-turn retry or tool
+substitution while allowing the primary to report what failed. If the restricted
+loadout cannot be established, CAF returns Pi's terminate signal instead. The
+result separately records whether a friend request started. Configuration,
+disclosure-policy, and branch-state failures identify the failed state and
+include the exact active CAF journal path when diagnostics are available.
 
 CAF configuration remains accessible when the friend is unavailable, but
 `call_friend` fails closed. Interrupted rounds are not complete answers. Resume
