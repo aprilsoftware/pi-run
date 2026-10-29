@@ -55,9 +55,12 @@ The evaluator contacts only the configured Guard reviewer. It never contacts
 the configured friend, runs commands, reads real conversation history, or
 writes the selected profile. Each case has a fresh private reviewer transcript
 and reports only its ID, expected and actual decision, bounded request/evidence
-counts, strategy, repetition, and a bounded incomplete-review error. The fixtures cover direct
-abstract authorization, required minimization, a minimized retry, exact
-referential confirmation, and current explicit refusal.
+counts, strategy, repetition, and a bounded incomplete-review error. The fixtures
+cover direct and delegated abstract authorization, required minimization, a
+minimized retry, exact referential confirmation, incomplete authorization,
+standing and current refusal, destination mismatch, and broad requests carrying
+unnecessary private detail. A fixture can set `authorizationComplete` to `false`
+to verify that a truncated authorization snapshot cannot support `ALLOW`.
 
 This is an opt-in semantic evaluation, not a deterministic unit test: provider
 behavior can vary and requests can incur charges. A release candidate should
