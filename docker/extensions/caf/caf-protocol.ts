@@ -5,11 +5,14 @@ export const POLICY_BYTES = 64 * 1024;
 export const AUTHORIZATION_BYTES = 64 * 1024;
 export const AUTHORIZATION_MESSAGES = 32;
 export const RESEARCH_BYTES = 48 * 1024;
+export const CAF_RESPONSE_BYTES = 64 * 1024;
+export const CAF_MAX_ROUNDS = 256;
+export const CAF_RESEARCH_STATE_BYTES = 512 * 1024;
 
 export type CafThinking = typeof THINKING[number];
 export interface CafConfig { schemaVersion: 1; model: string | null; thinking: CafThinking | null; }
 export type CafPolicy={source:"profile"|"built-in";text:string|null};
-export type CafDisclosureHistoryRound={request:{message:string;purpose:string};response:CafRound["response"]};
+export type CafDisclosureHistoryRound={request:{message:string;purpose:string};response:CafRound["response"];research?:readonly Readonly<CafResearch>[]};
 export type CafDisclosureAction={schemaVersion:1;kind:"friend-message";message:string;purpose:string;destination:{model:string};history?:readonly Readonly<CafDisclosureHistoryRound>[]};
 export type CafWebSearchAction={schemaVersion:1;kind:"web-search";query:string;purpose:string;destination:{tool:"web_search";provider:string}};
 export type CafReviewAction=CafDisclosureAction|CafWebSearchAction;
@@ -23,7 +26,7 @@ export const CAF_ROUND_ENTRY="pi-run-caf-round";
 export type CafResearch={kind:"web-search";query:string;purpose:string;provider:string;answer:string;results:{title:string;url:string;snippet:string}[]};
 export type CafRound={schemaVersion:1;consultationId:string;round:number;
   request:{message:string;purpose:string};friend:{model:string;thinking:CafThinking|null};response:
-  {kind:"answer";text:string}|{kind:"questions";questions:{question:string;whyNeeded:string;canProceedWithoutAnswer:boolean}[];provisionalAnswer:string|null};research?:CafResearch};
+  {kind:"answer";text:string}|{kind:"questions";questions:{question:string;whyNeeded:string;canProceedWithoutAnswer:boolean}[];provisionalAnswer:string|null};research?:readonly Readonly<CafResearch>[]};
 export type BranchEntry={type:string;id?:string;customType?:string;data?:unknown;message?:unknown};
 export type CafAuthorizationMessage={id:string;text:string};
 export type CafAuthorizationSnapshot={complete:boolean;messages:readonly Readonly<CafAuthorizationMessage>[]};
@@ -45,27 +48,31 @@ export function parseCafResearch(input:unknown):CafResearch{
     answer:bounded(value.answer,16*1024,"CAF research answer"),results};
   if(!result.answer.trim()&&!result.results.length||Buffer.byteLength(JSON.stringify(result),"utf8")>RESEARCH_BYTES)throw new Error("Invalid or oversized CAF research");return result;
 }
+export function parseCafResearchState(input:unknown):readonly Readonly<CafResearch>[] {
+  const values=Array.isArray(input)?input:[input];if(!values.length)throw new Error("Invalid CAF research state");
+  const research=values.map(parseCafResearch);if(Buffer.byteLength(JSON.stringify(research),"utf8")>CAF_RESEARCH_STATE_BYTES)throw new Error("CAF research state exceeds the cumulative byte limit");return freeze(research);
+}
 export function parseCafResponse(input:unknown):CafRound["response"]{
   const response=object(input,"CAF response"),kind=response.kind;
   if(kind==="answer"){exact(response,["kind","text"],"CAF answer");return {kind,text:text(response.text,64*1024,"CAF answer")};}
   if(kind!=="questions")throw new Error("Invalid CAF response");
   exact(response,["kind","questions","provisionalAnswer"],"CAF questions");
-  if(!Array.isArray(response.questions)||response.questions.length<1||response.questions.length>3||
+  if(!Array.isArray(response.questions)||response.questions.length<1||
       !(response.provisionalAnswer===null||typeof response.provisionalAnswer==="string"))throw new Error("Invalid CAF questions");
   const questions=response.questions.map((item,index)=>{const question=object(item,`CAF question ${index+1}`);exact(question,["question","whyNeeded","canProceedWithoutAnswer"],"CAF question");
     if(typeof question.canProceedWithoutAnswer!=="boolean")throw new Error("Invalid CAF question");
     return {question:text(question.question,4096,"CAF question"),whyNeeded:text(question.whyNeeded,4096,"CAF question reason"),canProceedWithoutAnswer:question.canProceedWithoutAnswer};});
-  return {kind,questions,provisionalAnswer:response.provisionalAnswer===null?null:text(response.provisionalAnswer,32*1024,"CAF provisional answer")};
+  const result={kind,questions,provisionalAnswer:response.provisionalAnswer===null?null:text(response.provisionalAnswer,32*1024,"CAF provisional answer")};
+  if(Buffer.byteLength(JSON.stringify(result),"utf8")>CAF_RESPONSE_BYTES)throw new Error("CAF questions exceed the response byte limit");return result;
 }
 export function parseCafRound(input:unknown):CafRound{
   const value=object(input,"CAF round"),hasResearch=Object.hasOwn(value,"research");exact(value,["schemaVersion","consultationId","round","request","friend","response",...(hasResearch?["research"]:[])],"CAF round");
   if(value.schemaVersion!==1||typeof value.consultationId!=="string"||!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value.consultationId)||
-      typeof value.round!=="number"||!Number.isSafeInteger(value.round)||value.round<1||value.round>3)throw new Error("Invalid CAF round identity");
+      typeof value.round!=="number"||!Number.isSafeInteger(value.round)||value.round<1||value.round>CAF_MAX_ROUNDS)throw new Error("Invalid CAF round identity");
   const request=object(value.request,"CAF request");exact(request,["message","purpose"],"CAF request");
   const friend=object(value.friend,"CAF friend");exact(friend,["model","thinking"],"CAF friend");
   const model=text(friend.model,512,"CAF friend model");if(!/^[^\s/]+\/[^\s]+$/.test(model)||!(friend.thinking===null||THINKING.includes(friend.thinking as CafThinking)))throw new Error("Invalid CAF friend");
-  const parsedResponse=parseCafResponse(value.response),research=hasResearch?parseCafResearch(value.research):undefined;
-  if(research&&parsedResponse.kind!=="answer")throw new Error("Invalid CAF researched response");
+  const parsedResponse=parseCafResponse(value.response),research=hasResearch?parseCafResearchState(value.research):undefined;
   return freeze({schemaVersion:1,consultationId:value.consultationId,round:Number(value.round),
     request:{message:text(request.message,16*1024,"CAF message"),purpose:text(request.purpose,2048,"CAF purpose")},
     friend:{model,thinking:friend.thinking as CafThinking|null},response:parsedResponse,...(research?{research}:{})});
@@ -110,10 +117,11 @@ export function parseCafDisclosureAction(input:unknown):Readonly<CafDisclosureAc
   const model=text(destination.model,512,"CAF destination model");
   if(value.schemaVersion!==1||value.kind!=="friend-message"||!/^[^\s/]+\/[^\s]+$/.test(model))throw new Error("Invalid CAF disclosure action");
   let history:Readonly<CafDisclosureHistoryRound>[]|undefined;
-  if(hasHistory){if(!Array.isArray(value.history)||value.history.length<1||value.history.length>2)throw new Error("Invalid CAF disclosure history");
-    history=value.history.map((item,index)=>{const row=object(item,`CAF disclosure history ${index+1}`);exact(row,["request","response"],"CAF disclosure history");
-      const request=object(row.request,"CAF disclosure history request");exact(request,["message","purpose"],"CAF disclosure history request");
-      return freeze({request:{message:text(request.message,16*1024,"CAF disclosure history message"),purpose:text(request.purpose,2048,"CAF disclosure history purpose")},response:parseCafResponse(row.response)});});}
+  if(hasHistory){if(!Array.isArray(value.history)||value.history.length<1||value.history.length>=CAF_MAX_ROUNDS)throw new Error("Invalid CAF disclosure history");let researchBytes=0;
+    history=value.history.map((item,index)=>{const row=object(item,`CAF disclosure history ${index+1}`),hasResearch=Object.hasOwn(row,"research");exact(row,["request","response",...(hasResearch?["research"]:[])],"CAF disclosure history");
+      const request=object(row.request,"CAF disclosure history request");exact(request,["message","purpose"],"CAF disclosure history request");const research=hasResearch?parseCafResearchState(row.research):undefined;
+      if(research)researchBytes+=Buffer.byteLength(JSON.stringify(research),"utf8");if(researchBytes>CAF_RESEARCH_STATE_BYTES)throw new Error("CAF disclosure history research exceeds the cumulative byte limit");
+      return freeze({request:{message:text(request.message,16*1024,"CAF disclosure history message"),purpose:text(request.purpose,2048,"CAF disclosure history purpose")},response:parseCafResponse(row.response),...(research?{research}:{})});});}
   return freeze({schemaVersion:1,kind:"friend-message",message:text(value.message,16*1024,"CAF disclosure message"),
     purpose:text(value.purpose,2048,"CAF disclosure purpose"),destination:{model},...(history?{history}:{})});
 }

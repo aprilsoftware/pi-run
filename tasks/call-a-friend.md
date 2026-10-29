@@ -281,11 +281,12 @@ serialized message, then starts a fresh native Pi `Agent` with a private
 transcript containing only that message, bounded prior reviewed CAF exchanges,
 and any research returned through the agent's restricted tools.
 
-During one round the friend may receive `caf_ask_primary` and, when one explicit
-canonical search provider is configured, one `caf_web_search` call. CAF invokes
-the canonical `web_search` tool with one query, at most five results, no fetched
-page content, no curator, and no proxy override. It removes all friend tools
-before the final response.
+During one round the CAF agent may receive `caf_ask_primary` and, when one
+explicit canonical search provider is configured, `caf_web_search`. Each tool
+call invokes the canonical `web_search` tool with one query, at most five
+results, no fetched page content, no curator, and no proxy override. The CAF
+agent may refine with another independently reviewed query while that materially
+improves the advice, then answer or request clarification.
 
 The friend receives no arbitrary shell, filesystem, internal-network,
 credential, page-fetching, source-check, or general MCP access. Every search
@@ -319,15 +320,20 @@ corresponding state rather than one global conversation.
 
 The implementation bounds:
 
-- message and cumulative disclosed bytes;
-- friend requests, output tokens, research calls, and fetched content;
-- questions per round and rounds per consultation;
-- provider requests and concurrent work; and
+- serialized messages, clarification responses, and cumulative disclosed bytes;
+- output tokens, per-query results, and cumulative retained research;
+- provider/context capacity and concurrent work; and
 - retained diagnostics and session content.
 
-The implemented limits allow at most three friend questions per round, three
-primary/friend rounds per consultation, and one search per `call_friend`.
-Reaching a limit returns control to the primary and never continues silently.
+The agreed dialogue contract has no ordinary semantic question-count or
+consultation-round limit. CAF may request the focused clarification needed, and
+the primary may continue through new independently reviewed disclosures while
+that materially improves the advice. Cancellation, provider/context capacity,
+protocol byte bounds, and the existing 256-round persistence safeguard remain
+technical stopping conditions. These are circuit breakers rather than targets
+for normal dialogue. Public research likewise has no ordinary query-count limit:
+every query is independently reviewed, each result is bounded, and cumulative
+retained research is limited to 512 KiB.
 
 Friend output is advisory and untrusted. The primary remains responsible for
 checking it, integrating private facts, following development approvals, and
@@ -338,11 +344,12 @@ proposing any resulting action.
 Missing runtime, policy, model, credential, network route, valid friend result,
 or known Guard mode withholds the CAF operation. Guard On additionally requires
 a configured reviewer and complete `ALLOW`; Guard Off deliberately uses the
-bounded direct path without a reviewer. The Guard reviewer receives bounded
-initial evidence and only `caf_guard_decide`, with no investigative tools or
-rounds; incomplete authorization requires `ASK`. Provider failure is not
-permission. Cancellation aborts active model and research work and records a
-clear outcome.
+bounded direct path without a reviewer. The CAF reviewer agent receives compact
+initial evidence and may investigate the actual current branch and permitted
+workspace evidence through bounded tools before deciding. Omission from the
+initial compact package is not itself incomplete authority. Provider failure is
+not permission. Cancellation aborts active model and research work and records
+a clear outcome.
 
 Every unsuccessful `call_friend` reports `retryAllowed: false`. For ordinary
 failures while the primary run remains active, CAF removes all model-visible
@@ -374,7 +381,7 @@ Each stage was implemented through a separate approved increment:
    identity retained inside records.
 5. [x] Add isolated CAF configuration and conversation without network calls.
 6. [x] Add reviewed friend dialogue and `caf_ask_primary`.
-7. [x] Add one reviewed `caf_web_search` operation with bounded source results.
+7. [x] Add independently reviewed `caf_web_search` operations with bounded source results.
 8. [x] Validate the native Pi lifecycle with fake primary, friend, and search providers.
 9. [x] Replace the timed nested friend-completion workflow with a bounded native
    Pi Agent whose reviewed search continues in the same private transcript.
@@ -406,10 +413,13 @@ interoperability, or release publication.
 
 ## Remaining questions and acceptance
 
-The experiment selected a maximum of three questions and three rounds per
-consultation, one search and five results per `call_friend`, destination-specific
-`ALLOW`/`ASK`/`USER_REFUSED` review, and hash-only payload diagnostics without
-journal excerpts. Remaining work includes broader real-provider scenarios,
+The design retains at most five results per individual public query,
+destination-specific `ALLOW`/`ASK`/`USER_REFUSED` review, and hash-only payload
+diagnostics without journal excerpts. Low semantic limits on clarification
+questions, consultation rounds, and public-query count were removed in favor of
+per-result and cumulative byte bounds, context capacity, cancellation, and
+emergency persistence boundaries. Remaining work includes
+broader real-provider scenarios,
 restricted-network validation against real provider endpoints, provider-specific
 tool-call
 interoperability, and whether friend credentials should move to a broker.

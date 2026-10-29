@@ -7,13 +7,13 @@ PI_PACKAGE_DIR="${PI_PACKAGE_DIR:-$(npm root -g)/@earendil-works/pi-coding-agent
 PROFILE_DIR="${PI_RUN_PROFILE_DIR:-/profile}"
 
 if [[ "${CAF_LIVE_TESTS:-0}" != 1 ]]; then
-    echo 'caf-live-test: SKIP (set CAF_LIVE_TESTS=1 and CAF_LIVE_TEST_MODE=guarded|unreviewed to contact configured providers)'
+    echo 'caf-live-test: SKIP (set CAF_LIVE_TESTS=1 and CAF_LIVE_TEST_MODE=guarded|guarded-dialogue|unreviewed to contact configured providers)'
     exit 0
 fi
 
 case "${CAF_LIVE_TEST_MODE:-}" in
-    guarded|unreviewed) ;;
-    *) echo 'caf-live-test: CAF_LIVE_TEST_MODE must be guarded or unreviewed' >&2; exit 2 ;;
+    guarded|guarded-dialogue|unreviewed) ;;
+    *) echo 'caf-live-test: CAF_LIVE_TEST_MODE must be guarded, guarded-dialogue, or unreviewed' >&2; exit 2 ;;
 esac
 [[ -f "${PI_PACKAGE_DIR}/package.json" ]] || { echo 'caf-live-test: Pi package unavailable' >&2; exit 1; }
 [[ -d "${PROFILE_DIR}" ]] || { echo 'caf-live-test: selected profile unavailable' >&2; exit 1; }
@@ -21,7 +21,7 @@ esac
 TMP="$(mktemp -d)"
 trap 'rm -rf "${TMP}"' EXIT
 
-timeout 420s node --input-type=module - \
+timeout 900s node --input-type=module - \
     "${ROOT}" "${PI_PACKAGE_DIR}" "${PROFILE_DIR}" "${TMP}" "${CAF_LIVE_TEST_MODE}" <<'NODE'
 import assert from 'node:assert/strict';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
@@ -29,6 +29,7 @@ import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const [root, piDir, realProfileInput, tempRoot, mode] = process.argv.slice(2);
+const guarded = mode !== 'unreviewed', dialogue = mode === 'guarded-dialogue';
 const realProfile = resolve(realProfileInput), profile = join(tempRoot, 'profile'), workspace = join(tempRoot, 'workspace');
 const readJson = async path => JSON.parse(await readFile(path, 'utf8'));
 const optionalText = async path => { try { return await readFile(path, 'utf8'); } catch (error) { if (error?.code === 'ENOENT') return undefined; throw error; } };
@@ -49,7 +50,7 @@ const sourceGuard = JSON.parse(guardText);
 assert.equal(sourceGuard.schemaVersion, 1, 'Guard configuration schema is unsupported');
 const reviewerName = modelName(sourceGuard.model, 'Guard reviewer model');
 assert.ok(safeThinking(sourceGuard.thinking), 'Guard reviewer thinking is invalid');
-if (mode === 'guarded') assert.notEqual(reviewerName, friendName, 'Guard reviewer and friend must differ in guarded mode');
+if (guarded) assert.notEqual(reviewerName, friendName, 'Guard reviewer and friend must differ in guarded mode');
 
 const protectedPaths = [join(realProfile, 'auth.json'), join(realProfile, 'models.json'), join(realProfile, 'caf', 'config.json'),
   ...(await optionalText(join(realProfile, 'guard', 'config.json')) === undefined ? [join(realProfile, 'guardian', 'config.json')] : [join(realProfile, 'guard', 'config.json')])];
@@ -58,13 +59,13 @@ const before = new Map(await Promise.all(protectedPaths.map(async path => [path,
 await mkdir(join(profile, 'guard'), { recursive: true, mode: 0o700 });
 await mkdir(join(profile, 'caf'), { mode: 0o700 });
 await mkdir(workspace, { mode: 0o700 });
-await writeFile(join(profile, 'AGENTS.md'), '# Synthetic CAF candidate\nOnly the fixed fictional public API question is authorized.\n', { mode: 0o600 });
+await writeFile(join(profile, 'AGENTS.md'), '# Synthetic CAF candidate\nOnly the fixed fictional public API consultation and its fictional compatibility constraint are authorized.\n', { mode: 0o600 });
 await writeFile(join(profile, 'guard', 'config.json'), JSON.stringify({ schemaVersion: 1, model: reviewerName, thinking: sourceGuard.thinking ?? null }) + '\n', { mode: 0o600 });
 await writeFile(join(profile, 'caf', 'config.json'), JSON.stringify({ schemaVersion: 1, model: friendName, thinking: cafConfig.thinking ?? null }) + '\n', { mode: 0o600 });
-await writeFile(join(profile, 'caf', 'caf.md'), '# Synthetic CAF policy\nAllow only the fixed fictional public API design question.\n', { mode: 0o600 });
+await writeFile(join(profile, 'caf', 'caf.md'), '# Synthetic CAF policy\nAllow only the fixed fictional public API consultation and its fictional compatibility constraint.\n', { mode: 0o600 });
 await writeFile(join(workspace, 'AGENTS.md'), '# Synthetic workspace\nNo real system or repository action is permitted.\n', { mode: 0o600 });
 const modeFixture = join(tempRoot, 'guard-mode-fixture.ts');
-await writeFile(modeFixture, `export default function(pi){let runtime;pi.events.on("pi-run:guard-runtime:v1:available",value=>{runtime=value;});pi.events.emit("pi-run:guard-runtime:v1:discover",{schemaVersion:1,accept(value){runtime=value;}});pi.on("session_start",()=>runtime.setReviewMode(${JSON.stringify(mode === 'guarded' ? 'on' : 'off')}));}\n`);
+await writeFile(modeFixture, `export default function(pi){let runtime;pi.events.on("pi-run:guard-runtime:v1:available",value=>{runtime=value;});pi.events.emit("pi-run:guard-runtime:v1:discover",{schemaVersion:1,accept(value){runtime=value;}});pi.on("session_start",()=>runtime.setReviewMode(${JSON.stringify(guarded ? 'on' : 'off')}));}\n`);
 
 process.env.PI_RUN_PROFILE_DIR = profile;
 process.env.PI_CODING_AGENT_DIR = profile;
@@ -120,36 +121,49 @@ runner.bindCore({
 runner.setUIContext({ notify() {}, setStatus() {}, setWidget() {}, select: async () => undefined, confirm: async () => false,
   input: async () => undefined, theme: { fg: (_role, text) => text } }, 'json');
 
-const message = 'Review this fictional public API design: GET /widgets returns an array of public widget names and no private data. Suggest one concise compatibility improvement.';
-const purpose = 'Obtain independent advice about a fictional public API';
+const message = dialogue
+  ? 'Review this fictional API migration. A final compatibility recommendation depends on whether existing fictional clients require the original array response or accept an envelope, and that fact is intentionally omitted. Before giving final advice, use caf_ask_primary to ask which response shape existing clients require. Do not assume.'
+  : 'Review this fictional public API design: GET /widgets returns an array of public widget names and no private data. Suggest one concise compatibility improvement.';
+const purpose = dialogue ? 'Obtain clarification-driven advice about a fictional public API migration' : 'Obtain independent advice about a fictional public API';
 const toolCallId = 'caf-live-candidate';
 const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
-session.appendMessage({ role: 'user', content: 'You may send exactly the fictional public API question in the next call to the configured friend. Do not disclose anything else.', timestamp: Date.now() });
+const authorization = dialogue
+  ? 'You may send exactly the fictional public API migration question in the next call to the configured friend. If it asks which response shape existing clients require, disclose only that fictional clients require the original array response and continue the consultation.'
+  : 'You may send exactly the fictional public API question in the next call to the configured friend. Do not disclose anything else.';
+session.appendMessage({ role: 'user', content: authorization, timestamp: Date.now() });
 session.appendMessage({ role: 'assistant', api: friendModel.api, provider: friendModel.provider, model: friendModel.id, stopReason: 'toolUse', timestamp: Date.now(), usage,
   content: [{ type: 'toolCall', id: toolCallId, name: 'call_friend', arguments: { message, purpose } }] });
 
-let result;
+let result, firstResult;
 try {
   await runner.emit({ type: 'session_start', reason: 'startup' });
-  const caf = loaded.extensions[2], commandContext = runner.createCommandContext();
+  const caf = loaded.extensions[2], commandContext = runner.createCommandContext(), callFriend = caf.tools.get('call_friend').definition;
   await caf.commands.get('caf-mode').handler('on', commandContext);
-  const controller = new AbortController();
-  result = await caf.tools.get('call_friend').definition.execute(toolCallId, { message, purpose }, controller.signal, undefined,
-    runner.createToolContext(toolCallId, controller.signal));
+  let controller = new AbortController();
+  result = await callFriend.execute(toolCallId, { message, purpose }, controller.signal, undefined, runner.createToolContext(toolCallId, controller.signal));
   assert.equal(result.isError, undefined, result.content?.map(item => item.text).join(' ') || 'CAF candidate failed');
-  assert.ok(['answer','questions'].includes(result.details?.status), 'CAF returned an unexpected status');
-  assert.equal(calls.friend, 1, 'CAF candidate must make exactly one friend request');
+  if (dialogue) {
+    firstResult = result;assert.equal(firstResult.details?.status, 'questions', 'CAF did not request the required fictional clarification');assert.equal(firstResult.details?.round, 1);
+    const continuation = { message: 'Existing fictional clients require the original array response.', purpose: 'Answer the CAF clarification and obtain the final fictional compatibility recommendation' };
+    const continuationId = 'caf-live-continuation';
+    session.appendMessage({ role: 'toolResult', toolCallId, toolName: 'call_friend', content: firstResult.content, details: firstResult.details, isError: false, timestamp: Date.now() });
+    session.appendMessage({ role: 'assistant', api: friendModel.api, provider: friendModel.provider, model: friendModel.id, stopReason: 'toolUse', timestamp: Date.now(), usage,
+      content: [{ type: 'toolCall', id: continuationId, name: 'call_friend', arguments: continuation }] });
+    controller = new AbortController();result = await callFriend.execute(continuationId, continuation, controller.signal, undefined, runner.createToolContext(continuationId, controller.signal));
+    assert.equal(result.isError, undefined, result.content?.map(item => item.text).join(' ') || 'CAF continuation failed');assert.equal(result.details?.status, 'answer');assert.equal(result.details?.round, 2);assert.equal(result.details?.consultationId, firstResult.details?.consultationId);
+  } else assert.ok(['answer','questions'].includes(result.details?.status), 'CAF returned an unexpected status');
+  assert.equal(calls.friend, dialogue ? 2 : 1, `CAF candidate must make exactly ${dialogue ? 'two' : 'one'} friend request(s)`);
   assert.equal(calls.other, 0, 'CAF candidate contacted an unexpected model');
-  if (mode === 'guarded') assert.ok(calls.reviewer >= 1, 'Guarded CAF candidate made no reviewer request');
+  if (guarded) assert.ok(calls.reviewer >= (dialogue ? 2 : 1), 'Guarded CAF candidate made too few reviewer requests');
   else assert.equal(calls.reviewer, 0, 'Unreviewed CAF candidate contacted the reviewer');
 } finally {
   await runner.emit({ type: 'session_shutdown', reason: 'exit' });
 }
 for (const [path, expected] of before) assert.deepEqual(await readFile(path), expected, `Live candidate changed ${path}`);
-const report = { event: 'caf_live_result', mode, status: result.details.status, reviewerModel: reviewerName, friendModel: friendName,
+const report = { event: 'caf_live_result', mode, status: result.details.status, consultationRounds: dialogue ? 2 : 1, reviewerModel: reviewerName, friendModel: friendName,
   reviewerRequests: calls.reviewer, friendRequests: calls.friend, otherModelRequests: calls.other, searchRequests: 0,
   realProfileWrites: false, commandExecution: false };
-assert.deepEqual(Object.keys(report), ['event','mode','status','reviewerModel','friendModel','reviewerRequests','friendRequests',
+assert.deepEqual(Object.keys(report), ['event','mode','status','consultationRounds','reviewerModel','friendModel','reviewerRequests','friendRequests',
   'otherModelRequests','searchRequests','realProfileWrites','commandExecution']);
 assert.equal(typeof report.reviewerModel, 'string');assert.equal(typeof report.friendModel, 'string');
 console.log(JSON.stringify(report));

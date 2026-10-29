@@ -155,17 +155,20 @@ lazily in private `caf/config.json`. Profile cloning copies none of these files.
 `/guardian`, `/caf`, and their direct command families inspect or change settings
 without contacting a provider.
 
-While Guard is On, the shared configured Guard reviewer evaluates each exact
-friend/search action against the CAF policy, applicable instructions, and
-bounded initial evidence selected from current-branch user authority. Its only
-tool is `caf_guard_decide`; it cannot request more history, files, resources, or
-investigative rounds. An incomplete authorization snapshot requires `ASK`, and
-a complete valid `ALLOW` is required for release. Missing, failed, malformed,
-cancelled, timed-out, truncated, or non-allowing review remains withheld and
-never silently downgrades to an unreviewed call. The reviewer receives no
-credentials, shell, network, arbitrary profile state, journals, databases,
-friend tools, or arbitrary MCP. Startup, selectors, mode changes, and status
-commands make no provider request.
+While Guard is On, a separate CAF reviewer agent uses the shared configured
+reviewer model to evaluate each exact friend/search action against CAF policy,
+applicable instructions, and compact initial evidence from the current session
+branch. It can investigate through bounded session-history, user-change,
+non-secret workspace file, resource-listing, and review-guidance tools. The
+original branch remains local until selected evidence is supplied; omission
+from the compact initial snapshot does not itself invalidate complete current
+authority. A valid `ALLOW`, bound to complete original user evidence and the
+exact candidate, is required for release. Missing, failed, malformed, cancelled,
+timed-out, truncated, or non-allowing review remains withheld and never silently
+downgrades to an unreviewed call. The reviewer receives no credentials, shell,
+network, arbitrary profile state, journals, databases, friend tools, or
+arbitrary MCP. Startup, selectors, mode changes, and status commands make no
+provider request.
 
 While Guard is explicitly Off, enabled CAF validates the same bounded action
 schemas and sends them without a reviewer request. Guard Off can save reviewer
@@ -183,29 +186,38 @@ credentials, Guard evidence, or unrelated CAF rounds. This is application-level
 context isolation, not a sandbox or confidentiality guarantee.
 
 Without research, each invocation performs one friend request. The friend may
-return one bounded answer or end its round with the constrained
-`caf_ask_primary` function containing up to three minimal questions. That
-function does not execute the primary. The primary must use a new standalone
-`call_friend` invocation to answer; the new action follows the current Guard
-mode. A consultation is limited to three primary/friend rounds.
+return one bounded answer or end its round with a byte-bounded
+`caf_ask_primary` clarification request containing the focused questions it
+needs; there is no ordinary semantic question-count limit. That function does
+not execute the primary. The primary must use a new standalone `call_friend`
+invocation to answer, and the new action follows the current Guard mode. The
+consultation may continue while clarification materially improves the advice,
+subject to provider/context capacity, cancellation, protocol bounds, and the
+high emergency persistence safeguard.
 
 When `web-search.json` selects one explicit provider and the bundled canonical
-`web_search` tool is callable, the friend also receives `caf_web_search`. It may
-request one query and purpose. CAF pauses the friend and validates the exact
-query, purpose, and search-provider destination. Guard On requires a fresh
-`ALLOW` for that destination; Guard Off sends it without reviewer judgment. CAF
-then makes one nested `web_search` call with at most five results, no fetched page
-content, no curator, and no proxy override. It sends bounded, normalized,
-untrusted titles, snippets, and URLs back for one final friend request with no
-tools. `auto`, `all`, provider arrays, repeated searches, custom-renamed search
-tools, and arbitrary URL fetching are unavailable.
+`web_search` tool is callable, the CAF agent also receives `caf_web_search`. It
+may request another focused query whenever doing so materially improves its
+advice. CAF pauses the agent and validates each exact query, purpose, and
+search-provider destination. Guard On requires a fresh `ALLOW` for every query;
+Guard Off sends each one without reviewer judgment. Each released action makes
+one nested `web_search` call with at most five results, no fetched page content,
+no curator, and no proxy override. Bounded, normalized, untrusted titles,
+snippets, URLs, and provider answers return to the same private agent transcript,
+where CAF may refine its research, answer, or request clarification. `auto`,
+`all`, provider arrays, custom-renamed search tools, and arbitrary URL fetching
+remain unavailable.
 
-The search provider and friend model remain separate disclosure destinations.
-Search credentials stay inside `pi-web-access` and are not included in friend or
-reviewer context. Offline and restricted network policy remains authoritative.
+The search provider and CAF model remain separate disclosure destinations.
+Search credentials stay inside `pi-web-access` and are not included in CAF or
+reviewer context. There is no ordinary search-count limit; retained research is
+bounded to 512 KiB across the consultation, and provider context, cancellation,
+review refusal, and failures remain stopping conditions. Research retained with
+a clarification round becomes part of the exact bounded continuation reviewed
+before it returns to the next fresh CAF agent. Offline and restricted network policy remains authoritative.
 The friend has no filesystem, shell, arbitrary Pi, or MCP tools, and public
-results cannot expand its capabilities. There is no recursive primary invocation
-or unbounded autonomous loop. Guarded refusal and failures before release make
+results cannot expand its capabilities. There is no recursive primary invocation or unchecked disclosure loop; every
+continuation remains a separate reviewed action while Guard is On. Guarded refusal and failures before release make
 no corresponding external request. An unsuccessful `call_friend` reports
 `retryAllowed: false` and, when the run remains active, temporarily removes all
 model-visible tools for one explain-only primary response. Tools return only
@@ -222,7 +234,8 @@ as finalized branch-local session metadata while the tool result supplies the
 response to the primary model. `/caf-status` reports whether explicitly
 configured public-web research is available, reconstructs only finalized CAF
 rounds on the selected branch, marks a pending consultation as awaiting the
-primary or at its round limit, and reports malformed state as unavailable.
+primary or at its emergency persistence limit, and reports malformed state as
+unavailable.
 
 CAF diagnostics use the shared journal implementation but remain separate from
 Guardian under `logs/<workspace-id>/caf.jsonl*`. `/caf-log` presents bounded

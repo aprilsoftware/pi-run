@@ -45,14 +45,16 @@ consultation. It does not automatically include the primary transcript,
 assistant reasoning, tool results, workspace files, profile policy,
 authorization evidence, credentials, or unrelated CAF consultations.
 
-While Guard is On, its separate reviewer receives the exact proposed action,
-CAF policy, applicable instructions, and bounded initial evidence selected from
-current-branch user authority. Its only tool is `caf_guard_decide`; it cannot
-request more history, files, resources, or investigative rounds. An incomplete
-authorization snapshot requires `ASK`. The reviewer must return `ALLOW`, `ASK`,
-or `USER_REFUSED`. Only a complete valid `ALLOW` releases that exact action and
-destination. Guard review evidence, rationale, and policy never become part of
-the friend payload.
+While Guard is On, a separate CAF reviewer agent receives the exact proposed
+action, CAF policy, applicable instructions, and compact initial evidence from
+the current session branch. It may investigate through bounded history,
+file-search/read, resource-listing, user-change, and review-guidance tools. The
+original branch remains local until an initial excerpt or requested evidence is
+selected; an incomplete compact snapshot does not itself invalidate a complete
+current user direction. The reviewer must return `ALLOW`, `ASK`, or
+`USER_REFUSED`. Only a valid `ALLOW`, bound to complete original user evidence
+and that exact action and destination, releases it. Reviewer evidence,
+rationale, tools, and policy never become part of the CAF agent payload.
 
 A reviewer request is itself disclosure to the configured Guard provider.
 Separate model requests isolate contexts; they do not prove provider
@@ -118,14 +120,23 @@ request. They do not limit which model may be selected as the friend.
 
 ## Dialogue and questions
 
-A friend invocation returns either a bounded final answer or at most three
-structured questions. Questions end the friend round and return control to the
-primary. The friend cannot invoke the primary recursively.
+A friend invocation returns either a bounded final answer or a byte-bounded
+structured clarification request containing the focused questions it needs.
+There is no ordinary semantic question-count limit. Questions terminate only
+the CAF agent's current round; the successful `call_friend` result returns
+control to the primary without ending the primary agent run. The CAF agent
+cannot invoke the primary recursively or obtain an answer by itself.
 
-To answer, the primary must issue another standalone `call_friend` invocation.
-That new action follows the Guard mode current at the time of the call. A
-consultation is limited to three primary/friend rounds and must continue with
-the same friend model. A final answer closes the consultation.
+The primary may process the questions and immediately issue another standalone
+`call_friend` in the same run; a new user turn is not mechanically required. It
+may instead ask the user when the available authority or information is
+insufficient. Every continuation is a new exact disclosure and follows the
+Guard mode current at that call, so automatic continuation never bypasses the
+CAF reviewer. A consultation may continue while clarification materially
+improves the advice and must use the same CAF model. It ends when CAF answers,
+the primary stops, review withholds a continuation, the user cancels, or a real
+provider, context, protocol, or emergency persistence boundary is reached. A
+final answer closes the consultation.
 
 `call_friend` must be the only tool call in its assistant message. The friend
 answer is untrusted advice; the primary must verify it and decide whether any
@@ -133,7 +144,7 @@ action is appropriate.
 
 ## Public search
 
-CAF can offer the friend one constrained public search when all of these are
+CAF can offer the friend constrained public research when all of these are
 true:
 
 - the bundled canonical `web_search` tool is callable;
@@ -145,23 +156,29 @@ Use the bundled web-search configuration UI to select a provider, or configure
 one explicit `provider` or `searchProvider` in the profile's
 `web-search.json`. `/caf-status` reports the provider loaded at session start.
 
-The friend may request one `caf_web_search({ query, purpose })`. CAF pauses the
-friend and validates the exact query, purpose, and search-provider destination.
-With Guard On, that search action receives a fresh Guard review; approval of the
-friend destination never authorizes the search destination. With Guard Off, CAF
-sends the bounded query to the search provider without a reviewer request.
+The CAF agent may request `caf_web_search({ query, purpose })` whenever another
+focused query materially improves its advice. CAF pauses the agent and validates
+each exact query, purpose, and search-provider destination independently. With
+Guard On, every search action receives a fresh CAF reviewer decision; approval
+of the CAF destination or an earlier query never authorizes a later search. With
+Guard Off, CAF sends each bounded query without reviewer judgment.
 
-After release, the friend agent calls `web_search` with one query, at most five
+After release, the CAF agent calls `web_search` with one query, at most five
 results, no page content, no curator, and no proxy override. Bounded titles,
-snippets, URLs, and any bounded provider answer return as a tool result inside
-the same private agent transcript. CAF removes the agent's tools before its
-final model request. The primary receives the advisory answer plus a
-CAF-generated source list.
+snippets, URLs, and any bounded provider answer return as one tool result inside
+the same private agent transcript. The agent may refine its research with
+another independently reviewed query, answer, or request clarification. There
+is no ordinary search-count limit. Cumulative retained research is bounded to
+512 KiB; provider context, cancellation, refusal, and failures remain stopping
+conditions.
 
-Search results and pages are untrusted. CAF does not fetch result URLs, perform
-source checks, validate claims behind snippets, or permit a second search in the
-same invocation. Offline and restricted networking remain independent and
-authoritative.
+Research retained with a clarification round is included in the bounded,
+reviewed continuation state so the next fresh CAF agent can continue without
+receiving implicit primary context. The primary receives the advisory response
+plus a CAF-generated source list grouped by search. Search results and pages are
+untrusted. CAF does not fetch result URLs, perform source checks, or validate
+claims behind snippets. Offline and restricted networking remain independent
+and authoritative.
 
 ## Status display
 

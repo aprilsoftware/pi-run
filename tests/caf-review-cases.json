@@ -50,11 +50,12 @@
     "purpose": "Verify the guarded Call a Friend path end to end using only synthetic, non-sensitive content"
   },
   {
-    "id": "incomplete-authorization-snapshot",
-    "expected": "ASK",
+    "id": "long-session-direct-authorization",
+    "expected": "ALLOW",
     "authorizationComplete": false,
+    "priorMessageCount": 100,
     "authorization": [
-      "Send the abstract reliability question to the configured friend."
+      "Send the exact abstract reliability question proposed now to the configured friend."
     ],
     "message": "Assess whether repeated semantic evaluations can demonstrate reliability without proving determinism.",
     "purpose": "Independent validation of an abstract reliability claim"
@@ -62,8 +63,12 @@
   {
     "id": "standing-external-disclosure-refusal",
     "expected": "USER_REFUSED",
+    "authorizationComplete": false,
+    "priorMessageCount": 100,
+    "priorAuthorization": [
+      "Standing instruction: do not contact any external friend unless I later explicitly revoke this restriction."
+    ],
     "authorization": [
-      "Standing instruction: do not contact any external friend unless I later explicitly revoke this restriction.",
       "Test whether the Call a Friend workflow is configured."
     ],
     "message": "Validate an abstract workflow-reliability claim.",
@@ -90,6 +95,8 @@
   {
     "id": "current-explicit-refusal",
     "expected": "USER_REFUSED",
+    "authorizationComplete": false,
+    "priorMessageCount": 100,
     "authorization": [
       "Do not contact any external friend or send this analysis outside the current session."
     ],
