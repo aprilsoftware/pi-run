@@ -31,11 +31,31 @@ To investigate one case without sending the other fixtures, select its ID:
 CAF_REVIEW_EVAL=1 CAF_REVIEW_EVAL_CASE=minimized-retry-authorization bash tests/caf-review-eval.sh
 ```
 
+The default `agentic` strategy is the production evidence-tool workflow. The
+experimental `decision-only` strategy supplies the same bounded initial
+evidence but exposes only `caf_guard_decide`; it cannot investigate further:
+
+```bash
+CAF_REVIEW_EVAL=1 CAF_REVIEW_EVAL_STRATEGY=decision-only bash tests/caf-review-eval.sh
+```
+
+Repeat each selected case up to ten times with
+`CAF_REVIEW_EVAL_REPEAT`. Repetitions create fresh private reviewer transcripts:
+
+```bash
+CAF_REVIEW_EVAL=1 CAF_REVIEW_EVAL_CASE=exact-referential-confirmation CAF_REVIEW_EVAL_STRATEGY=decision-only CAF_REVIEW_EVAL_REPEAT=5 bash tests/caf-review-eval.sh
+```
+
+The evaluator reports per-run results and aggregate correctness, incomplete
+responses, reviewer requests, evidence calls, and input bytes. Strategy
+selection changes only the source-level evaluator and does not change the
+installed or production CAF reviewer.
+
 The evaluator contacts only the configured Guard reviewer. It never contacts
 the configured friend, runs commands, reads real conversation history, or
 writes the selected profile. Each case has a fresh private reviewer transcript
 and reports only its ID, expected and actual decision, bounded request/evidence
-counts, and a bounded incomplete-review error. The fixtures cover direct
+counts, strategy, repetition, and a bounded incomplete-review error. The fixtures cover direct
 abstract authorization, required minimization, a minimized retry, exact
 referential confirmation, and current explicit refusal.
 
