@@ -156,14 +156,16 @@ lazily in private `caf/config.json`. Profile cloning copies none of these files.
 without contacting a provider.
 
 While Guard is On, the shared configured Guard reviewer evaluates each exact
-friend/search action against the CAF policy, applicable instructions, bounded
-current-branch user authority, and only bounded non-secret evidence it requests.
-A complete valid `ALLOW` is required. Missing, failed, malformed, cancelled,
-timed-out, truncated, or non-allowing review remains withheld and never silently
-downgrades to an unreviewed call. The reviewer receives no credentials, shell,
-network, arbitrary profile state, journals, databases, friend tools, or arbitrary
-MCP. Startup, selectors, mode changes, and status commands make no provider
-request.
+friend/search action against the CAF policy, applicable instructions, and
+bounded initial evidence selected from current-branch user authority. Its only
+tool is `caf_guard_decide`; it cannot request more history, files, resources, or
+investigative rounds. An incomplete authorization snapshot requires `ASK`, and
+a complete valid `ALLOW` is required for release. Missing, failed, malformed,
+cancelled, timed-out, truncated, or non-allowing review remains withheld and
+never silently downgrades to an unreviewed call. The reviewer receives no
+credentials, shell, network, arbitrary profile state, journals, databases,
+friend tools, or arbitrary MCP. Startup, selectors, mode changes, and status
+commands make no provider request.
 
 While Guard is explicitly Off, enabled CAF validates the same bounded action
 schemas and sends them without a reviewer request. Guard Off can save reviewer

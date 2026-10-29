@@ -261,8 +261,11 @@ proposing any resulting action.
 Missing runtime, policy, model, credential, network route, valid friend result,
 or known Guard mode withholds the CAF operation. Guard On additionally requires
 a configured reviewer and complete `ALLOW`; Guard Off deliberately uses the
-bounded direct path without a reviewer. Provider failure is not permission.
-Cancellation aborts active model and research work and records a clear outcome.
+bounded direct path without a reviewer. The Guard reviewer receives bounded
+initial evidence and only `caf_guard_decide`, with no investigative tools or
+rounds; incomplete authorization requires `ASK`. Provider failure is not
+permission. Cancellation aborts active model and research work and records a
+clear outcome.
 
 Every unsuccessful `call_friend` reports `retryAllowed: false`. For ordinary
 failures while the primary run remains active, CAF removes all model-visible

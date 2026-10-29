@@ -46,11 +46,13 @@ assistant reasoning, tool results, workspace files, profile policy,
 authorization evidence, credentials, or unrelated CAF consultations.
 
 While Guard is On, its separate reviewer receives the exact proposed action,
-CAF policy, bounded current-branch user authority, applicable instructions, and
-only the bounded non-secret evidence it explicitly requests. The reviewer must
-return `ALLOW`, `ASK`, or `USER_REFUSED`. Only a complete valid `ALLOW` releases
-that exact action and destination. Guard investigation evidence, rationale, and
-policy never become part of the friend payload.
+CAF policy, applicable instructions, and bounded initial evidence selected from
+current-branch user authority. Its only tool is `caf_guard_decide`; it cannot
+request more history, files, resources, or investigative rounds. An incomplete
+authorization snapshot requires `ASK`. The reviewer must return `ALLOW`, `ASK`,
+or `USER_REFUSED`. Only a complete valid `ALLOW` releases that exact action and
+destination. Guard review evidence, rationale, and policy never become part of
+the friend payload.
 
 A reviewer request is itself disclosure to the configured Guard provider.
 Separate model requests isolate contexts; they do not prove provider

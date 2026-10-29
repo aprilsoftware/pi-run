@@ -6,7 +6,14 @@ contact configured providers:
 ```bash
 bash tests/caf-config-test.sh
 bash tests/caf-lifecycle-test.sh
+bash tests/caf-agent-loop-test.sh
 ```
+
+The agent-loop test uses Pi's real `createAgentSession` lifecycle with a synthetic
+provider. It verifies that a failed `call_friend` receives exactly one
+explain-only primary response with no model-visible tools, then restores the
+previous tool set after `agent_settled`. It does not contact a provider or
+friend.
 
 ## Opt-in Guard-review evaluation
 
@@ -31,25 +38,21 @@ To investigate one case without sending the other fixtures, select its ID:
 CAF_REVIEW_EVAL=1 CAF_REVIEW_EVAL_CASE=minimized-retry-authorization bash tests/caf-review-eval.sh
 ```
 
-The default `agentic` strategy is the production evidence-tool workflow. The
-experimental `decision-only` strategy supplies the same bounded initial
-evidence but exposes only `caf_guard_decide`; it cannot investigate further:
-
-```bash
-CAF_REVIEW_EVAL=1 CAF_REVIEW_EVAL_STRATEGY=decision-only bash tests/caf-review-eval.sh
-```
+The evaluator's `production` strategy is the default and references
+`CAF_GUARD_REVIEW_DOMAIN` directly. Production review receives bounded initial
+evidence and exposes only `caf_guard_decide`; it cannot investigate further.
+The earlier selectable A/B strategy established the basis for this production
+contract and is no longer exposed by the evaluator.
 
 Repeat each selected case up to ten times with
 `CAF_REVIEW_EVAL_REPEAT`. Repetitions create fresh private reviewer transcripts:
 
 ```bash
-CAF_REVIEW_EVAL=1 CAF_REVIEW_EVAL_CASE=exact-referential-confirmation CAF_REVIEW_EVAL_STRATEGY=decision-only CAF_REVIEW_EVAL_REPEAT=5 bash tests/caf-review-eval.sh
+CAF_REVIEW_EVAL=1 CAF_REVIEW_EVAL_CASE=exact-referential-confirmation CAF_REVIEW_EVAL_STRATEGY=production CAF_REVIEW_EVAL_REPEAT=5 bash tests/caf-review-eval.sh
 ```
 
 The evaluator reports per-run results and aggregate correctness, incomplete
-responses, reviewer requests, evidence calls, and input bytes. Strategy
-selection changes only the source-level evaluator and does not change the
-installed or production CAF reviewer.
+responses, reviewer requests, evidence calls, and input bytes.
 
 The evaluator contacts only the configured Guard reviewer. It never contacts
 the configured friend, runs commands, reads real conversation history, or
@@ -126,7 +129,8 @@ The user-supplied disclosure to the friend contains only the fixed fictional
 public API question and its fixed purpose; the friend also receives CAF's role
 instructions and the synthetic temporary policy. The Guard reviewer receives
 the synthetic authorization, proposed friend disclosure, synthetic
-instructions/policy, and any bounded evidence it requests. Neither destination
+instructions/policy, and bounded initial authorization evidence; it receives no
+investigative tools. Neither destination
 receives real session history, real profile instructions, unrelated workspace
 files, or credentials from the harness. Temporary state is removed on exit.
 

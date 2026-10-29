@@ -118,14 +118,14 @@ const incompleteRequest=caf.createCafGuardReviewRequest({action:disclosure,polic
 const incompleteEvidence=new caf.CafGuardEvidence(incompleteRequest,guardSignal,()=>{},guardStep);incompleteEvidence.initial();
 assert.throws(()=>caf.CAF_GUARD_REVIEW_DOMAIN.normalizeDecision({outcome:'ALLOW',reason:'Not enough evidence.',userMessageIds:['guard-user-2']},incompleteEvidence),/Incomplete CAF authorization/);
 assert.throws(()=>caf.createCafGuardReviewRequest({action:disclosure,policy:disclosurePolicy,authorization:guardAuthorization,workspace:guardWorkspace,stateDirectory:profile,evidenceRoots:[guardWorkspace,profile]}),/evidence roots/);
-const toolNames=caf.CAF_GUARD_REVIEW_DOMAIN.evidenceTools.map(tool=>tool.name);assert.deepEqual(toolNames,['caf_history_search','caf_history_read','caf_user_changes','caf_file_read','caf_file_search','caf_resources','caf_guide']);
-assert.ok(toolNames.every(name=>!/(shell|network|credential|friend|mcp)/.test(name)));
-const guardPrompt=caf.CAF_GUARD_REVIEW_DOMAIN.systemPrompt(guardRequest);for(const expected of ['configured friend','current candidate','unambiguous referential wording','never describe a changed or future invocation'])assert.match(guardPrompt,new RegExp(expected));
+const toolNames=caf.CAF_GUARD_REVIEW_DOMAIN.evidenceTools.map(tool=>tool.name);assert.deepEqual(toolNames,[],'Production CAF review must expose only its decision tool');
+const guardPrompt=caf.CAF_GUARD_REVIEW_DOMAIN.systemPrompt(guardRequest);for(const expected of ['configured friend','current candidate','unambiguous referential wording','No evidence tools are available','never describe a changed or future invocation'])assert.match(guardPrompt,new RegExp(expected));
+assert.match(caf.CAF_GUARD_REVIEW_DOMAIN.systemPrompt(incompleteRequest),/explicitly incomplete.*return ASK immediately.*cannot support ALLOW/);
 const ordinaryReviewContext={messages:[]};caf.CAF_GUARD_REVIEW_DOMAIN.prepareContext(ordinaryReviewContext,guardEvidence,{final:false,evidenceToolNames:toolNames});assert.deepEqual(ordinaryReviewContext.messages,[]);
 const finalReviewContext={messages:[]};caf.CAF_GUARD_REVIEW_DOMAIN.prepareContext(finalReviewContext,guardEvidence,{final:true,evidenceToolNames:toolNames});assert.equal(finalReviewContext.messages.length,1);assert.equal(finalReviewContext.messages[0].role,'system');assert.match(finalReviewContext.messages[0].content,/not user authority.*exactly one caf_guard_decide call now.*do not continue investigating/);
 const sanitized=caf.sanitizeCafGuardDiagnostic({level:'INVESTIGATE',event:'reviewer_function_started',message:'TOKEN=private',details:{functionName:'caf_file_read',functionCallId:'call-1',arguments:{path:secretEvidence,query:'private'},error:'TOKEN=private'}});
 assert.deepEqual(sanitized,{level:'INVESTIGATE',event:'reviewer_function_started',message:'Private CAF Guard review activity; contents omitted'});
-assert.ok(!JSON.stringify(sanitized).includes('TOKEN'));console.log('PASS caf-config: bounded private Guard evidence profile and redacted diagnostics');
+assert.ok(!JSON.stringify(sanitized).includes('TOKEN'));console.log('PASS caf-config: bounded decision-only Guard profile and redacted diagnostics');
 let reviewed;
 const allowReviewer={async review(action,context){reviewed={action,context};return {schemaVersion:1,outcome:'ALLOW',reason:'The abstract payload follows policy.'};}};
 let result=await caf.runCafDisclosureReview(disclosure,disclosurePolicy,allowReviewer,new AbortController().signal);
