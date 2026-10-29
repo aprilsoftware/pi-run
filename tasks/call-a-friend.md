@@ -22,44 +22,120 @@ capabilities, cumulative budgets, visible records, and human direction.
 
 ## Terminology
 
-- **Guard Runtime** — reusable in-process review, activity, evidence, logging,
-  and arbitration infrastructure with no command or disclosure policy.
-- **Guardian client** — existing review of acting-agent `bash` and `run` calls.
-- **CAF client** — friend conversation, research, and disclosure review.
-- **CAF guard** — CAF policy for information leaving the private boundary.
+- **Guard Runtime** — reusable in-process infrastructure for reviewer model
+  selection, routing, activity, presentation, cancellation, and shared bounded
+  mechanics. It is not an agent and owns no command or disclosure policy.
 - **Primary agent** — ordinary Pi agent with the selected workspace, profile,
   conversation, and tools.
-- **Friend agent** — isolated frontier-model agent with only its CAF conversation
-  and explicitly supplied research functions.
+- **Guardian agent** — the separate native reviewing agent used by the Guardian
+  client for protected primary-agent commands and actions.
+- **CAF reviewer agent** — the separate native reviewing agent used by the CAF
+  client for exact outbound disclosures and reviewed CAF research operations.
+- **CAF agent** — the isolated external advisory agent historically called the
+  friend agent. It has only its private CAF conversation and explicitly supplied
+  advisory tools.
+- **Guardian client** — deterministic integration that submits Guardian actions
+  to its reviewing agent through Guard Runtime and enforces Guardian decisions.
+- **CAF client** — deterministic orchestration that submits disclosures to the
+  CAF reviewer agent through Guard Runtime and releases exact allowed actions to
+  the CAF agent.
+- **CAF guard** — CAF-specific policy for information leaving the private
+  boundary.
 
 The public names remain **Guardian** and **Call a Friend**. `Guard Runtime` is an
-internal name. Humans use `/caf`; the model-facing tool is `call_friend`.
+internal name. Humans use `/caf`; the model-facing tool is `call_friend`. A
+shared reviewer model selection may serve Guardian and CAF review, but every
+review uses a separate agent instance, private transcript, role prompt, policy,
+tool set, decision contract, and journal semantics.
+
+## Multi-agent architecture contract
+
+Pi-Run preserves four distinct agent roles:
+
+1. The **primary agent** performs the user's task and proposes protected actions
+   or CAF consultations.
+2. The **Guardian agent** reviews protected commands and actions under Guardian
+   policy using its own evidence tools and agent loop.
+3. The **CAF reviewer agent** reviews each exact primary-to-CAF disclosure under
+   CAF policy using its own evidence tools and agent loop.
+4. The **CAF agent** independently advises the primary from only the information
+   and tools explicitly released to it.
+
+Guardian and the CAF reviewer are sibling clients of Guard Runtime. They share
+infrastructure, reviewer configuration, generic activity, cancellation, and
+bounded mechanics. They do not share policy, evidence transcripts, decisions,
+effects, journals, or presentation semantics, and they have no direct dependency
+on each other. Guard Runtime routes and presents reviews; it never becomes the
+reviewing agent and never performs a reviewed action.
+
+Cross-agent communication follows deterministic contracts without replacing
+agentic reasoning:
+
+1. The primary proposes an exact action or CAF disclosure.
+2. The responsible reviewing agent may investigate with its permitted bounded
+   session, workspace, file, resource, policy, and instruction evidence tools.
+3. The reviewer returns its domain-specific structured decision. Only an exact
+   valid release decision can release the exact bound action.
+4. The CAF agent receives no implicit primary transcript, workspace state,
+   reviewer evidence, policy, credentials, or tools.
+5. A CAF answer or clarification returns to the primary. Any new information the
+   primary proposes sending to CAF is a new exact disclosure and receives a new
+   CAF reviewer decision.
+6. Provider, review, evidence, or protocol failure releases nothing. The primary
+   receives an explain-and-stop result rather than an opaque stalled turn.
+
+Agent loops are part of the role contract. Reliability work must not collapse
+Guardian or the CAF reviewer into one-shot classifiers, merge reviewing roles,
+or remove role-appropriate tools merely to reduce model requests. Deterministic
+schemas, candidate binding, budgets, destinations, state transitions, and
+failure effects constrain communication between agents; model reasoning remains
+agentic inside those boundaries.
+
+The current v0.9.6 CAF reviewer is a known mismatch: its evidence tools were
+removed and it was made decision-only. Its authorization evidence is also backed
+by a newest-32-user-message subset rather than bounded access to the actual
+current branch. This must be corrected before a later release; Guardian and the
+CAF agent must not be redesigned as part of that correction.
+
+Question-count limits, total consultation rounds, and whether clarification may
+continue automatically in the same primary run remain unresolved. Agreement on
+this architecture does not authorize changing those consultation semantics.
 
 ## Goals and non-goals
 
-The experiment should let the primary request outside reasoning without
+The system should let the primary request outside reasoning without
 forwarding its Pi transcript, system prompt, workspace, or tool history. The
 friend can research the public internet, ask for specific additional information,
 and receive only reviewed disclosures. Guardian and CAF share mechanisms without
 sharing policy; both remain bounded, visible, cancellable, and fail closed.
 
-The experiment does not prove that text is non-confidential, delegate the whole
+The system does not prove that text is non-confidential, delegate the whole
 primary task, or give the friend workspace, profile, shell, credential, internal
 service, cloud, database, or arbitrary MCP access. It does not transfer files or
-history automatically, permit unrestricted URLs or autonomous dialogue, create
-a boundary between trusted in-process extensions, or replace provider contracts,
+history automatically, permit unrestricted URLs or unbounded autonomous
+dialogue, create a boundary between trusted in-process extensions, or replace
+provider contracts,
 network policy, and human judgment.
 
 ## Architecture
 
 ```text
-Guard Runtime
-├── Guardian client
-│   └── command authorization for bash/run
-└── CAF client
-    ├── disclosure review
-    ├── friend conversation
-    └── constrained public-web research
+                         Guard Runtime
+                    (shared infrastructure)
+                       /              \
+             Guardian agent      CAF reviewer agent
+                   ^                    ^
+          protected action        CAF disclosure
+                   |                    |
+                   +-------- Primary agent
+                                        |
+                                      ALLOW
+                                        v
+                                    CAF agent
+                                        |
+                               advice or clarification
+                                        v
+                                  Primary agent
 ```
 
 The Guard Runtime owns private reviewer execution, provider resolution, bounded
@@ -97,9 +173,10 @@ consistent with the user request and applicable instructions.
 
 CAF asks whether an exact external disclosure or research request is authorized,
 sufficiently abstract, and consistent with profile confidentiality policy. One
-explicitly configured Guard reviewer serves both domains while preserving their
-separate policies, decisions, effects, and journals. A payload is never sent to
-the friend merely to decide whether it is safe to send there.
+explicitly configured reviewer model and thinking selection routes separate
+Guardian-agent and CAF-reviewer-agent instances while preserving their private
+transcripts, policies, tools, decisions, effects, and journals. A payload is
+never sent to the CAF agent merely to decide whether it is safe to send there.
 
 Guardian's session mode is the shared Guard review mode. Guard On reviews both
 Guardian commands and enabled CAF friend/search disclosures. Guard Off skips
