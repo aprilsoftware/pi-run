@@ -23,8 +23,8 @@ standalone `call_friend` without another user turn, the CAF reviewer independent
 reviews both disclosures, retained CAF history reaches the next CAF agent
 invocation without implicit primary context, and the primary receives the final
 answer. Protocol and lifecycle fixtures separately verify a fourth consultation
-round and the high emergency persistence boundary. CAF lifecycle fixtures also
-verify multiple sequential searches, independent review of every query,
+round and the 256-round emergency persistence boundary. CAF lifecycle fixtures
+also verify multiple sequential searches, independent review of every query,
 research-before-clarification retention, legacy single-search restoration, and
 the cumulative research-state boundary.
 
@@ -71,18 +71,16 @@ To investigate one case without sending the other fixtures, select its ID:
 CAF_REVIEW_EVAL=1 CAF_REVIEW_EVAL_CASE=minimized-retry-authorization bash tests/caf-review-eval.sh
 ```
 
-The evaluator's `production` strategy is the default and references
-`CAF_GUARD_REVIEW_DOMAIN` directly. Production review receives compact initial
-evidence and exposes the same bounded history, file, resource, user-change, and
-guidance tools as the CAF reviewer agent, plus `caf_guard_decide`. The earlier
-selectable A/B strategy established comparative evidence but is no longer
-exposed by the evaluator.
+The evaluator uses the production `CAF_GUARD_REVIEW_DOMAIN` directly. Review
+receives compact initial evidence and exposes the same bounded history, file,
+resource, user-change, and guidance tools as the CAF reviewer agent, plus
+`caf_guard_decide`. There is no selectable evaluator strategy.
 
 Repeat each selected case up to ten times with
 `CAF_REVIEW_EVAL_REPEAT`. Repetitions create fresh private reviewer transcripts:
 
 ```bash
-CAF_REVIEW_EVAL=1 CAF_REVIEW_EVAL_CASE=exact-referential-confirmation CAF_REVIEW_EVAL_STRATEGY=production CAF_REVIEW_EVAL_REPEAT=5 bash tests/caf-review-eval.sh
+CAF_REVIEW_EVAL=1 CAF_REVIEW_EVAL_CASE=exact-referential-confirmation CAF_REVIEW_EVAL_REPEAT=5 bash tests/caf-review-eval.sh
 ```
 
 The evaluator reports per-run results and aggregate correctness, incomplete

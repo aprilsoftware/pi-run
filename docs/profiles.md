@@ -1,8 +1,9 @@
 # Profiles
 
 A profile is a complete Pi-Run working context: instructions, provider access,
-credentials, settings, skills, Guardian preferences, and saved conversations.
-Use separate profiles when work needs different behavior or access—for example,
+credentials, settings, skills, shared Guard reviewer preferences, Guardian and
+CAF policy, CAF preferences, and saved conversations. Use separate profiles when
+work needs different behavior or access—for example,
 development, review, and system administration.
 
 Only the selected profile is mounted into a normal run. Other profiles stay out
@@ -189,10 +190,13 @@ writable and can influence automatic provider rules on the next launch. See
 ## Understand the working context
 
 Authentication saved by `/login`, preferences saved by `/settings`, profile SSH
-keys, Guardian settings, and session history all belong to the selected profile.
-`AGENTS.md` supplies working instructions, while `guardian/guardian.md` supplies
-review priorities. Instructions guide behavior but are not an operating-system
-permission boundary.
+keys, shared Guard reviewer settings, Guardian/CAF modes and policies, CAF friend
+preferences, and session history all belong to the selected profile. Finalized
+CAF consultation rounds are branch-local session metadata; Guardian and CAF
+write separate workspace-scoped diagnostic journals under the profile.
+`AGENTS.md` supplies working instructions, while `guardian/guardian.md` and
+`caf/caf.md` supply review priorities. Instructions guide behavior but are not
+an operating-system permission boundary.
 
 The complete profile lives under `<Pi-Run home>/profiles/<name>/`; use
 `pi-run home` to find the data home. User-owned profile definitions survive
@@ -200,9 +204,10 @@ application upgrades.
 
 ## Keep profiles private
 
-A profile can contain provider tokens, private keys, conversation history, file
-excerpts, commands, and tool output. Do not commit or publish the complete
-directory. Creating a profile is not a sanitized export for sharing.
+A profile can contain provider tokens, private keys, conversation history, CAF
+consultation state, reviewer preferences, commands, file excerpts, tool output,
+and Guardian/CAF diagnostics. Do not commit or publish the complete directory.
+Creating a profile is not a sanitized export for sharing.
 
 Use [encrypted snapshots](snapshots.md) to back up or move complete Pi-Run state,
 and keep snapshot recovery secrets separately. Snapshots include every profile

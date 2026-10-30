@@ -118,11 +118,27 @@ than the local proxy, link-local, multicast, unspecified, and configured
 adjacent ports remain blocked.
 
 The launcher supplies HTTP proxy variables and enables Node's environment proxy
-support. In restricted mode it also generates an OpenSSH `ProxyCommand` using
-`nc -X connect`, so SSH, SCP, SFTP, Git-over-SSH, and OpenSSH-based Ansible use
-the sidecar. Other hostname/domain clients must support HTTP CONNECT; arbitrary
-non-proxy-aware TCP clients require an applicable CIDR or public-internet rule.
-There is no TLS or application-protocol interception.
+support. Before Docker starts, a restricted launch also configures the bundled
+web tools through their profile interface. It locks the profile and creates
+`web-search.json`, or atomically replaces it when an update is required, so
+`.ssrf.trustEnvProxy` is `true`. Existing provider, policy, range, and other
+compatible settings are preserved; a newly staged file is mode `0600`. If the
+setting is already true, the file is left untouched.
+
+The web-access configuration must be a contained, regular, non-symlink,
+singly-linked JSON object with a compatible `ssrf` value. A malformed, linked,
+unsafe, structurally incompatible, or colliding staging path prevents launch
+before Docker starts rather than being overwritten. Host and offline launches
+do not change this file. The setting may remain after a later mode change and is
+inert when Pi-Run has not supplied a proxy. In restricted mode it lets the
+controlled proxy resolve remote hostnames without exposing unrestricted DNS to
+the workload.
+
+Restricted mode also generates an OpenSSH `ProxyCommand` using `nc -X connect`,
+so SSH, SCP, SFTP, Git-over-SSH, and OpenSSH-based Ansible use the sidecar. Other
+hostname/domain clients must support HTTP CONNECT; arbitrary non-proxy-aware TCP
+clients require an applicable CIDR or public-internet rule. There is no TLS or
+application-protocol interception.
 
 Resolver failure, invalid output, empty policy, sidecar startup failure, and
 readiness failure all prevent Pi from starting without a host-network retry.
@@ -149,10 +165,12 @@ assumptions to every host command.
 ## Profile, shared, and skill exposure
 
 The selected profile is Pi's configuration directory and can include
-`auth.json`, model settings, Git configuration, SSH keys, local skills, Guardian
-logs, and sessions. Most Pi-owned state remains writable for atomic replacement;
-`profile.json` is separately mounted read-only because it defines launch-time
-resource and network authority.
+`auth.json`, model settings, Git configuration, SSH keys, local skills, shared
+Guard reviewer preferences, Guardian and CAF modes and policies, CAF friend
+preferences, separate Guardian/CAF journals, and sessions. Finalized CAF rounds
+are branch-local session metadata. Most Pi-owned state remains writable for
+atomic replacement; `profile.json` is separately mounted read-only because it
+defines launch-time resource and network authority.
 
 `/shared` is writable when `resources.shared` is `read-write`. Content is not
 automatically loaded as context, but any available tool can read or change it.
@@ -232,7 +250,8 @@ isolation:
 - CAF context separation and Guard review are same-process application controls,
   not OS isolation or proof of provider confidentiality;
 - project trust controls supported project resources rather than tool access;
-- transcripts and Guardian logs are bounded records, not tamper-proof audits;
+- transcripts and separate Guardian/CAF journals are bounded records, not
+  tamper-proof audits;
 - tool success is not independent verification of filesystem or remote effects.
 
 Technical exposure and workflow controls should reinforce each other. Keep

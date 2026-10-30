@@ -194,17 +194,39 @@ Linux/amd64 runtime and egress images, and uploads `LICENSE`, `install.sh`, the
 archive, and its checksum to that release. Both images use the exact release
 version; the workflow does not publish mutable `latest` images.
 
-For candidate testing, publish the intended canonical tag as a prerelease and
-install it by exact tag (`pi-run upgrade vX.Y.Z`). Automatic upgrade discovery
-ignores prereleases. After testing the built assets and image, promote that same
-release without moving its tag or changing its contents. The current
-`published`-only workflow builds on initial prerelease publication and does not
-rebuild when that prerelease is promoted. If candidate testing requires a code
-change, publish a new version rather than rewriting the tested tag. Clients from
-before prerelease filtering may still discover candidates, so establish the
-stable filtering release before relying on this channel for a wider audience.
+Before publication, build local candidates from the exact intended commit and
+version. Use non-canonical local tags so validation cannot be mistaken for a
+published release:
 
-Before publication, verify the intended public coordinates, release notes,
+```bash
+version="$(cat VERSION)"
+docker build -t "pi-run:${version}-candidate" docker
+docker build -f docker/egress/Dockerfile -t "pi-run-egress:${version}-candidate" docker
+```
+
+Validate the application archive and complete isolated suite, then run the
+feature-specific checks that exercise the candidate's actual boundaries. These
+may include the real-Docker worktree test, fake-provider Guardian/CAF lifecycle
+and hostile-primary tests, controlled live-provider interoperability, or a
+restricted-network fetch through the local runtime and egress images. A skipped
+optional check remains a reported skip, not a pass. Use the source launcher with
+explicit `PI_RUN_IMAGE` and `PI_RUN_EGRESS_IMAGE` overrides for local smoke tests;
+do not push local candidate tags as canonical images.
+
+Only after local validation should the intended canonical tag be published as a
+prerelease when exact workflow-built assets require testing. Install it by exact
+tag (`pi-run upgrade vX.Y.Z`); automatic upgrade discovery ignores prereleases.
+Treat the published tag, release assets, and matching container images as
+immutable. After testing them, promote that same release without moving its tag,
+replacing assets, or changing image contents. The current `published`-only
+workflow builds on initial prerelease publication and does not rebuild when that
+prerelease is promoted. If testing requires any code, metadata, image, or asset
+change, prepare and publish a new version rather than rewriting the tested one.
+Clients from before prerelease filtering may still discover candidates, so
+establish the stable filtering release before relying on this channel for a
+wider audience.
+
+Before publication, also verify the intended public coordinates, release notes,
 asset access, container-package access, and actual supported platform. For
 restricted testing, follow [private-release access](private-release-access.md).
 Do not infer public availability from examples or from the existence of the

@@ -95,8 +95,9 @@ CAF send its bounded actions without reviewer calls. In either mode, the agent's
 instructions and authorization obligations still apply.
 
 An open dispute is a separate stop state. It permits at most six direct native
-`read` calls during the same agent run and withholds every other acting-agent
-tool, including normally uncovered tools, except Guardian's model-only
+`read` calls across that branch-local dispute, including after resume or branch
+restoration, and withholds every other acting-agent tool, including normally
+uncovered tools, except Guardian's model-only
 `guardian_justify` handoff. After settlement without a position, or after an
 unresolved contest, every tool is blocked until human feedback clears the
 dispute. Retraction, narrowing, or an accepted contest closes the challenge and

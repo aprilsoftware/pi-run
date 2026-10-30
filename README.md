@@ -36,10 +36,18 @@ profiles stay outside the container, but everything in the selected profile is
 available to the run. Credentials stored in the workspace or optional shared
 mount, and access offered by reachable services, are outside this boundary.
 
-Guard adds an optional review layer without requiring human interaction for
-every covered action. When Guard review is On, one explicitly selected,
-evidence-aware Pi reviewer examines Guardian-covered `bash` and `run` calls and
-CAF disclosures against the current request and applicable instructions.
+Pi-Run separates four agent roles: the Primary agent performing the task, a
+Guardian reviewer agent for covered commands, a CAF reviewer agent for outbound
+disclosures, and the CAF advisory agent. Guardian and CAF review share one
+explicitly selected reviewer-model and thinking configuration, but each review
+runs a fresh role-specific Pi agent with its own private transcript, policy,
+tools, decision contract, effects, and journal stream. Guard Runtime coordinates
+reviewer execution,
+activity, cancellation, and presentation; it is infrastructure, not another
+agent or a policy owner.
+
+When Guard review is On, the Guardian reviewer examines covered `bash` and `run`
+calls, while the CAF reviewer examines each friend or public-search disclosure.
 Guardian releases supported commands; otherwise it permanently cancels the
 invocation and opens a challenge. The acting agent can inspect bounded file
 evidence and retract, narrow, or contest its proposal. Retraction and narrowing
@@ -163,6 +171,16 @@ the latest one later with `pi-run . -c`. The
 run and explains writable resources before you begin.
 
 ## Design background
+
+Pi-Run is an opinionated practical implementation of
+[April Software's broader bounded-autonomy approach](https://www.aprilsoftware.com/web/agentic-ai):
+human judgment stays at meaningful decision points while agents execute within
+one agreed mandate and reconnect their work with evidence before authority
+expands. The accompanying
+[16-page presentation](https://www.aprilsoftware.com/web/downloads/bounded-autonomy-development-operations.pdf)
+summarizes the methodology, controls, trade-offs, and organizational learning.
+Pi-Run explores how those principles can become working controls; it is not the
+methodology itself or a claim that one environment eliminates agentic risk.
 
 Start with
 [Beyond Permission Prompts: Building a Workstation for AI Agents](https://medium.com/@cedric.nanni/pi-run-building-a-durable-workstation-for-ai-agents-bc47c42105eb),

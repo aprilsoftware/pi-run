@@ -56,9 +56,11 @@ reports PASS or FAIL and removes its temporary state.
 | Command | Expected result |
 |---|---|
 | `/guardian-test allow` | Release decision; no dispute |
-| `/guardian-test ask` | Submit a contest, assess the concern as resolved, but still require human arbitration |
-| `/guardian-test user-refused` | Assess that an existing user restriction remains |
-| `/guardian-test unavailable` | Keep the invocation withheld when both initial review and assessment are unavailable |
+| `/guardian-test ask` | Contest the challenge, resolve the concern, and permit one exact retry without human arbitration |
+| `/guardian-test user-refused` | Assess that an existing user restriction remains and wait for human arbitration |
+| `/guardian-test unavailable` | Retract after the initial review is unavailable; close the challenge without execution or reassessment |
+| `/guardian-test assessment-unavailable` | Contest an `ASK`, fail to complete reassessment, and wait for human arbitration |
+| `/guardian-test narrow` | Withdraw the original action; require normal review for a narrower replacement |
 | `/guardian-test no-ui` | Assess that the concern remains without confirmation UI |
 | `/guardian-test fallback` | Omit justification, exhaust reads, and settle without an assessment call |
 | `/guardian-test cancel-assessment` | Simulate user feedback during assessment and reject the late result |

@@ -40,8 +40,9 @@ call_friend({ message, purpose })
 ```
 
 CAF validates and sends only the bounded message and purpose. A continuation may
-also include bounded CAF requests and friend responses from the same pending
-consultation. It does not automatically include the primary transcript,
+also include bounded CAF requests, friend responses, and retained reviewed
+public-search results from the same pending consultation. It does not
+automatically include the primary transcript,
 assistant reasoning, tool results, workspace files, profile policy,
 authorization evidence, credentials, or unrelated CAF consultations.
 
@@ -135,7 +136,10 @@ Guard mode current at that call, so automatic continuation never bypasses the
 CAF reviewer. A consultation may continue while clarification materially
 improves the advice and must use the same CAF model. It ends when CAF answers,
 the primary stops, review withholds a continuation, the user cancels, or a real
-provider, context, protocol, or emergency persistence boundary is reached. A
+provider, context, protocol, or emergency persistence boundary is reached. Each
+answer is capped at 64 KiB, clarification responses have a 64 KiB aggregate
+boundary, and 256 finalized rounds form the emergency persistence safeguard.
+These are technical circuit breakers rather than ordinary dialogue targets. A
 final answer closes the consultation.
 
 `call_friend` must be the only tool call in its assistant message. The friend
@@ -272,11 +276,16 @@ provider. Provider-side retention, logging, tool-call behavior, and
 confidentiality remain outside Pi-Run's control. Pi extensions execute in the
 same process, and CAF's context separation is not an operating-system boundary.
 
-Current public research is intentionally limited to one canonical search. There
-is no friend page fetching, arbitrary URL access, shell, filesystem, internal
-network, arbitrary MCP access, or autonomous research loop. CAF imposes no
-wall-clock deadline on the friend agent's model response; explicit provider
-failure stops the CAF operation and enters bounded failure reporting, while
-user, mode, or session cancellation can stop the run outright.
+Current public research is intentionally limited to the bundled canonical
+`web_search` integration. Within one consultation round, the CAF agent may issue
+sequential focused searches while they materially improve its advice. Each tool
+call performs one query, returns at most five normalized results, and follows an
+independent Guard decision while Guard is On. This is a bounded agentic research
+loop, not arbitrary browsing: there is no friend page fetching, arbitrary URL
+access, shell, filesystem, internal network, arbitrary MCP access, or unchecked
+search destination. CAF imposes no wall-clock deadline on the friend agent's
+model response; explicit provider failure stops the CAF operation and enters
+bounded failure reporting, while user, mode, or session cancellation can stop
+the run outright.
 
 [Documentation index](index.md) · [Guardian](guardian.md) · [Security](security.md)

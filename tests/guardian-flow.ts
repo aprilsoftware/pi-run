@@ -125,7 +125,7 @@ async function runScenario(name: Scenario, realUI?: ExtensionUIContext, withRunt
               if(scenario.assessment==="unavailable")return {status:"incomplete",error:"Synthetic assessment failure"};
               const assessed=scenario.assessment as ReviewDecision["outcome"];
               return {status:"completed",decision:{outcome:assessed,basis:assessed==="ALLOW"?"explicit_authorization":assessed==="ASK"?"uncertainty":"user_refusal",
-                reason:`TEST ONLY: assessment ${assessed}; human judgment remains required.`,userMessageIds:[request.conversation.filter(m=>m.role==="user").at(-1)!.id]}};
+                reason:assessed==="ALLOW"?"TEST ONLY: assessment ALLOW; concern resolved for one exact retry.":`TEST ONLY: assessment ${assessed}; human judgment remains required.`,userMessageIds:[request.conversation.filter(m=>m.role==="user").at(-1)!.id]}};
             }
             reviews++; reviewedIds.push(request.action.toolCallId);
             if (outcome === "unavailable") return { status: "incomplete", error: "Synthetic reviewer failure" };

@@ -1,12 +1,20 @@
 # Guardian and shared Guard review
 
 Guardian applies the shared evidence-aware Guard review layer to acting-agent
-shell execution. When Guard is On, it checks whether a proposed command fits
-your current request and applicable instructions, then either releases it or
-challenges and withholds the action. The primary and Guardian first try to
-resolve that challenge themselves; you arbitrate only if disagreement remains.
-The same configured Guard reviewer also checks Call a Friend disclosures while
-Guard is On.
+shell execution. When Guard is On, a Guardian reviewer agent checks whether a
+proposed command fits your current request and applicable instructions, then
+either releases it or challenges and withholds the action. The primary and
+Guardian first try to resolve that challenge themselves; you arbitrate only if
+disagreement remains.
+
+Call a Friend uses a separate CAF reviewer agent while Guard is On. Guardian and
+CAF review share the selected reviewer-model and thinking configuration, but
+each review runs a fresh role-specific Pi agent. They do not share private
+transcripts, policies, tools, decisions, effects, or journals. Together with the
+Primary and CAF advisory agent, these are four distinct agent roles. Guard
+Runtime coordinates their reviewer execution, activity,
+cancellation, and presentation; it is infrastructure rather than another agent
+or policy owner.
 
 This is useful when an ordinary-looking command could target the wrong path,
 expand beyond an approved increment, affect persistent data, or reach a real
@@ -70,10 +78,11 @@ without Guard review. Turning it Off also makes an enabled CAF use its bounded
 unreviewed path, cancels active Guard/CAF work without retry, and clears an open
 Guardian dispute; it never replays a withheld invocation.
 
-The Guard reviewer must be explicitly selected; Pi-Run does not silently use
-the conversation model or CAF friend. The menu and `/guardian-model` and
-`/guardian-thinking` commands save the shared reviewer preferences in private
-`guard/config.json`. Reviewer calls can add latency and provider cost, and may
+The shared Guard reviewer model must be explicitly selected; Pi-Run does not
+silently use the conversation model or CAF friend. The menu and
+`/guardian-model` and `/guardian-thinking` commands save the shared reviewer
+preferences in private `guard/config.json`. Reviewer calls can add latency and
+provider cost, and may
 send commands, CAF disclosures, instructions, selected conversation context,
 and inspected file excerpts to that provider. Choose a trusted destination
 appropriate for the workspace's privacy requirements.

@@ -91,15 +91,20 @@ schemas, candidate binding, budgets, destinations, state transitions, and
 failure effects constrain communication between agents; model reasoning remains
 agentic inside those boundaries.
 
-The current v0.9.6 CAF reviewer is a known mismatch: its evidence tools were
-removed and it was made decision-only. Its authorization evidence is also backed
-by a newest-32-user-message subset rather than bounded access to the actual
-current branch. This must be corrected before a later release; Guardian and the
-CAF agent must not be redesigned as part of that correction.
+At the v0.9.6 checkpoint, the CAF reviewer was a known mismatch: its evidence
+tools had been removed, it was decision-only, and its authorization evidence was
+backed by a newest-32-user-message subset rather than bounded access to the actual
+current branch. This was corrected before v0.9.7 by restoring a native agentic
+CAF reviewer with role-specific bounded history, file, resource, user-change,
+and guidance tools. Guardian and the CAF advisory agent were not collapsed or
+redesigned as part of that correction.
 
-Question-count limits, total consultation rounds, and whether clarification may
-continue automatically in the same primary run remain unresolved. Agreement on
-this architecture does not authorize changing those consultation semantics.
+Early design discussion also left question counts, total consultation rounds,
+and same-run clarification unresolved. The completed implementation removed
+ordinary semantic question, consultation-round, and search-count limits. It
+instead uses byte and context capacity, cancellation, independently reviewed
+disclosures, a 256-round emergency persistence safeguard, and a 512 KiB
+cumulative retained-research boundary.
 
 ## Goals and non-goals
 
@@ -365,9 +370,9 @@ CAF configuration remains accessible when the friend is unavailable, but
 `call_friend` fails closed. Interrupted rounds are not complete answers. Resume
 reconstructs only finalized CAF entries on the selected branch.
 
-Guardian's dispute contract remains command-specific until shared infrastructure
-can preserve it exactly. CAF may reuse arbitration UI and evidence mechanisms
-without inheriting the global command-dispute latch.
+Guardian's dispute contract remains command-specific and Guardian-owned. CAF
+uses shared reviewer and evidence machinery without inheriting Guardian's global
+command-dispute latch; a non-allowing CAF review ends that CAF operation.
 
 ## Implementation sequence
 
@@ -389,7 +394,11 @@ Each stage was implemented through a separate approved increment:
 Completion of this experimental sequence does not authorize a release,
 publication, real-provider test, or the next product increment.
 
-## Integration-readiness evidence
+## Dated integration-readiness evidence
+
+The following checkpoints record evidence available at those points in the
+implementation history; they are not claims about the current release by
+version omission.
 
 At the initial integration checkpoint, the complete isolated shell suite ran 59
 scripts successfully. The real-Docker managed-worktree test reported its
@@ -407,9 +416,15 @@ interoperability, release readiness, or publication approval.
 Later v0.9.3 candidate validation ran 61 offline harnesses with 58 passes and
 three explicit optional skips, built and smoke-tested local runtime and egress
 images, passed the real-Docker managed-worktree E2E test, completed one guarded
-CAF consultation, and passed four representative live Guardian decisions. These
+CAF consultation, and passed four representative live Guardian decisions.
+v0.9.7 validation later added a guarded two-round clarification consultation,
+live-review hostile-primary scenarios with recording-only effect destinations,
+and visible active-session Guardian/CAF allow and withholding checks. These
 bounded checks still do not prove provider confidentiality, broad provider
-interoperability, or release publication.
+interoperability, or release publication. Active CAF public-search
+interoperability was not exercised because the validation profile had no
+explicit search provider; synthetic multi-search coverage remains the evidence
+for that path.
 
 ## Remaining questions and acceptance
 
@@ -418,10 +433,9 @@ destination-specific `ALLOW`/`ASK`/`USER_REFUSED` review, and hash-only payload
 diagnostics without journal excerpts. Low semantic limits on clarification
 questions, consultation rounds, and public-query count were removed in favor of
 per-result and cumulative byte bounds, context capacity, cancellation, and
-emergency persistence boundaries. Remaining work includes
-broader real-provider scenarios,
-restricted-network validation against real provider endpoints, provider-specific
-tool-call
+emergency persistence boundaries. Remaining work includes active CAF
+public-search interoperability with an explicit provider, broader real-provider
+scenarios, provider-specific tool-call
 interoperability, and whether friend credentials should move to a broker.
 
 The architecture now has equal ordinary Guard Runtime clients, one shared

@@ -27,22 +27,30 @@ the selected profile is available to that run. Credentials in the workspace or
 optional shared mount, and access offered by reachable services, remain outside
 this profile boundary.
 
-Guard is an optional shared review layer. While it is On, one explicitly
-selected evidence-aware reviewer handles Guardian-covered `bash` and `run` calls
-and Call a Friend disclosures. Guardian releases supported commands without
+Pi-Run separates four agent roles: the Primary agent performing the task, a
+Guardian reviewer agent for covered commands, a CAF reviewer agent for outbound
+disclosures, and the CAF advisory agent. Guardian and CAF review share one
+explicitly selected reviewer-model and thinking configuration, but each review
+runs a fresh role-specific Pi agent with its own private transcript, policy,
+tools, decision contract, effects, and journal stream. Guard Runtime coordinates
+reviewer execution,
+activity, cancellation, and presentation; it is infrastructure rather than an
+agent or policy owner.
+
+Guard is the optional shared review layer. While it is On, the Guardian reviewer
+handles covered `bash` and `run` calls and the CAF reviewer handles each friend
+or public-search disclosure. Guardian releases supported commands without
 interruption; otherwise it cancels the invocation and opens a challenge. The
 agent may retract, narrow, or contest its proposal. Retraction and narrowing
 withdraw the original; an accepted contest permits one exact retry. Human
 arbitration is needed only when disagreement remains or reassessment is
 unavailable. Guard review starts Off and is not a sandbox.
 
-Call a Friend lets the private primary agent request bounded advice from a
-separately configured model. While Guard is On, each primary-to-friend
-disclosure and public-search destination receives its own review. While Guard is
-explicitly Off, enabled CAF sends the same bounded actions without a reviewer
-request. The friend receives no automatic transcript, workspace, credential, or
-general tool access. CAF is application-level context isolation, not a sandbox
-or confidentiality proof.
+Call a Friend lets the private Primary request bounded advice from the separately
+configured CAF advisory model. While Guard is explicitly Off, enabled CAF sends
+the same bounded actions without a reviewer request. The advisory agent receives
+no automatic transcript, workspace, credential, or general tool access. CAF is
+application-level context isolation, not a sandbox or confidentiality proof.
 
 The container narrows exposure, but selected mounts contain real host data and
 the default backend uses host networking. Explicit offline and restricted TCP

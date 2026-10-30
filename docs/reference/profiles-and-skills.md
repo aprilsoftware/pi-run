@@ -191,9 +191,12 @@ return one bounded answer or end its round with a byte-bounded
 needs; there is no ordinary semantic question-count limit. That function does
 not execute the primary. The primary must use a new standalone `call_friend`
 invocation to answer, and the new action follows the current Guard mode. The
-consultation may continue while clarification materially improves the advice,
-subject to provider/context capacity, cancellation, protocol bounds, and the
-high emergency persistence safeguard.
+continuation may include only the bounded reviewed exchanges and retained public
+research from that pending consultation. Each answer is capped at 64 KiB,
+clarification responses have a 64 KiB aggregate boundary, and 256 finalized
+rounds form the emergency persistence safeguard. The consultation may continue
+while clarification materially improves the advice, subject to those circuit
+breakers, provider/context capacity, cancellation, and protocol bounds.
 
 When `web-search.json` selects one explicit provider and the bundled canonical
 `web_search` tool is callable, the CAF agent also receives `caf_web_search`. It
@@ -268,11 +271,13 @@ tool-call behavior.
 CAF remains application-level orchestration rather than a sandbox. The shared
 Guard reviewer and primary model can make mistakes, unreviewed CAF deliberately
 has no independent disclosure judgment, public content remains untrusted, and
-Pi extensions execute in the same process. Public research supports one
-canonical `web_search` call with one explicitly configured provider and no page
-fetching or source-check operation. Network policy independently determines
-whether provider traffic can leave the container. Journal hashes permit
-correlation and can confirm guesses about low-entropy content.
+Pi extensions execute in the same process. Public research supports the bundled
+canonical `web_search` integration with one explicitly configured provider. The
+CAF agent may issue sequential focused searches, but each tool call performs one
+query with bounded results and there is no page fetching or source-check
+operation. Network policy independently determines whether provider traffic can
+leave the container. Journal hashes permit correlation and can confirm guesses
+about low-entropy content.
 
 Pi uses the selected profile as its configuration directory. Provider login,
 model configuration, settings, Git configuration, credentials, Guardian state,

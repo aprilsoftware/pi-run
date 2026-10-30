@@ -127,8 +127,10 @@ administrative work.
 ## Treat mounted data as exposed
 
 The selected profile can contain provider authentication, SSH keys, model
-settings, Guardian diagnostics, and conversation history. The running agent and
-other container processes can read or change files allowed to the mapped user.
+settings, shared Guard reviewer preferences, Guardian and CAF policies, CAF
+friend preferences and branch-local consultation state, separate Guardian/CAF
+diagnostics, and conversation history. The running agent and other container
+processes can read or change files allowed to the mapped user.
 A separate profile limits which context is selected; it does not protect secrets
 inside that profile from the selected run.
 
@@ -256,9 +258,9 @@ startup. Stop if they do not match your intention.
 
 ## Protect private records
 
-Profiles, sessions, Guardian logs, recovered snapshots, and exported plans can
-contain prompts, file excerpts, commands, output, paths, and credentials. Do not
-publish them without inspection and redaction.
+Profiles, sessions, Guardian and CAF journals, recovered snapshots, and exported
+plans can contain prompts, file excerpts, commands, output, paths, metadata, and
+credentials. Do not publish them without inspection and redaction.
 
 Encrypted snapshots include all profiles and credentials, but exclude repository
 recovery passwords and S3 credentials. Preserve those through a separate private
