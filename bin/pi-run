@@ -302,7 +302,8 @@ initialize_home() {
         mkdir "${staging}"
         install -m 0600 "${default_template}/profile.json" "${staging}/profile.json"
         install -m 0600 "${default_template}/AGENTS.md" "${staging}/AGENTS.md"
-        mkdir -m 0700 "${staging}/credentials" "${staging}/sessions" "${staging}/guardian" "${staging}/skills"
+        mkdir -m 0700 "${staging}/caf" "${staging}/credentials" "${staging}/sessions" "${staging}/guardian" "${staging}/skills"
+        install -m 0600 "${default_template}/caf/caf.md" "${staging}/caf/caf.md"
         install -m 0600 "${default_template}/guardian/guardian.md" "${staging}/guardian/guardian.md"
         mv "${staging}" "${default_profile}"
         trap - RETURN
@@ -814,6 +815,9 @@ IMAGE="${PI_RUN_IMAGE:-${DEFAULT_IMAGE}}"
 EGRESS_IMAGE="${PI_RUN_EGRESS_IMAGE:-${DEFAULT_EGRESS_IMAGE}}"
 NETWORK_MODE="$(jq -r '.network.mode // "host"' "${PROFILE_CONFIG}")"
 NETWORK_BACKEND="docker-${NETWORK_MODE}"
+if [[ "${NETWORK_MODE}" == restricted ]]; then
+    configure_restricted_web_access_proxy "${PROFILE_DIR}"
+fi
 MODEL_RULES_DISPLAY="none"
 SSH_RULES_DISPLAY="none"
 MANUAL_RULES_DISPLAY="none"
@@ -1024,9 +1028,11 @@ PI_ARGS=(
     --no-extensions
     --extension /usr/local/lib/node_modules/pi-web-access/index.ts
     --extension /usr/local/lib/node_modules/pi-okf/extensions/okf.ts
-    --extension /usr/local/lib/node_modules/plan-agent/plan-agent.ts
-    --extension /usr/local/lib/node_modules/guardian-agent/guardian-agent.ts
-    --extension /usr/local/lib/node_modules/snapshot-agent/snapshot-agent.ts
+    --extension /usr/local/lib/node_modules/pi-run-extensions/plan/plan-agent.ts
+    --extension /usr/local/lib/node_modules/pi-run-extensions/guard/guard-runtime.ts
+    --extension /usr/local/lib/node_modules/pi-run-extensions/guardian/guardian-agent.ts
+    --extension /usr/local/lib/node_modules/pi-run-extensions/caf/caf-agent.ts
+    --extension /usr/local/lib/node_modules/pi-run-extensions/snapshot/snapshot-agent.ts
     --no-prompt-templates
     --skill /usr/local/share/pi-run/skills/pi-run
     --skill /usr/local/share/pi-run/skills/profile-management
@@ -1079,7 +1085,7 @@ if [[ "${NETWORK_BACKEND}" == docker-restricted ]]; then
     echo "pi-run: ssh-tcp=${SSH_RULES_DISPLAY}" >&2
     echo "pi-run: manual-tcp=${MANUAL_RULES_DISPLAY}" >&2
 fi
-echo "pi-run: Guardian loaded; review mode starts Off" >&2
+echo "pi-run: Guardian and CAF loaded; session modes resolve inside Pi" >&2
 [[ "${SHARED_MODE}" == "read-write" ]] && echo "pi-run: shared=/shared (read-write)" >&2
 
 if [[ "${NETWORK_BACKEND}" == docker-restricted ]]; then

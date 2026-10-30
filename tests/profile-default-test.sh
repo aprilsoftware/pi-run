@@ -49,6 +49,12 @@ chmod 0755 "${TMP}/cidr-bin/docker"
 export PATH="${TMP}/cidr-bin:${PATH}"
 
 PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" init >/dev/null
+DEFAULT_CAF_POLICY="${HOME_DIR}/profiles/default/caf/caf.md"
+cmp "${ROOT}/templates/profiles/default/caf/caf.md" "${DEFAULT_CAF_POLICY}" \
+    || fail "initial default profile did not copy the CAF policy"
+[[ "$(stat -c %a "${HOME_DIR}/profiles/default/caf")" == 700 &&
+   "$(stat -c %a "${DEFAULT_CAF_POLICY}")" == 600 ]] \
+    || fail "initial CAF policy permissions are not private"
 [[ "$(jq -r '.network.mode' "${HOME_DIR}/profiles/default/profile.json")" == host ]] \
     || fail "initial default profile does not select host networking"
 [[ "$(PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" profile default)" == default ]] \
@@ -235,6 +241,11 @@ PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" network mode host --discard-rules
 PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" profile create development >/dev/null
 [[ "$(jq -r '.network.mode' "${HOME_DIR}/profiles/development/profile.json")" == host ]] \
     || fail "created profile did not preserve its source network policy"
+cmp "${DEFAULT_CAF_POLICY}" "${HOME_DIR}/profiles/development/caf/caf.md" \
+    || fail "created profile did not copy its source CAF policy"
+[[ "$(stat -c %a "${HOME_DIR}/profiles/development/caf")" == 700 &&
+   "$(stat -c %a "${HOME_DIR}/profiles/development/caf/caf.md")" == 600 ]] \
+    || fail "created CAF policy permissions are not private"
 output="$(PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" profile default development)"
 [[ "${output}" == "Default profile: development" ]] \
     || fail "setting the default returned unexpected output"
@@ -310,6 +321,25 @@ jq -e '.network == {mode: "restricted", allow: [
     {cidr: "10.20.30.0/24", tcpPorts: [5432]}
 ]}' "${HOME_DIR}/profiles/network-copy/profile.json" >/dev/null \
     || fail "profile creation did not preserve a restricted network policy"
+rm -rf "${HOME_DIR}/profiles/network-copy/caf"
+PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" \
+    profile create no-caf-copy --from network-copy >/dev/null
+[[ ! -e "${HOME_DIR}/profiles/no-caf-copy/caf" ]] \
+    || fail "profile creation added CAF policy to a source without one"
+mkdir -m 0700 "${HOME_DIR}/profiles/no-caf-copy/caf"
+printf '%s\n' '{"schemaVersion":1,"model":"friend/frontier","thinking":null}' \
+    > "${HOME_DIR}/profiles/no-caf-copy/caf/config.json"
+chmod 0600 "${HOME_DIR}/profiles/no-caf-copy/caf/config.json"
+mkdir -m 0700 "${HOME_DIR}/profiles/no-caf-copy/guard"
+printf '%s\n' '{"schemaVersion":1,"model":"trusted/reviewer","thinking":"low"}' \
+    > "${HOME_DIR}/profiles/no-caf-copy/guard/config.json"
+chmod 0600 "${HOME_DIR}/profiles/no-caf-copy/guard/config.json"
+PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" \
+    profile create config-only-copy --from no-caf-copy >/dev/null
+[[ ! -e "${HOME_DIR}/profiles/config-only-copy/caf" ]] \
+    || fail "profile creation copied private CAF configuration without a policy"
+[[ ! -e "${HOME_DIR}/profiles/config-only-copy/guard" ]] \
+    || fail "profile creation copied private shared Guard reviewer configuration"
 cp "${development_config}" "${TMP}/network-rules.before"
 expect_failure env PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" network mode offline
 cmp "${TMP}/network-rules.before" "${development_config}" \
@@ -333,6 +363,22 @@ rm "${HOME_DIR}/profiles/incomplete/guardian/guardian.md"
 expect_failure env PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" profile default incomplete
 cmp "${TMP}/config.before" "${HOME_DIR}/config.json" \
     || fail "incomplete-profile failure changed home configuration"
+
+PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" profile create redirected-caf >/dev/null
+rm -rf "${HOME_DIR}/profiles/redirected-caf/caf"
+ln -s ../default/caf "${HOME_DIR}/profiles/redirected-caf/caf"
+expect_failure env PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" profile default redirected-caf
+cmp "${TMP}/config.before" "${HOME_DIR}/config.json" \
+    || fail "redirected CAF policy failure changed home configuration"
+
+PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" profile create linked-caf >/dev/null
+rm "${HOME_DIR}/profiles/linked-caf/caf/caf.md"
+cp "${DEFAULT_CAF_POLICY}" "${TMP}/linked-caf.md"
+chmod 0600 "${TMP}/linked-caf.md"
+ln "${TMP}/linked-caf.md" "${HOME_DIR}/profiles/linked-caf/caf/caf.md"
+expect_failure env PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" profile default linked-caf
+cmp "${TMP}/config.before" "${HOME_DIR}/config.json" \
+    || fail "hard-linked CAF policy failure changed home configuration"
 
 cp -a "${HOME_DIR}/profiles/development" "${HOME_DIR}/profiles/linked-target"
 jq '.name = "linked"' "${HOME_DIR}/profiles/linked-target/profile.json" \

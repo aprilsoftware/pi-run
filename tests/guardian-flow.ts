@@ -1,58 +1,72 @@
 /** Test-only: real Guardian gate, fixed reviewer, synthetic context, NO executor. */
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, writeFile, readFile, rm } from "node:fs/promises";
+import { chmod, lstat, mkdtemp, mkdir, writeFile, readFile, readdir, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext, ExtensionUIContext, ToolCallEventResult } from "@earendil-works/pi-coding-agent";
-import { createGuardianExtension, parseGuardianConfig, type ReviewDecision } from "../docker/extensions/guardian-agent.ts";
+import guardRuntime, { GUARD_RUNTIME_DISCOVER, type GuardRuntimeV1 } from "../docker/extensions/guard/guard-runtime.ts";
+import { createGuardianExtension, createGuardianLogViewRequest, createLogger, loadGuardianModeConfig, parseGuardianConfig, parseGuardianModeConfig, readGuardianLogs, reviewFailureSummary, saveGuardianModeConfig, type ReviewDecision } from "../docker/extensions/guardian/guardian-agent.ts";
 
 type Outcome = ReviewDecision["outcome"] | "unavailable";
 type Handler = (event: any, ctx: ExtensionContext) => unknown | Promise<unknown>;
 const scenarios = {
   allow: { outcome: "ALLOW", assessment: null, released: true },
-  ask: { outcome: "ASK", assessment: "ALLOW", released: false },
-  "user-refused": { outcome: "USER_REFUSED", assessment: "USER_REFUSED", released: false },
-  unavailable: { outcome: "unavailable", assessment: "unavailable", released: false },
-  "no-ui": { outcome: "ASK", assessment: "ASK", released: false },
+  ask: { outcome: "ASK", assessment: "ALLOW", position:"contest", released: false },
+  "user-refused": { outcome: "USER_REFUSED", assessment: "USER_REFUSED", position:"contest", released: false },
+  unavailable: { outcome: "unavailable", assessment: "skipped", position:"retract", released: false },
+  "assessment-unavailable": { outcome: "ASK", assessment: "unavailable", position:"contest", released: false },
+  narrow: { outcome: "ASK", assessment: "skipped", position:"narrow", released: false },
+  "no-ui": { outcome: "ASK", assessment: "ASK", position:"contest", released: false },
   fallback: { outcome: "ASK", assessment: null, released: false },
-  "cancel-assessment": { outcome: "ASK", assessment: "delayed", released: false },
+  "cancel-assessment": { outcome: "ASK", assessment: "delayed", position:"contest", released: false },
 } as const;
 type Scenario = keyof typeof scenarios;
 
-async function runScenario(name: Scenario, realUI?: ExtensionUIContext): Promise<void> {
+async function runScenario(name: Scenario, realUI?: ExtensionUIContext, withRuntime=true): Promise<void> {
   const scenario = scenarios[name];
   const root = await mkdtemp(join(tmpdir(), "guardian-flow-"));
-  const profile = join(root, "profile"), workspace = join(root, "workspace");
-  const handlers = new Map<string, Handler>();
+  const profile=join(root,"profile"),workspace=join(root,"workspace"),workspaceId="11111111-1111-4111-8111-111111111111",sessionDir=join(profile,"sessions",workspaceId);
+  const handlers = new Map<string, Handler[]>(), busHandlers = new Map<string, Set<(data:unknown)=>void>>();
   const commands = new Map<string, {handler:(args:string,ctx:ExtensionContext)=>Promise<void>}>();
   const tools = new Map<string,any>();
   let activeTools=["bash","read","edit","write","custom-effect"];
   const calls: string[] = [], reviewedIds: string[] = [], notices: string[] = [], statusLines: string[] = [];
-  let outcome: Outcome = scenario.outcome, sessionId = "guardian-flow-test", reviews = 0, assessmentReviews=0, aborts = 0;
+  let outcome:Outcome=scenario.outcome,sessionId="00000000-0000-7000-8000-000000000001",sessionFile=join(sessionDir,"session-1.jsonl"),reviews=0,assessmentReviews=0,aborts=0;
+  const journalPath=()=>join(profile,"logs",workspaceId,"guardian.jsonl");
+  let viewerCalls=0,viewerText="";
+  let runtimeService:GuardRuntimeV1|undefined;
   const userEntry = { type: "message", id: "user-1", message: { role: "user", content: "Synthetic test direction; no action may execute." } };
-  const entries:any[] = [{ type: "custom", id: "mode-1", customType: "guardian-mode", data: { mode: "on" } }, userEntry];
-  let branch:any[] = entries, widget:any;
-  const tui = { requestRender: () => { if (widget) statusLines.push(widget.render(120)[0]); } };
-  const theme = { fg: (_color:string, text:string) => text, bold:(text:string)=>text };
+  const entries:any[] = [{ type: "custom", id: "caf-mode-ignored", customType: "pi-run-caf-mode", data: { mode: "off" } },{ type: "custom", id: "mode-1", customType: "guardian-mode", data: { mode: "on" } }, userEntry];
+  let branch:any[] = entries;
+  const widgets=new Map<string,any>();
+  const tui = { terminal:{rows:24},requestRender: () => { for(const widget of widgets.values())statusLines.push(widget.render(120)[0]); } };
+  const theme = { fg: (_color:string, text:string) => text, bg:(_color:string,text:string)=>text,bold:(text:string)=>text };
+  const reviewerModel={id:"reviewer",provider:"synthetic",api:"openai-responses",reasoning:false,contextWindow:128_000,maxTokens:4096};
   const ctx = {
-    cwd: workspace, hasUI: name !== "no-ui", hasPendingMessages: () => false,
+    cwd: workspace, mode:name==="no-ui"?"print":"tui",hasUI: name !== "no-ui", hasPendingMessages: () => false,
+    model:reviewerModel,modelRegistry:{find:(provider:string,id:string)=>provider==="synthetic"&&id==="reviewer"?reviewerModel:undefined,getAvailable:()=>[reviewerModel]},
     abort: () => { aborts++; },
     sessionManager: {
-      getSessionId: () => sessionId, getCwd: () => workspace,
+      getSessionId:()=>sessionId,getSessionDir:()=>sessionDir,getSessionFile:()=>sessionFile,getCwd:()=>workspace,
       getLeafId: () => branch.at(-1)?.id, getBranch: () => branch, getEntries: () => entries,
     },
     ui: {
       setStatus() {},
-      setWidget(_id:string, factory:any) { widget = typeof factory === "function" ? factory(tui, theme) : undefined; tui.requestRender(); },
+      setWidget(id:string, factory:any) { if(typeof factory==="function")widgets.set(id,factory(tui,theme));else widgets.delete(id);tui.requestRender(); },
       notify(message:string) { notices.push(message); realUI?.notify(`TEST ONLY · ${message}`, "info"); },
+      async custom(factory:any){viewerCalls++;return await new Promise(resolve=>{let component:any;
+        const done=(value:unknown)=>{component?.dispose?.();resolve(value);};component=factory(tui,theme,{},done);
+        viewerText=component.render(120).join("\n");done(undefined);});},
       async confirm() { throw new Error("Guardian disputes must not open confirmation dialogs"); },
       async select() { throw new Error("Unexpected selector in short-action fixture"); },
     },
   } as unknown as ExtensionContext;
   const dispatch = async (eventName: string, event: unknown) => {
-    const handler = handlers.get(eventName);
-    assert.ok(handler, `Missing Guardian handler: ${eventName}`);
-    return handler(event, ctx);
+    const registered=handlers.get(eventName)??[];
+    assert.ok(registered.length, `Missing Guardian handler: ${eventName}`);
+    let result:unknown;
+    for(const handler of registered){const value=await handler(event,ctx);if(value!==undefined)result=value;}
+    return result;
   };
   const invoke = async (toolName="bash", input:Record<string,unknown>={ command: "printf 'TEST ONLY: synthetic invocation, never executed\\n'", timeout: 1 }) => {
     const id = `synthetic-${calls.length + 1}`; calls.push(id);
@@ -65,14 +79,16 @@ async function runScenario(name: Scenario, realUI?: ExtensionUIContext): Promise
     return tools.get("guardian_justify").execute(id,params,undefined,undefined,ctx);
   };
   try {
-    await mkdir(join(profile, "guardian"), { recursive: true, mode: 0o700 });
-    await mkdir(workspace);
+    await mkdir(join(profile,"guardian"),{recursive:true,mode:0o700});
+    await mkdir(sessionDir,{recursive:true,mode:0o700});await mkdir(workspace);
     await writeFile(join(profile, "AGENTS.md"), "Synthetic profile: user direction defines authorization.\n");
     await writeFile(join(profile, "guardian", "guardian.md"), "Synthetic reviewer fixture; never execute actions.\n");
-    const config = JSON.stringify({ schemaVersion: 1, mode: "on", model: null, thinking: "low" });
+    const config = JSON.stringify({ schemaVersion: 1, mode: "on", model: "synthetic/reviewer", thinking: "low" });
     await writeFile(join(profile, "guardian", "config.json"), config, { mode: 0o600 });
     const api = {
-      on: (eventName: string, handler: Handler) => { handlers.set(eventName, handler); },
+      events:{on:(channel:string,handler:(data:unknown)=>void)=>{const values=busHandlers.get(channel)??new Set();values.add(handler);busHandlers.set(channel,values);return()=>values.delete(handler);},
+        emit:(channel:string,data:unknown)=>{for(const handler of busHandlers.get(channel)??[])handler(data);}},
+      on: (eventName: string, handler: Handler) => { const values=handlers.get(eventName)??[];values.push(handler);handlers.set(eventName,values);return()=>handlers.set(eventName,(handlers.get(eventName)??[]).filter(value=>value!==handler)); },
       registerCommand: (commandName:string, command:{handler:(args:string,ctx:ExtensionContext)=>Promise<void>}) => { commands.set(commandName,command); },
       registerTool: (tool:any) => { tools.set(tool.name,tool);if(tool.defaultActive!==false&&!activeTools.includes(tool.name))activeTools.push(tool.name); },
       appendEntry: (customType:string,data:unknown) => {
@@ -85,21 +101,31 @@ async function runScenario(name: Scenario, realUI?: ExtensionUIContext): Promise
     const previous = process.env.PI_RUN_PROFILE_DIR;
     try {
       process.env.PI_RUN_PROFILE_DIR = profile;
+      if(withRuntime){
+        guardRuntime(api);
+        api.events.emit(GUARD_RUNTIME_DISCOVER,{schemaVersion:1,accept:(service:GuardRuntimeV1)=>{runtimeService=service;}});
+        assert.ok(runtimeService,"Guard Runtime must be discoverable before Guardian loads");
+      }
       createGuardianExtension(() => ({
         select: () => ({
           id: "fixed-test-reviewer",
           async review(request,services) {
             const reassessment=request.dispute!==undefined;
+            if(withRuntime){
+              assert.equal(runtimeService?.activity()?.clientId,"guardian","Guardian review must own the active Guard lease");
+              assert.equal(runtimeService?.activity()?.state,reassessment?"dispute":"reviewing","Guardian activity must identify the active review phase");
+            }
             if(reassessment){
               assessmentReviews++;
               assert.equal(request.action.toolName,"bash","Assessment must retain the original blocked tool");
               assert.match(String(request.action.input.command),/synthetic invocation, never executed/,"Assessment must retain exact original arguments");
               assert.match(request.dispute.guardianReason,/TEST ONLY|Review could not complete/,"Assessment must include Guardian's original concern");
+              if(name==="unavailable")assert.match(request.dispute.guardianReason,new RegExp(journalPath().replace(/[.*+?^${}()|[\]\\]/g,"\\$&")),"Unavailable review disputes must carry the exact active journal path");
               if(scenario.assessment==="delayed")await new Promise((_resolve,reject)=>services.signal.addEventListener("abort",()=>reject(services.signal.reason),{once:true}));
               if(scenario.assessment==="unavailable")return {status:"incomplete",error:"Synthetic assessment failure"};
               const assessed=scenario.assessment as ReviewDecision["outcome"];
               return {status:"completed",decision:{outcome:assessed,basis:assessed==="ALLOW"?"explicit_authorization":assessed==="ASK"?"uncertainty":"user_refusal",
-                reason:`TEST ONLY: assessment ${assessed}; human judgment remains required.`,userMessageIds:[request.conversation.filter(m=>m.role==="user").at(-1)!.id]}};
+                reason:assessed==="ALLOW"?"TEST ONLY: assessment ALLOW; concern resolved for one exact retry.":`TEST ONLY: assessment ${assessed}; human judgment remains required.`,userMessageIds:[request.conversation.filter(m=>m.role==="user").at(-1)!.id]}};
             }
             reviews++; reviewedIds.push(request.action.toolCallId);
             if (outcome === "unavailable") return { status: "incomplete", error: "Synthetic reviewer failure" };
@@ -115,31 +141,56 @@ async function runScenario(name: Scenario, realUI?: ExtensionUIContext): Promise
       if (previous === undefined) delete process.env.PI_RUN_PROFILE_DIR;
       else process.env.PI_RUN_PROFILE_DIR = previous;
     }
-    await dispatch("session_start", { type: "session_start" });
+    await dispatch("session_start", { type: "session_start", reason: "resume" });
+    if(withRuntime)assert.equal(runtimeService?.reviewMode(),"on","Guardian session mode must publish the shared Guard review mode");
+    assert.deepEqual([...widgets.keys()],name!=="no-ui"&&withRuntime?["guard-runtime"]:[],
+      "Guardian status must use only the shared runtime widget");
     assert.ok(tools.has("guardian_justify"),"Guardian must register its structured justification tool");
     assert.ok(!activeTools.includes("guardian_justify"),"Justification must be hidden outside a dispute");
     const first = await invoke();
-    assert.equal(first?.block !== true, scenario.released, `${name}: wrong release disposition`);
-    assert.equal(reviews, 1, "The real gate must invoke the fixed reviewer");
+    assert.equal(first?.block !== true, scenario.released&&withRuntime, `${name}: wrong release disposition`);
+    assert.equal(reviews, withRuntime?1:0, withRuntime?"The runtime backend must invoke the fixed reviewer":"A missing runtime must not invoke a direct reviewer fallback");
+    assert.equal(runtimeService?.activity(),undefined,"Guardian must release its command-review activity");
+    if(withRuntime)assert.equal(runtimeService?.status()?.clientId,"guardian","Guardian baseline must resume after command review");
 
-    if (name === "allow") {
+    if (name === "allow"&&withRuntime) {
+      assert.ok(commands.has("guardian-default"),"Guardian must expose a dedicated new-session default command");
+      assert.ok(commands.has("guardian-status"),"Guardian must expose a dedicated autocomplete-visible status command");
+      await commands.get("guardian-status")!.handler("",ctx);assert.match(notices.at(-1)!,/Guard review · On/);
+      for(const alias of ["status","log","logs"]){const before=viewerCalls;await commands.get("guardian")!.handler(alias,ctx);assert.match(notices.at(-1)!,/Usage: \/guardian/);assert.equal(viewerCalls,before,`/guardian ${alias} must not open logs`);}
+      await commands.get("guardian-log")!.handler("forced",ctx);
+      assert.equal(viewerCalls,1,"Guardian must open logs through the shared runtime viewer");
+      assert.match(viewerText,/Guardian reviews · current workspace · UTC/);
+      assert.match(viewerText,/Read-only · not a confirmation|log read warning/);
+      (ctx.ui as any).select=async(title:string,choices:string[])=>{assert.match(title,/Guard review — On/);for(const label of ["Current session — On (turn Off)","New sessions — Off","Status","Logs","Close"])assert.ok(choices.includes(label),label);return "Close";};
+      await commands.get("guardian")!.handler("",ctx);
       branch=[userEntry];await dispatch("session_tree",{type:"session_tree"});
       assert.equal((await invoke())?.block,undefined,"Branch navigation must retain session-wide mode");
       assert.equal(reviews,2);
-      await commands.get("guardian-mode")!.handler("off",ctx);
+      await commands.get("guardian-mode")!.handler("off",ctx);assert.equal(runtimeService?.reviewMode(),"off");
       assert.equal(await invoke(),undefined,"Turning Guardian off must bypass review in this session");
-      await commands.get("guardian-mode")!.handler("on",ctx);
-      entries.splice(0,entries.length,userEntry);branch=entries;sessionId="guardian-flow-new-session";
-      await dispatch("session_start",{type:"session_start"});
-      assert.equal(await invoke(),undefined,"A new session must start Off despite legacy profile mode");
-      assert.equal(reviews,2);
+      await commands.get("guardian-mode")!.handler("on",ctx);assert.equal(runtimeService?.reviewMode(),"on");
+      await commands.get("guardian-default")!.handler("on",ctx);assert.equal((await loadGuardianModeConfig(profile)).defaultMode,"on");
+      entries.splice(0,entries.length,{type:"model_change",id:"model-2",provider:"synthetic",modelId:"reviewer"},{type:"thinking_level_change",id:"thinking-2",thinkingLevel:"low"});branch=entries;
+      sessionId="00000000-0000-7000-8000-000000000002";sessionFile=join(sessionDir,"session-2.jsonl");await dispatch("session_start",{type:"session_start",reason:"startup"});entries.push(userEntry);
+      assert.equal((await invoke())?.block,undefined,"A genuinely new startup with Pi setup entries must use the saved On default");assert.equal(reviews,3);
+      await commands.get("guardian-default")!.handler("off",ctx);assert.equal((await invoke())?.block,undefined,"Changing the future default must not alter the current On session");assert.equal(reviews,4);
+      await commands.get("guardian-default")!.handler("on",ctx);entries.splice(0,entries.length,{type:"model_change",id:"model-3",provider:"synthetic",modelId:"reviewer"},userEntry);branch=entries;
+      sessionId="00000000-0000-7000-8000-000000000003";sessionFile=join(sessionDir,"session-3.jsonl");await writeFile(sessionFile,'{"type":"session"}\n');
+      await dispatch("session_start",{type:"session_start",reason:"startup"});assert.equal(runtimeService?.reviewMode(),"off");assert.equal(await invoke(),undefined,"An existing session without mode metadata must remain Off");assert.equal(reviews,4);
     } else {
       assert.ok(notices.some(message=>message.includes("Guardian stopped this action; nothing was executed")),"Guardian must show its own dispute reason");
-      assert.ok(statusLines.some(line=>line.includes("guard · dispute · investigating")),"Status must show dispute investigation");
+      if(name==="unavailable"){
+        const notice=notices.find(message=>message.includes("Guardian stopped this action; nothing was executed"))!;
+        assert.ok(notice.includes(`Diagnostic journal: ${journalPath()}.`),"Review failure must expose the exact active journal path");
+        assert.doesNotMatch(notice,/details are in (?:guardian\.log|the Guardian journal)/i,"Review failure must not advertise an unresolvable journal name");
+      }
+      if(name==="no-ui"||!withRuntime)assert.deepEqual(statusLines,[],"Non-TUI or missing-runtime review must not create status output");
+      else assert.ok(statusLines.some(line=>line.includes("guard · dispute · investigating")),"Status must show dispute investigation");
       assert.ok(activeTools.includes("guardian_justify"),"An investigating dispute must activate structured justification");
 
       if(name==="ask"){
-        await dispatch("session_start",{type:"session_start"});
+        await dispatch("session_start",{type:"session_start",reason:"resume"});
         assert.ok(statusLines.at(-1)?.includes("guard · dispute · investigating"),"Resume must restore an open dispute");
         branch=[userEntry];await dispatch("session_tree",{type:"session_tree"});
         assert.ok(statusLines.at(-1)?.includes("guard · on"),"A branch without the dispute must remain usable");
@@ -151,7 +202,7 @@ async function runScenario(name: Scenario, realUI?: ExtensionUIContext): Promise
 
       const readCount=name==="fallback"?6:2;
       for(let i=0;i<readCount;i++)assert.equal(await invoke("read",{path:`fixture-${i}.txt`}),undefined,"Bounded native reads must remain available");
-      assert.equal(reviews,1,"Dispute reads must not invoke the command reviewer");
+      assert.equal(reviews,withRuntime?1:0,"Dispute reads must not invoke the command reviewer");
       if(name==="fallback")assert.equal((await invoke("read",{path:"too-many.txt"}))?.block,true,"The read budget must be enforced");
       let cancellationHandled=false;
       if(scenario.assessment!==null){
@@ -161,7 +212,7 @@ async function runScenario(name: Scenario, realUI?: ExtensionUIContext): Promise
           await assert.rejects(()=>justificationTool.execute("invalid",{position:"contest",explanation:"x".repeat(4001)},undefined,undefined,ctx),/Invalid Guardian justification/);
           await assert.rejects(()=>justificationTool.execute("invalid",{position:"contest",explanation:"bounded",evidence:Array(9).fill("file")},undefined,undefined,ctx),/Invalid Guardian justification/);
         }
-        const params={position:name==="unavailable"?"retract":"contest",explanation:"The fixture action remains intentionally synthetic.",evidence:["fixture-0.txt","fixture-1.txt"]};
+        const params={position:"position" in scenario?scenario.position:"contest",explanation:"The fixture action remains intentionally synthetic.",evidence:["fixture-0.txt","fixture-1.txt"]};
         if(name==="cancel-assessment"){
           const pending=justify(params);
           for(let i=0;i<100&&assessmentReviews===0;i++)await new Promise(resolve=>setTimeout(resolve,0));
@@ -170,6 +221,7 @@ async function runScenario(name: Scenario, realUI?: ExtensionUIContext): Promise
           branch.push({type:"message",id:"user-cancel",message:{role:"user",content:"Cancel the pending assessment."}});
           await dispatch("input",{type:"input",source:"interactive",text:"Cancel the pending assessment."});
           const result=await pending;
+          assert.equal(runtimeService?.activity(),undefined,"Cancelled assessment must release its Guard activity");
           assert.equal(result.details.assessment.status,"unavailable","Cancelled assessment must not produce a decision");
           assert.match(result.details.assessment.error,/cancelled/i);
           assert.ok(!entries.some(e=>e.customType==="guardian-dispute"&&e.data?.assessment),"Late assessment must not be persisted after resolution");
@@ -177,34 +229,54 @@ async function runScenario(name: Scenario, realUI?: ExtensionUIContext): Promise
           assert.equal(reviews,2);cancellationHandled=true;
         }else{
           const result=await justify(params);
-          assert.equal(result.terminate,true,"Structured justification must terminate automatic agent follow-up");
-          assert.equal(result.details.executed,false);assert.equal(result.details.humanRequired,true);
-          assert.equal(assessmentReviews,1,"Every structured submission must receive one assessment");
-          assert.match(result.content[0].text,/Guardian dispute — awaiting human judgment/);
+          assert.equal(runtimeService?.activity(),undefined,"Completed justification must release its Guard activity");
+          const automatic=["ALLOW","skipped"].includes(String(scenario.assessment)),expectedResolution=scenario.assessment==="ALLOW"?"accepted":name==="unavailable"?"retracted":name==="narrow"?"narrowed":"human-required";
+          assert.equal(result.terminate,automatic?undefined:true,automatic?"Agreement must continue the primary automatically":"Unresolved disagreement must terminate automatic follow-up");
+          assert.equal(result.details.executed,false);assert.equal(result.details.humanRequired,!automatic);assert.equal(result.details.resolution,expectedResolution);
+          assert.equal(assessmentReviews,scenario.assessment==="skipped"?0:1,"Only a contested position receives Guardian reassessment");
+          assert.match(result.content[0].text,automatic?/Guardian challenge resolved/:/Guardian dispute — awaiting human judgment/);
           const rendered=justificationTool.renderResult(result,{},theme,{}).render(120).join("\n");
-          assert.match(rendered,/Agent position: (contest|retract)/);assert.match(rendered,/fixture action remains intentionally synthetic/);
-          const label=scenario.assessment==="ALLOW"?"Concern resolved":scenario.assessment==="ASK"?"Concern remains":scenario.assessment==="USER_REFUSED"?"User restriction remains":"Assessment unavailable";
-          assert.match(rendered,new RegExp(`Guardian assessment: ${label}`));
+          assert.match(rendered,/Agent position: (contest|retract|narrow)/);assert.match(rendered,/fixture action remains intentionally synthetic/);
+          if(scenario.assessment!=="skipped"){
+            const label=scenario.assessment==="ALLOW"?"Concern resolved":scenario.assessment==="ASK"?"Concern remains":scenario.assessment==="USER_REFUSED"?"User restriction remains":"Assessment unavailable";
+            assert.match(rendered,new RegExp(`Guardian assessment: ${label}`));
+          }else assert.doesNotMatch(rendered,/Guardian assessment:/,"Withdrawal must not spend another reviewer request");
           assert.ok(!activeTools.includes("guardian_justify"),"Submitted justification must remove its model tool");
-          const saved=[...entries].reverse().find(e=>e.type==="custom"&&e.customType==="guardian-dispute"&&e.data?.assessment);
-          assert.equal(saved?.data.justification.explanation,params.explanation,"Structured position must persist on the active branch");
-          assert.equal(saved?.data.assessment.status,scenario.assessment==="unavailable"?"unavailable":"completed","Assessment must persist on the active branch");
-          assert.ok(statusLines.some(line=>line.includes("guard · dispute · assessing")),"Status must expose assessment work");
-          assert.ok(statusLines.at(-1)?.includes("guard · dispute · awaiting you"),"Assessment must finish waiting for human judgment");
-          if(name==="ask"){
-            await dispatch("session_start",{type:"session_start"});
-            assert.ok(statusLines.at(-1)?.includes("guard · dispute · awaiting you"),"Resume must restore the assessed position's waiting state");
-            assert.ok(!activeTools.includes("guardian_justify"),"Resume must not reactivate an assessed submission");
+          const savedAssessment=[...entries].reverse().find(e=>e.type==="custom"&&e.customType==="guardian-dispute"&&e.data?.assessment);
+          const resolved=[...entries].reverse().find(e=>e.type==="custom"&&e.customType==="guardian-dispute"&&e.data?.state==="resolved");
+          if(automatic){assert.equal(resolved?.data.id,result.details.disputeId,"Agreement must persist a resolved dispute");assert.equal(savedAssessment,undefined,"Resolved disputes must not persist an awaiting-human assessment");}
+          else{
+            assert.equal(savedAssessment?.data.justification.explanation,params.explanation,"Unresolved position must persist on the active branch");
+            assert.equal(savedAssessment?.data.assessment.status,scenario.assessment==="unavailable"?"unavailable":"completed","Unresolved assessment must persist on the active branch");
+            if(scenario.assessment==="unavailable")assert.ok(savedAssessment.data.assessment.error.includes(`Diagnostic journal: ${journalPath()}.`),"Assessment failure must expose the exact active journal path");
+          }
+          if(name!=="no-ui"){
+            if(scenario.assessment!=="skipped")assert.ok(statusLines.some(line=>line.includes("guard · dispute · assessing")),"Contests must expose assessment work");
+            assert.ok(statusLines.at(-1)?.includes(automatic?"guard · on":"guard · dispute · awaiting you"),automatic?"Agreement must restore normal Guard status":"Disagreement must wait for human judgment");
           }
         }
       }else assert.equal(assessmentReviews,0,"Fallback flow must make no assessment call");
 
-      if(!cancellationHandled){
+      const automaticResolution=scenario.assessment==="ALLOW"||scenario.assessment==="skipped";
+      if(!cancellationHandled&&scenario.assessment!==null&&automaticResolution){
+        const reviewsBeforeRetry=reviews;outcome="ALLOW";
+        if(scenario.assessment==="ALLOW"){
+          assert.equal((await invoke())?.block,undefined,"An accepted contest must release one exact retry");
+          assert.equal(reviews,reviewsBeforeRetry,"The exact retry must not spend another reviewer request");
+          assert.equal((await invoke("bash",{command:"printf 'TEST ONLY: changed invocation, never executed\\n'",timeout:1}))?.block,undefined,"A changed command must receive normal review");
+          assert.equal(reviews,reviewsBeforeRetry+1,"Changed arguments must not use the exact retry authorization");
+        }else{
+          const input=name==="narrow"?{command:"printf 'TEST ONLY: narrower invocation, never executed\\n'",timeout:1}:undefined;
+          assert.equal((await invoke("bash",input))?.block,undefined,"A withdrawn action must return to normal review");
+          assert.equal(reviews,reviewsBeforeRetry+1,"Retraction or narrowing must not authorize a later command");
+        }
+        assert.ok(!activeTools.includes("guardian_justify"),"Consensus must close the dispute tool");
+      }else if(!cancellationHandled){
         for(const toolName of ["bash","edit","write","custom-effect"])
           assert.equal((await invoke(toolName,toolName==="bash"?{command:"echo blocked"}:{path:"blocked"}))?.block,true,`${toolName} must be blocked during dispute`);
-        assert.equal(reviews,1,"Blocked dispute tools must not reach the reviewer");
+        assert.equal(reviews,withRuntime?1:0,"Blocked dispute tools must not reach the reviewer");
         await dispatch("agent_settled",{type:"agent_settled",aborted:false});
-        assert.ok(statusLines.at(-1)?.includes("guard · dispute · awaiting you"),"Settled agent must wait for the user");
+        if(name!=="no-ui"&&withRuntime)assert.ok(statusLines.at(-1)?.includes("guard · dispute · awaiting you"),"Settled agent must wait for the user");
         assert.ok(!activeTools.includes("guardian_justify"),"Settled disputes must not retain the justification tool");
         await dispatch("input",{type:"input",source:"extension",text:"Synthetic extension input"});
         assert.equal((await invoke("read",{path:"still-blocked.txt"}))?.block,true,"Extension input must not clear the dispute");
@@ -225,37 +297,83 @@ async function runScenario(name: Scenario, realUI?: ExtensionUIContext): Promise
         branch.push({type:"message",id:"user-2",message:{role:"user",content:"New synthetic feedback; reassess, but infer no authority from presence alone."}});
         await dispatch("input",{type:"input",source:"interactive",text:"New synthetic feedback"});
         assert.ok(!activeTools.includes("guardian_justify"),"Real user feedback must remove dispute-only tools");
-        assert.equal((await invoke())?.block,undefined,"Real user feedback must reopen fresh review");
-        assert.equal(reviews,name==="ask"?3:2);
+        const reopened=await invoke();
+        assert.equal(reopened?.block,withRuntime?undefined:true,withRuntime?"Real user feedback must reopen fresh review":"Missing runtime must remain fail closed after fresh user feedback");
+        assert.equal(reviews,withRuntime?(name==="ask"?3:2):0);
       }
     }
 
     assert.equal(aborts,0,"Guardian must not abort the acting agent when opening a dispute");
     await dispatch("session_shutdown",{type:"session_shutdown"});handlers.delete("session_shutdown");
-    const events=(await readFile(join(profile,"guardian","guardian.log"),"utf8")).trim().split("\n").map(line=>JSON.parse(line));
+    const snapshot=await readGuardianLogs(profile,workspaceId),events=snapshot.entries.map(entry=>entry.value);
+    assert.ok(snapshot.reviews.length>=1,"Completed actions must be grouped for the read-only log viewer");
+    let viewFlushes=0;const view=createGuardianLogViewRequest(profile,workspaceId,async()=>{viewFlushes++;},"synthetic"),presented=await view.load(new AbortController().signal);
+    await view.load(new AbortController().signal);assert.equal(viewFlushes,2,"Guardian must flush before initial load and refresh");
+    assert.equal(presented.rows.length,snapshot.reviews.length,"Guardian must present every grouped review through the runtime contract");
+    assert.ok(presented.rows.every(row=>row.searchText&&row.wide&&row.compact));
+    assert.match(view.details(presented.rows[0].id,"summary").join("\n"),/Decision|Review|Command/);
+    assert.match(view.details(presented.rows[0].id,"timeline").join("\n"),/Times UTC/);
+    const workspaceFiles=await readdir(join(profile,"logs",workspaceId));
+    assert.deepEqual(workspaceFiles,["guardian.jsonl"],"Guardian must write one marker-free workspace journal");
+    assert.ok(snapshot.files.some(name=>name===`logs/${workspaceId}/guardian.jsonl`),"The current-workspace journal must be visible");
+    assert.ok(!(await readdir(profile,{recursive:true})).some(name=>String(name).includes(".guardian-journal.lock")),"Guardian must release the workspace writer lock");
     const disposition=events.find(e=>e.toolCallId==="synthetic-1"&&["invocation_released","invocation_withheld"].includes(e.event));
-    assert.equal(disposition?.event,scenario.released?"invocation_released":"invocation_withheld");
-    const basis=name==="allow"?"reviewer_decision":name==="user-refused"?"existing_user_refusal":name==="unavailable"?"review_unavailable":"reviewer_dispute";
+    assert.equal(disposition?.event,scenario.released&&withRuntime?"invocation_released":"invocation_withheld");
+    const basis=!withRuntime?"review_unavailable":name==="allow"?"reviewer_decision":name==="user-refused"?"existing_user_refusal":name==="unavailable"?"review_unavailable":"reviewer_dispute";
     assert.equal(disposition?.details.basis,basis,"Release/withholding must use the expected path");
-    if(!scenario.released)assert.ok(events.some(e=>e.toolCallId==="synthetic-1"&&e.event==="dispute_opened"),"Dispute event must stay attached to the blocked review");
+    if(!scenario.released||!withRuntime)assert.ok(events.some(e=>e.toolCallId==="synthetic-1"&&e.event==="dispute_opened"),"Dispute event must stay attached to the blocked review");
     if(scenario.assessment!==null)assert.ok(events.some(e=>e.event==="dispute_justification_submitted"),"Structured justification must be retained in Guardian diagnostics");
     if(["unavailable","delayed"].includes(String(scenario.assessment)))assert.ok(events.some(e=>e.event==="dispute_assessment_unavailable"),"Unavailable assessment must be diagnosed");
-    else if(scenario.assessment!==null)assert.ok(events.some(e=>e.event==="dispute_assessment_decision"&&e.details.outcome===scenario.assessment),"Completed assessment must be diagnosed without release");
+    else if(scenario.assessment!==null&&scenario.assessment!=="skipped")assert.ok(events.some(e=>e.event==="dispute_assessment_decision"&&e.details.outcome===scenario.assessment),"Completed assessment must be diagnosed");
+    if(scenario.assessment==="ALLOW"||scenario.assessment==="skipped")assert.ok(events.some(e=>e.event==="dispute_consensus"),"Autonomous agreement must be diagnosed");
     assert.ok(!events.some(e=>e.event==="confirmation_requested"||e.event==="confirmation_answer"),"Disputes must never create confirmation events");
     assert.ok(!events.some(e=>e.event==="tool_result"),"No execution result may be fabricated");
     assert.equal(await readFile(join(profile,"guardian","config.json"),"utf8"),config);
-    assert.ok(reviewedIds.includes("synthetic-1"));
+    assert.equal(reviewedIds.includes("synthetic-1"),withRuntime,"Only the shared runtime backend may invoke the reviewer");
+    assert.equal(events.some(e=>e.event==="step_started"&&e.details?.operation==="reviewer assessment"),withRuntime,
+      "Backend reviewer diagnostics must be present only when the shared runtime executes the review");
   } finally {
     try { if (handlers.has("session_shutdown")) await dispatch("session_shutdown", { type: "session_shutdown" }); }
     finally { await rm(root, { recursive: true, force: true }); }
   }
 }
 
+async function testSessionJournalReuse():Promise<void>{
+  const root=await mkdtemp(join(tmpdir(),"guardian-workspace-journal-")),warnings:string[]=[];
+  const workspaceId="11111111-1111-4111-8111-111111111111",sessionId="00000000-0000-7000-8000-000000000001";
+  try{await mkdir(root,{recursive:true,mode:0o700});
+    const first=createLogger(root,workspaceId,sessionId,message=>warnings.push(message));
+    first.write({timestamp:"2026-01-01T00:00:00.000Z",event:"first_process"});await first.close();
+    const resumed=createLogger(root,workspaceId,sessionId,message=>warnings.push(message));
+    resumed.write({timestamp:"2026-01-01T00:00:01.000Z",event:"resumed_process"});await resumed.close();
+    assert.equal(first.path,resumed.path);assert.deepEqual((await readdir(join(root,"logs",workspaceId))).sort(),["guardian.jsonl"]);
+    const text=await readFile(resumed.path,"utf8");assert.match(text,/first_process/);assert.match(text,/resumed_process/);assert.deepEqual(warnings,[]);
+  }finally{await rm(root,{recursive:true,force:true});}
+}
+
+async function testGuardianModeConfig():Promise<void>{
+  const root=await mkdtemp(join(tmpdir(),"guardian-mode-")),profile=join(root,"profile");try{await mkdir(join(profile,"guardian"),{recursive:true,mode:0o700});
+    assert.deepEqual(await loadGuardianModeConfig(profile),{schemaVersion:1,defaultMode:"off"});assert.deepEqual(parseGuardianModeConfig('{"schemaVersion":1,"defaultMode":"on"}'),{schemaVersion:1,defaultMode:"on"});
+    for(const value of [{schemaVersion:2,defaultMode:"off"},{schemaVersion:1,defaultMode:"invalid"},{schemaVersion:1,defaultMode:"off",extra:true}])assert.throws(()=>parseGuardianModeConfig(JSON.stringify(value)),/mode configuration/);
+    await saveGuardianModeConfig(profile,{schemaVersion:1,defaultMode:"on"});const path=join(profile,"guardian","mode.json"),first=(await lstat(path)).ino;
+    assert.equal((await lstat(path)).mode&0o777,0o600);await saveGuardianModeConfig(profile,{schemaVersion:1,defaultMode:"off"});assert.notEqual((await lstat(path)).ino,first);
+    await chmod(path,0o644);await assert.rejects(loadGuardianModeConfig(profile),/private single-link/);await chmod(path,0o600);const outside=join(root,"outside");await writeFile(outside,'{}\n',{mode:0o600});await rm(path);await symlink(outside,path);
+    await assert.rejects(saveGuardianModeConfig(profile,{schemaVersion:1,defaultMode:"on"}),/private single-link/);
+  }finally{await rm(root,{recursive:true,force:true});}
+}
+
 export async function runAutomatedTests(): Promise<void> {
+  const diagnosticPath="/profile/logs/11111111-1111-4111-8111-111111111111/guardian.jsonl";
+  assert.equal(reviewFailureSummary("provider unavailable",diagnosticPath),`Review could not complete. Diagnostic journal: ${diagnosticPath}.`);
+  assert.equal(reviewFailureSummary("review timed out",diagnosticPath),`Review timed out. Diagnostic journal: ${diagnosticPath}.`);
+  assert.equal(reviewFailureSummary("invalid reviewer response",diagnosticPath),`Reviewer response was invalid. Diagnostic journal: ${diagnosticPath}.`);
+  assert.equal(reviewFailureSummary("provider unavailable"),"Review could not complete. Guardian diagnostics are unavailable.");
   assert.deepEqual(parseGuardianConfig(JSON.stringify({schemaVersion:1,mode:"on",model:null,thinking:"low"})),
     {schemaVersion:2,model:null,thinking:"low"},"Legacy profile mode must migrate out of preferences");
   for(const name of Object.keys(scenarios) as Scenario[]){await runScenario(name);console.log(`PASS guardian-flow: ${name}`);}
-  console.log("PASS guardian-flow: automatic justification assessment, cancellation, persistence, human arbitration, and fresh review");
+  await runScenario("allow",undefined,false);
+  await testGuardianModeConfig();await testSessionJournalReuse();
+  console.log("PASS guardian-flow: runtime client, workspace journals, unavailable presentation, assessment, cancellation, persistence, human arbitration, and fresh review");
 }
 
 /** Opt-in Pi extension; registers a command only, never a tool or live Guardian hook. */

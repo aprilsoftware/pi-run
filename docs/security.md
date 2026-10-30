@@ -86,9 +86,15 @@ starting; there is no host-network fallback.
 
 Host and domain rules are enforced by hostname-aware HTTP CONNECT. HTTP clients
 receive loopback proxy variables, and restricted sessions configure OpenSSH to
-use the same proxy for SSH, SCP, SFTP, Git-over-SSH, and Ansible. Other
-hostname-based clients must support CONNECT. CIDR and public-internet rules are
-also enforced by the firewall and can support ordinary direct TCP clients.
+use the same proxy for SSH, SCP, SFTP, Git-over-SSH, and Ansible. A restricted
+launch also sets `ssrf.trustEnvProxy` to `true` in the selected profile's
+`web-search.json`, creating the file when needed and preserving its other
+settings. This lets the bundled web tools ask the controlled proxy to resolve
+remote hostnames instead of requiring unrestricted DNS from the workload.
+Host and offline launches do not change that file; the setting is inert when
+Pi-Run has not supplied a proxy. Other hostname-based clients must support
+CONNECT. CIDR and public-internet rules are also enforced by the firewall and
+can support ordinary direct TCP clients.
 Public-internet authority is broad exfiltration authority even when enterprise
 firewalls independently restrict it. Pi-Run does not inspect TLS, application
 methods, paths, or transferred data. Any allowed service can receive data by
@@ -121,8 +127,10 @@ administrative work.
 ## Treat mounted data as exposed
 
 The selected profile can contain provider authentication, SSH keys, model
-settings, Guardian diagnostics, and conversation history. The running agent and
-other container processes can read or change files allowed to the mapped user.
+settings, shared Guard reviewer preferences, Guardian and CAF policies, CAF
+friend preferences and branch-local consultation state, separate Guardian/CAF
+diagnostics, and conversation history. The running agent and other container
+processes can read or change files allowed to the mapped user.
 A separate profile limits which context is selected; it does not protect secrets
 inside that profile from the selected run.
 
@@ -200,9 +208,17 @@ access. See [Pi's security guidance](https://pi.dev/docs/latest/security/).
 - Instructions define expected authorization and workflow; they do not reduce
   operating-system access.
 - Planning changes the objective, not tool permissions, and is not read-only.
-- Guardian normally reviews acting-agent calls named `bash` and `run`; while a
-  dispute is open, it withholds every acting-agent tool except bounded native
-  reads and its structured justification handoff. It is not a sandbox.
+- Guard review is optional session state, not a sandbox. While On, the shared
+  reviewer handles Guardian-covered `bash`/`run` calls and CAF disclosures;
+  reviewer-provider requests can contain bounded internal evidence. While Off,
+  covered commands skip review and an enabled CAF sends its bounded friend/search
+  actions without independent disclosure judgment.
+- A Guardian dispute withholds every acting-agent tool except bounded native
+  reads and its structured justification handoff. Turning Guard Off clears the
+  latch but never replays the cancelled invocation.
+- CAF limits implicit context and friend tools; it is application-level
+  orchestration in the same Pi process, not an OS or provider-confidentiality
+  boundary. Guard On never falls back to unreviewed CAF because review failed.
 - Project trust does not constrain tool access after startup.
 - A visible or successful command result is not independent verification.
 - Available credentials, clients, skills, and network paths are not permission to
@@ -242,9 +258,9 @@ startup. Stop if they do not match your intention.
 
 ## Protect private records
 
-Profiles, sessions, Guardian logs, recovered snapshots, and exported plans can
-contain prompts, file excerpts, commands, output, paths, and credentials. Do not
-publish them without inspection and redaction.
+Profiles, sessions, Guardian and CAF journals, recovered snapshots, and exported
+plans can contain prompts, file excerpts, commands, output, paths, metadata, and
+credentials. Do not publish them without inspection and redaction.
 
 Encrypted snapshots include all profiles and credentials, but exclude repository
 recovery passwords and S3 credentials. Preserve those through a separate private

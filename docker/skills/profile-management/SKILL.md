@@ -1,6 +1,6 @@
 ---
 name: profile-management
-description: Manage Pi-Run profiles, instructions, Guardian policy, selected skills, credentials, and private profile data.
+description: Manage Pi-Run profiles, instructions, Guard/Guardian/CAF policy and preferences, selected skills, credentials, and private profile data.
 ---
 
 # Pi-Run Profile Management
@@ -27,10 +27,20 @@ tell the user which host command to run for profile, skill, or SSH management.
 ├── gitconfig
 ├── skills/
 ├── credentials/
+├── guard/
+│   └── config.json
 ├── guardian/
 │   ├── guardian.md
+│   ├── config.json          # optional legacy preference
+│   └── mode.json
+├── caf/
+│   ├── caf.md
 │   ├── config.json
-│   └── guardian.log*
+│   └── mode.json
+├── logs/
+│   └── <workspace-id>/
+│       ├── guardian.jsonl*
+│       └── caf.jsonl*
 └── sessions/
 ```
 
@@ -42,9 +52,15 @@ snapshots for backup and workstation transfer.
 
 - `profile.json` filters global skills and requests optional resources.
 - `AGENTS.md` defines the profile's working and authorization contract.
-- `guardian/guardian.md` supplies Guardian review instructions.
-- `guardian/config.json` privately stores the saved Guardian mode, reviewer
-  model, and thinking preference.
+- `guardian/guardian.md` supplies Guardian command-review instructions.
+- `guard/config.json` privately stores the explicitly selected shared Guard
+  reviewer model and thinking preference.
+- `guardian/mode.json` and `caf/mode.json` privately store profile-specific
+  defaults for genuinely new sessions; current modes remain session metadata.
+- `caf/caf.md` supplies guarded external-disclosure priorities, while
+  `caf/config.json` privately stores the friend model and thinking preference.
+- Legacy `guardian/config.json` may supply an explicit reviewer model when no
+  shared config exists, but Pi-Run does not rewrite it as migration.
 - Pi owns `auth.json`, `settings.json`, `models.json`, and session data.
 - `credentials/` contains profile-specific configuration supplied by the user.
 - Every valid direct child of `skills/` is a writable profile-local skill that
@@ -134,9 +150,10 @@ pi-run profile create <name>
 pi-run profile create <name> --from <source-profile>
 ```
 
-Creation copies only `profile.json`, `AGENTS.md`, `guardian/guardian.md`, and
-profile-local skills; private runtime state starts empty. It resets `skills` to
-`null`, so a new profile initially loads every global skill. Use encrypted
+Creation copies only `profile.json`, `AGENTS.md`, `guardian/guardian.md`,
+`caf/caf.md` when present, and profile-local skills; private runtime state starts
+empty. It resets `skills` to `null`, so a new profile initially loads every
+global skill. Use encrypted
 Pi-Run snapshots rather than copying complete profile directories for backup or
 workstation transfer.
 

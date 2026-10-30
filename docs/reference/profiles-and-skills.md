@@ -79,18 +79,19 @@ Creation stages a private directory and publishes it only after materializing:
 
 - `profile.json`, with `.name` changed and `.skills` reset to `null`;
 - `AGENTS.md`;
-- `guardian/guardian.md`;
+- `guardian/guardian.md` and optional `caf/caf.md`;
 - validated profile-local skill packages; and
-- empty `credentials/` and `sessions/` directories, with no copied Guardian
-  preferences or logs.
+- empty `credentials/` and `sessions/` directories, with no copied Guard, CAF,
+  or Guardian preferences or logs.
 
 The new profile directory and private subdirectories use mode `0700`.
 `profile.json`, `AGENTS.md`, and `guardian/guardian.md` use mode `0600`. Copied
 skill files remain user-writable but are not made group/world writable.
 
 Creation does not copy `auth.json`, `models.json`, `settings.json`, `gitconfig`,
-general credentials, SSH keys, sessions, Guardian preferences, or logs. It does
-not overwrite an existing profile or select the new one.
+general credentials, SSH keys, sessions, shared Guard reviewer preferences,
+Guardian/CAF mode defaults, CAF friend preferences, or logs. It does not
+overwrite an existing profile or select the new one.
 
 Resource and network fields are copied as part of `profile.json`, so shared and
 network exposure remain as in the source. Resetting `skills` to `null` selects
@@ -110,16 +111,173 @@ profiles/<name>/
 ├── gitconfig
 ├── skills/
 ├── credentials/
+├── caf/
+│   ├── caf.md
+│   ├── config.json
+│   └── mode.json
+├── guard/
+│   └── config.json
 ├── guardian/
 │   ├── guardian.md
-│   ├── config.json
-│   └── guardian.log*
+│   ├── config.json          # optional legacy reviewer preference
+│   └── mode.json
+├── logs/
+│   └── <workspace-id>/
+│       ├── caf.jsonl*
+│       └── guardian.jsonl*
 └── sessions/
+    └── <workspace-id>/
 ```
 
 `profile.json`, `AGENTS.md`, and `guardian/guardian.md` must be regular,
 non-symlink, singly linked files contained by the profile. The Guardian and skill
-directories must also be ordinary contained directories.
+directories must also be ordinary contained directories. When `caf/` is
+present, it receives the same directory checks; an optional `caf/caf.md`
+receives the same containment and link checks as other definition files.
+
+See [Call a Friend](../call-a-friend.md) for the focused configuration,
+dialogue, public-search, diagnostic, and boundary guide.
+
+Fresh default profiles include `caf/caf.md`, and profile creation copies it when
+the source has one. Profiles without a CAF policy remain valid and are not
+modified automatically. The policy defines profile-specific external-disclosure
+priorities; it does not enable CAF or grant external access. CAF loads the
+optional policy as a bounded private regular file and reports only its source,
+not its contents, through `/caf-status`. Unsafe or malformed policy prevents the
+guarded path rather than being silently ignored; Guard Off does not apply the
+review policy because no reviewer request occurs.
+
+Guard mode and CAF availability are separate. Fresh profiles and genuinely new
+sessions default both Off unless their profile-specific defaults were explicitly
+changed. Current modes are private session metadata. Future defaults live in
+private `guardian/mode.json` and `caf/mode.json`. Friend preferences are created
+lazily in private `caf/config.json`. Profile cloning copies none of these files.
+`/guardian`, `/caf`, and their direct command families inspect or change settings
+without contacting a provider.
+
+While Guard is On, a separate CAF reviewer agent uses the shared configured
+reviewer model to evaluate each exact friend/search action against CAF policy,
+applicable instructions, and compact initial evidence from the current session
+branch. It can investigate through bounded session-history, user-change,
+non-secret workspace file, resource-listing, and review-guidance tools. The
+original branch remains local until selected evidence is supplied; omission
+from the compact initial snapshot does not itself invalidate complete current
+authority. A valid `ALLOW`, bound to complete original user evidence and the
+exact candidate, is required for release. Missing, failed, malformed, cancelled,
+timed-out, truncated, or non-allowing review remains withheld and never silently
+downgrades to an unreviewed call. The reviewer receives no credentials, shell,
+network, arbitrary profile state, journals, databases, friend tools, or
+arbitrary MCP. Startup, selectors, mode changes, and status commands make no
+provider request.
+
+While Guard is explicitly Off, enabled CAF validates the same bounded action
+schemas and sends them without a reviewer request. Guard Off can save reviewer
+latency and cost but removes the independent disclosure judgment. Unknown Guard
+state sends nothing. Exact reviewer/friend model equality is blocked and
+same-provider identifiers warned about only while Guard is On; identifiers
+cannot prove confidentiality separation.
+
+The primary invokes `call_friend({ message, purpose })` as one standalone,
+sequential tool call. CAF sends the bounded message and purpose under a dedicated
+advisory system prompt. A continuation also includes only bounded CAF requests
+and friend responses from that pending consultation. The friend receives no
+primary transcript, authorization evidence, CAF policy, workspace data,
+credentials, Guard evidence, or unrelated CAF rounds. This is application-level
+context isolation, not a sandbox or confidentiality guarantee.
+
+Without research, each invocation performs one friend request. The friend may
+return one bounded answer or end its round with a byte-bounded
+`caf_ask_primary` clarification request containing the focused questions it
+needs; there is no ordinary semantic question-count limit. That function does
+not execute the primary. The primary must use a new standalone `call_friend`
+invocation to answer, and the new action follows the current Guard mode. The
+continuation may include only the bounded reviewed exchanges and retained public
+research from that pending consultation. Each answer is capped at 64 KiB,
+clarification responses have a 64 KiB aggregate boundary, and 256 finalized
+rounds form the emergency persistence safeguard. The consultation may continue
+while clarification materially improves the advice, subject to those circuit
+breakers, provider/context capacity, cancellation, and protocol bounds.
+
+When `web-search.json` selects one explicit provider and the bundled canonical
+`web_search` tool is callable, the CAF agent also receives `caf_web_search`. It
+may request another focused query whenever doing so materially improves its
+advice. CAF pauses the agent and validates each exact query, purpose, and
+search-provider destination. Guard On requires a fresh `ALLOW` for every query;
+Guard Off sends each one without reviewer judgment. Each released action makes
+one nested `web_search` call with at most five results, no fetched page content,
+no curator, and no proxy override. Bounded, normalized, untrusted titles,
+snippets, URLs, and provider answers return to the same private agent transcript,
+where CAF may refine its research, answer, or request clarification. `auto`,
+`all`, provider arrays, custom-renamed search tools, and arbitrary URL fetching
+remain unavailable.
+
+The search provider and CAF model remain separate disclosure destinations.
+Search credentials stay inside `pi-web-access` and are not included in CAF or
+reviewer context. There is no ordinary search-count limit; retained research is
+bounded to 512 KiB across the consultation, and provider context, cancellation,
+review refusal, and failures remain stopping conditions. Research retained with
+a clarification round becomes part of the exact bounded continuation reviewed
+before it returns to the next fresh CAF agent. Offline and restricted network policy remains authoritative.
+The friend has no filesystem, shell, arbitrary Pi, or MCP tools, and public
+results cannot expand its capabilities. There is no recursive primary invocation or unchecked disclosure loop; every
+continuation remains a separate reviewed action while Guard is On. Guarded refusal and failures before release make
+no corresponding external request. An unsuccessful `call_friend` reports
+`retryAllowed: false` and, when the run remains active, temporarily removes all
+model-visible tools for one explain-only primary response. Tools return only
+after the agent settles. If CAF cannot establish that restricted loadout, it
+uses Pi's strict terminate signal instead. The result records whether a friend
+request started so the user can distinguish local withholding from an uncertain
+external effect. Configuration, disclosure-policy, and branch-state failures
+identify the failed state and report the exact active CAF journal path when
+available. Turning Guard or CAF mode during active work cancels it without
+retrying under the new mode.
+
+Successful answers, question requests, and bounded research evidence are stored
+as finalized branch-local session metadata while the tool result supplies the
+response to the primary model. `/caf-status` reports whether explicitly
+configured public-web research is available, reconstructs only finalized CAF
+rounds on the selected branch, marks a pending consultation as awaiting the
+primary or at its emergency persistence limit, and reports malformed state as
+unavailable.
+
+CAF diagnostics use the shared journal implementation but remain separate from
+Guardian under `logs/<workspace-id>/caf.jsonl*`. `/caf-log` presents bounded
+recent review, friend, search, persistence, cancellation, and failure events
+from the current workspace. There is no combined `/guard-log`. Outside Pi's
+terminal UI, `/caf-log` reports the exact active file path.
+
+CAF journal records contain operation and session identifiers, destinations,
+outcomes, byte counts, SHA-256 payload hashes, bounded usage, duration, and
+research-result counts. They do not contain exact messages, purposes, queries,
+policies, authorization evidence, friend answers, search results, credentials,
+or workspace content. Hashes permit equality correlation and do not constitute
+a confidentiality guarantee. Exact finalized exchanges remain branch-local
+session metadata. Sessions in one workspace share its fixed CAF stream; a
+private writer lock serializes appends and rotation while session identity stays
+inside each record. There is no completion marker or profile-wide pruning.
+Journal write, read, or presentation failure never changes CAF review, release,
+or tool-result behavior. Earlier run-shard and nested session-directory journals
+are neither read nor migrated.
+
+### Current CAF limits
+
+CAF has native Pi lifecycle coverage using fake primary, friend, and search
+providers. That coverage includes branch restoration, reviewed continuation,
+nested search, session-context exclusion, workspace-journal append on resume,
+and process-local lifecycle handling. It is not evidence of interoperability
+with every real provider or of provider-side confidentiality, retention, or
+tool-call behavior.
+
+CAF remains application-level orchestration rather than a sandbox. The shared
+Guard reviewer and primary model can make mistakes, unreviewed CAF deliberately
+has no independent disclosure judgment, public content remains untrusted, and
+Pi extensions execute in the same process. Public research supports the bundled
+canonical `web_search` integration with one explicitly configured provider. The
+CAF agent may issue sequential focused searches, but each tool call performs one
+query with bounded results and there is no page fetching or source-check
+operation. Network policy independently determines whether provider traffic can
+leave the container. Journal hashes permit correlation and can confirm guesses
+about low-entropy content.
 
 Pi uses the selected profile as its configuration directory. Provider login,
 model configuration, settings, Git configuration, credentials, Guardian state,

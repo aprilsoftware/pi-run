@@ -19,6 +19,27 @@ SPDX='# SPDX-License-Identifier: MIT'
     || fail "Dockerfile has no SPDX license identifier"
 [[ "$(sed -n '1p' "${ROOT}/docker/egress/Dockerfile")" == "${SPDX}" ]] \
     || fail "egress Dockerfile has no SPDX license identifier"
+grep -Fx 'ARG RUST_VERSION=1.99.1' "${ROOT}/docker/Dockerfile" >/dev/null \
+    || fail "runtime image does not pin Rust 1.99.1"
+grep -Fx "FROM rust:\${RUST_VERSION}-trixie AS rust-toolchain" \
+    "${ROOT}/docker/Dockerfile" >/dev/null \
+    || fail "runtime image does not use the versioned official Rust toolchain stage"
+grep -Fx "RUN rustup component add --toolchain \"\${RUST_VERSION}\" rustfmt clippy \\" \
+    "${ROOT}/docker/Dockerfile" >/dev/null \
+    || fail "runtime image does not install Rustfmt and Clippy with Rustup"
+grep -Fx "RUN chmod -R a+w \"\${RUSTUP_HOME}\" \"\${CARGO_HOME}\"" \
+    "${ROOT}/docker/Dockerfile" >/dev/null \
+    || fail "runtime image does not make copied Rustup directories writable"
+for directory in cargo rustup; do
+    grep -Fx "COPY --from=rust-toolchain /usr/local/${directory} /usr/local/${directory}" \
+        "${ROOT}/docker/Dockerfile" >/dev/null \
+        || fail "runtime image does not copy the Rustup-managed ${directory} directory"
+done
+for package in rustc cargo rustfmt rust-clippy; do
+    if grep -Fx "        ${package} \\" "${ROOT}/docker/Dockerfile" >/dev/null; then
+        fail "runtime image still installs Debian's ${package} package"
+    fi
+done
 [[ "$(sed -n '2p' "${ROOT}/docker/network-policy-resolver.mjs")" == "//${SPDX#\#}" ]] \
     || fail "network policy resolver has no SPDX license identifier"
 [[ "$(sed -n '2p' "${ROOT}/docker/egress/entrypoint.sh")" == "${SPDX}" ]] \
@@ -27,6 +48,31 @@ SPDX='# SPDX-License-Identifier: MIT'
     || fail "release workflow has no SPDX license identifier"
 [[ "$(sed -n '2p' "${BASH_SOURCE[0]}")" == "${SPDX}" ]] \
     || fail "packaging test has no SPDX license identifier"
+expected_extension_layout="$(printf '%s\n' \
+    caf/caf-agent.ts \
+    caf/caf-log-viewer.ts \
+    caf/caf-protocol.ts \
+    guard/guard-evidence.ts \
+    guard/guard-journal.ts \
+    guard/guard-reviewer-agent.ts \
+    guard/guard-runtime-contract.ts \
+    guard/guard-runtime.ts \
+    guard/guard-viewer.ts \
+    guardian/guardian-agent.ts \
+    guardian/guardian-log-safety.ts \
+    guardian/guardian-log-viewer.ts \
+    guardian/guardian-review-trace.ts \
+    guardian/guardian-reviewer.ts \
+    plan/plan-agent.ts \
+    snapshot/snapshot-agent.ts | LC_ALL=C sort)"
+actual_extension_layout="$(find "${ROOT}/docker/extensions" -mindepth 1 \( -type f -o -type l \) \
+    -printf '%P\n' | LC_ALL=C sort)"
+[[ "${actual_extension_layout}" == "${expected_extension_layout}" ]] \
+    || fail "runtime extension source layout differs from the architectural boundary"
+while IFS= read -r extension; do
+    path="${ROOT}/docker/extensions/${extension}"
+    [[ -f "${path}" && ! -L "${path}" ]] || fail "unsafe runtime extension source: ${extension}"
+done <<<"${expected_extension_layout}"
 image_license="${ROOT}/docker/licenses/pi-run-LICENSE"
 [[ -f "${image_license}" && ! -L "${image_license}" ]] \
     || fail "runtime image license is missing or unsafe"

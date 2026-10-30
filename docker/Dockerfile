@@ -1,7 +1,15 @@
 # SPDX-License-Identifier: MIT
 
+ARG RUST_VERSION=1.99.1
+
+FROM rust:${RUST_VERSION}-trixie AS rust-toolchain
+ARG RUST_VERSION
+RUN rustup component add --toolchain "${RUST_VERSION}" rustfmt clippy \
+    && chmod -R a+w "${RUSTUP_HOME}" "${CARGO_HOME}"
+
 FROM node:24-trixie
 
+ARG RUST_VERSION
 ARG PI_VERSION=1.1.0
 ARG PI_WEB_ACCESS_VERSION=0.37.0
 ARG PI_OKF_VERSION=0.4.0
@@ -106,6 +114,20 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 #
+# Rust
+#
+# Use the Rustup-managed toolchain from Rust's versioned official image instead
+# of Debian's distribution snapshot. The official image makes these shared
+# directories writable so Cargo and Rustup work under Pi-Run's mapped UID.
+#
+
+COPY --from=rust-toolchain /usr/local/cargo /usr/local/cargo
+COPY --from=rust-toolchain /usr/local/rustup /usr/local/rustup
+ENV RUSTUP_HOME=/usr/local/rustup \
+    CARGO_HOME=/usr/local/cargo \
+    PATH="/usr/local/cargo/bin:${PATH}"
+
+#
 # JavaScript / TypeScript
 #
 # Node and npm come from node:24-trixie.
@@ -197,10 +219,23 @@ RUN npm install -g \
         "pi-web-access@${PI_WEB_ACCESS_VERSION}" \
         "pi-okf@${PI_OKF_VERSION}"
 
-# Copy Guardian and the core Pi-Run skills into the versioned runtime image.
-COPY extensions/plan-agent.ts /usr/local/lib/node_modules/plan-agent/
-COPY extensions/guardian-agent.ts /usr/local/lib/node_modules/guardian-agent/
-COPY extensions/snapshot-agent.ts /usr/local/lib/node_modules/snapshot-agent/
+# Copy the Pi-Run extension bundle with shared Guard infrastructure and sibling clients.
+COPY extensions/plan/plan-agent.ts /usr/local/lib/node_modules/pi-run-extensions/plan/
+COPY extensions/guard/guard-runtime-contract.ts /usr/local/lib/node_modules/pi-run-extensions/guard/
+COPY extensions/guard/guard-runtime.ts /usr/local/lib/node_modules/pi-run-extensions/guard/
+COPY extensions/guard/guard-viewer.ts /usr/local/lib/node_modules/pi-run-extensions/guard/
+COPY extensions/guard/guard-journal.ts /usr/local/lib/node_modules/pi-run-extensions/guard/
+COPY extensions/guard/guard-evidence.ts /usr/local/lib/node_modules/pi-run-extensions/guard/
+COPY extensions/guard/guard-reviewer-agent.ts /usr/local/lib/node_modules/pi-run-extensions/guard/
+COPY extensions/guardian/guardian-log-safety.ts /usr/local/lib/node_modules/pi-run-extensions/guardian/
+COPY extensions/guardian/guardian-log-viewer.ts /usr/local/lib/node_modules/pi-run-extensions/guardian/
+COPY extensions/guardian/guardian-review-trace.ts /usr/local/lib/node_modules/pi-run-extensions/guardian/
+COPY extensions/guardian/guardian-reviewer.ts /usr/local/lib/node_modules/pi-run-extensions/guardian/
+COPY extensions/guardian/guardian-agent.ts /usr/local/lib/node_modules/pi-run-extensions/guardian/
+COPY extensions/caf/caf-log-viewer.ts /usr/local/lib/node_modules/pi-run-extensions/caf/
+COPY extensions/caf/caf-protocol.ts /usr/local/lib/node_modules/pi-run-extensions/caf/
+COPY extensions/caf/caf-agent.ts /usr/local/lib/node_modules/pi-run-extensions/caf/
+COPY extensions/snapshot/snapshot-agent.ts /usr/local/lib/node_modules/pi-run-extensions/snapshot/
 COPY skills/ /usr/local/share/pi-run/skills/
 RUN test -f /usr/local/share/pi-run/skills/pi-run/SKILL.md \
     && test -f /usr/local/share/pi-run/skills/profile-management/SKILL.md \
@@ -235,6 +270,11 @@ WORKDIR /workspace
 # System-level Git config for Flutter directory (before switching to node)
 RUN git config --system --add safe.directory /opt/flutter
 
+# COPY creates the destination roots in this stage. Apply the official Rust
+# image's shared-directory permissions here so Pi-Run's mapped user can write
+# Cargo caches and use Rustup.
+RUN chmod -R a+w "${RUSTUP_HOME}" "${CARGO_HOME}"
+
 # Switch to node user for Flutter initialization
 USER node
 
@@ -263,6 +303,12 @@ RUN set -eux; \
     clang --version; \
     cmake --version; \
     ninja --version; \
+    rustc --version | grep -E "^rustc ${RUST_VERSION} "; \
+    cargo --version; \
+    rustup --version; \
+    rustup show active-toolchain | grep -E "^${RUST_VERSION}-[^ ]+ \\(default\\)$"; \
+    rustfmt --version; \
+    cargo clippy --version; \
     kubectl version --client; \
     helm version --short; \
     kustomize version; \

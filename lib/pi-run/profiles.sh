@@ -111,14 +111,73 @@ validate_profile_config() {
         || fail "invalid profile configuration: ${config}"
 }
 
+configure_restricted_web_access_proxy() {
+    local profile_dir="$1"
+    local config="${profile_dir}/web-search.json"
+    local staging="${profile_dir}/.web-search.json.tmp.$$"
+    local profile_lock_fd
+
+    exec {profile_lock_fd}<"${profile_dir}" \
+        || fail "could not open profile directory for web-access configuration: ${profile_dir}"
+    flock -x "${profile_lock_fd}" \
+        || fail "could not lock profile directory for web-access configuration: ${profile_dir}"
+
+    if [[ -e "${config}" || -L "${config}" ]]; then
+        [[ -f "${config}" && ! -L "${config}" && "$(stat -c %h "${config}")" == 1 ]] \
+            || fail "web-access configuration must be a regular non-linked file: ${config}"
+        case "$(realpath "${config}")" in
+            "${profile_dir}"/*) ;;
+            *) fail "web-access configuration escapes its profile: ${config}" ;;
+        esac
+        jq -e '
+            type == "object" and
+            ((has("ssrf") | not) or .ssrf == null or
+             ((.ssrf | type) == "object" and
+              ((.ssrf | has("trustEnvProxy") | not) or
+               (.ssrf.trustEnvProxy | type) == "boolean")))
+        ' "${config}" >/dev/null \
+            || fail "invalid web-access configuration for restricted networking: ${config}"
+        if jq -e '.ssrf.trustEnvProxy == true' "${config}" >/dev/null; then
+            exec {profile_lock_fd}>&-
+            return 0
+        fi
+    fi
+
+    [[ ! -e "${staging}" && ! -L "${staging}" ]] \
+        || fail "web-access configuration staging path already exists: ${staging}"
+    trap 'rm -f "${staging:-}"' RETURN
+    if [[ -e "${config}" ]]; then
+        jq '.ssrf = (if .ssrf == null then {} else .ssrf end) |
+            .ssrf.trustEnvProxy = true' "${config}" > "${staging}"
+    else
+        printf '%s\n' '{"ssrf":{"trustEnvProxy":true}}' > "${staging}"
+    fi
+    chmod 0600 "${staging}"
+    jq -e '.ssrf.trustEnvProxy == true' "${staging}" >/dev/null \
+        || fail "could not stage web-access configuration for restricted networking"
+    mv "${staging}" "${config}"
+    trap - RETURN
+    exec {profile_lock_fd}>&-
+}
+
 validate_profile_definition_files() {
     local profile_dir="$1"
-    local file path guardian_dir="${profile_dir}/guardian"
+    local file path guardian_dir="${profile_dir}/guardian" caf_dir="${profile_dir}/caf"
+    local -a definition_files=(profile.json AGENTS.md guardian/guardian.md)
     [[ -d "${guardian_dir}" && ! -L "${guardian_dir}" ]] \
         || fail "Guardian definition directory must be a non-symlink directory: ${guardian_dir}"
     [[ "$(realpath "${guardian_dir}")" == "${guardian_dir}" ]] \
         || fail "Guardian definition directory escapes its profile: ${guardian_dir}"
-    for file in profile.json AGENTS.md guardian/guardian.md; do
+    if [[ -e "${caf_dir}" || -L "${caf_dir}" ]]; then
+        [[ -d "${caf_dir}" && ! -L "${caf_dir}" ]] \
+            || fail "CAF definition directory must be a non-symlink directory: ${caf_dir}"
+        [[ "$(realpath "${caf_dir}")" == "${caf_dir}" ]] \
+            || fail "CAF definition directory escapes its profile: ${caf_dir}"
+        if [[ -e "${caf_dir}/caf.md" || -L "${caf_dir}/caf.md" ]]; then
+            definition_files+=(caf/caf.md)
+        fi
+    fi
+    for file in "${definition_files[@]}"; do
         path="${profile_dir}/${file}"
         [[ -f "${path}" && ! -L "${path}" ]] \
             || fail "profile definition must be a regular non-symlink file: ${path}"
@@ -151,6 +210,10 @@ materialize_profile_definition() {
     install -m 0600 "${source_dir}/AGENTS.md" "${staging}/AGENTS.md"
     mkdir -m 0700 "${staging}/credentials" "${staging}/sessions" "${staging}/guardian" "${staging}/skills"
     install -m 0600 "${source_dir}/guardian/guardian.md" "${staging}/guardian/guardian.md"
+    if [[ -f "${source_dir}/caf/caf.md" ]]; then
+        mkdir -m 0700 "${staging}/caf"
+        install -m 0600 "${source_dir}/caf/caf.md" "${staging}/caf/caf.md"
+    fi
     cp -a "${source_dir}/skills/." "${staging}/skills/"
     chmod -R u+rwX,go-w "${staging}/skills"
     mv "${staging}" "${target}"

@@ -126,11 +126,21 @@ grep -F 'pi-run: network=docker-host' "${TMP}/stderr" >/dev/null \
     || fail "default backend was not reported"
 [[ "$(grep -Fxc -- '--network' "${DOCKER_LOG}")" -eq 1 ]] \
     || fail "default launch supplied multiple Docker network modes"
+WEB_SEARCH_CONFIG="${HOME_DIR}/profiles/default/web-search.json"
+[[ ! -e "${WEB_SEARCH_CONFIG}" && ! -L "${WEB_SEARCH_CONFIG}" ]] \
+    || fail "host launch created restricted web-access configuration"
 
-# Profile-selected offline launches map to Docker's network-none mode.
+# Profile-selected offline launches map to Docker's network-none mode without
+# changing an existing web-access configuration.
+printf '%s\n' '{"provider":"openai","ssrf":{"trustEnvProxy":false}}' > "${WEB_SEARCH_CONFIG}"
+chmod 0600 "${WEB_SEARCH_CONFIG}"
+cp "${WEB_SEARCH_CONFIG}" "${TMP}/web-search.offline.expected"
 set_network_mode offline
 run_launch "${PI_RUN}" "${WORKSPACE}"
 assert_network_mode none
+cmp "${TMP}/web-search.offline.expected" "${WEB_SEARCH_CONFIG}" >/dev/null \
+    || fail "offline launch changed web-access configuration"
+rm "${WEB_SEARCH_CONFIG}"
 grep -F 'pi-run: network=docker-offline' "${TMP}/stderr" >/dev/null \
     || fail "offline backend was not reported"
 if grep -Fx host "${DOCKER_LOG}" >/dev/null; then
@@ -211,6 +221,10 @@ grep -Fx 'NODE_USE_ENV_PROXY=1' "${DOCKER_LOG}" >/dev/null \
     || fail "Node environment proxy support was not enabled"
 grep -Fx 'PI_RUN_NETWORK_MODE=restricted' "${DOCKER_LOG}" >/dev/null \
     || fail "restricted mode was not passed to runtime helpers"
+jq -e '. == {ssrf: {trustEnvProxy: true}}' "${WEB_SEARCH_CONFIG}" >/dev/null \
+    || fail "restricted launch did not create proxy-aware web-access configuration"
+[[ "$(stat -c %a "${WEB_SEARCH_CONFIG}")" == 600 ]] \
+    || fail "generated web-access configuration is not private"
 ready_line="$(grep -n '/tmp/pi-run-egress-ready' "${DOCKER_LOG}" | head -1 | cut -d: -f1)"
 runtime_line="$(grep -n -- '-it' "${DOCKER_LOG}" | head -1 | cut -d: -f1)"
 (( ready_line < runtime_line )) || fail "Pi started before sidecar readiness"
@@ -218,6 +232,30 @@ grep -Fx rm "${DOCKER_LOG}" >/dev/null || fail "sidecar cleanup was not attempte
 if grep -Fx host "${DOCKER_LOG}" >/dev/null; then
     fail "restricted launch used host networking"
 fi
+
+# Restricted launches merge only the required SSRF setting and become
+# idempotent once it is enabled.
+cat > "${WEB_SEARCH_CONFIG}" <<'EOF'
+{
+  "provider": "openai",
+  "fetchContent": {"domainPolicy": {"allow": ["example.test"]}},
+  "ssrf": {"allowRanges": ["198.18.0.0/15"], "trustEnvProxy": false}
+}
+EOF
+chmod 0640 "${WEB_SEARCH_CONFIG}"
+run_launch "${PI_RUN}" "${WORKSPACE}"
+jq -e '. == {
+    provider: "openai",
+    fetchContent: {domainPolicy: {allow: ["example.test"]}},
+    ssrf: {allowRanges: ["198.18.0.0/15"], trustEnvProxy: true}
+}' "${WEB_SEARCH_CONFIG}" >/dev/null \
+    || fail "restricted launch did not preserve custom web-access configuration"
+[[ "$(stat -c %a "${WEB_SEARCH_CONFIG}")" == 600 ]] \
+    || fail "updated web-access configuration is not private"
+web_search_inode="$(stat -c %i "${WEB_SEARCH_CONFIG}")"
+run_launch "${PI_RUN}" "${WORKSPACE}"
+[[ "$(stat -c %i "${WEB_SEARCH_CONFIG}")" == "${web_search_inode}" ]] \
+    || fail "enabled web-access configuration was rewritten"
 
 RESOLVER_OUTPUT='{"schemaVersion":1,"modelRules":[{"host":"one.private.example.test","tcpPorts":[443]}],"sshRules":[],"manualRules":[]}' \
     run_launch "${PI_RUN}" "${WORKSPACE}"
@@ -315,6 +353,36 @@ set -e
 grep -F 'restricted runtime policy staging would overlap workspace: /tmp' \
     "${TMP}/stderr" >/dev/null || fail "overlapping workspace had no clear diagnostic"
 [[ ! -s "${DOCKER_LOG}" ]] || fail "overlapping workspace reached Docker"
+
+# Malformed and linked web-access configuration fails closed before Docker.
+printf '%s\n' '{not-json' > "${WEB_SEARCH_CONFIG}"
+: > "${DOCKER_LOG}"
+set +e
+PATH="${TMP}/fake-bin:${PATH}" PI_RUN_HOME="${HOME_DIR}" \
+    "${PI_RUN}" "${WORKSPACE}" >"${TMP}/stdout" 2>"${TMP}/stderr"
+status=$?
+set -e
+[[ ${status} -ne 0 ]] || fail "malformed web-access configuration was accepted"
+grep -F 'invalid web-access configuration for restricted networking' "${TMP}/stderr" >/dev/null \
+    || fail "malformed web-access configuration had no clear diagnostic"
+[[ ! -s "${DOCKER_LOG}" ]] || fail "malformed web-access configuration reached Docker"
+
+printf '%s\n' '{"ssrf":{"trustEnvProxy":true}}' > "${TMP}/outside-web-search.json"
+rm "${WEB_SEARCH_CONFIG}"
+ln -s "${TMP}/outside-web-search.json" "${WEB_SEARCH_CONFIG}"
+: > "${DOCKER_LOG}"
+set +e
+PATH="${TMP}/fake-bin:${PATH}" PI_RUN_HOME="${HOME_DIR}" \
+    "${PI_RUN}" "${WORKSPACE}" >"${TMP}/stdout" 2>"${TMP}/stderr"
+status=$?
+set -e
+[[ ${status} -ne 0 ]] || fail "linked web-access configuration was accepted"
+grep -F 'web-access configuration must be a regular non-linked file' "${TMP}/stderr" >/dev/null \
+    || fail "linked web-access configuration had no clear diagnostic"
+[[ ! -s "${DOCKER_LOG}" ]] || fail "linked web-access configuration reached Docker"
+rm "${WEB_SEARCH_CONFIG}"
+printf '%s\n' '{"ssrf":{"trustEnvProxy":true}}' > "${WEB_SEARCH_CONFIG}"
+chmod 0600 "${WEB_SEARCH_CONFIG}"
 
 # Structurally invalid profile rules fail before Docker.
 config="${HOME_DIR}/profiles/default/profile.json"

@@ -6,7 +6,7 @@ PI_PACKAGE_DIR="${PI_PACKAGE_DIR:-$(npm root -g)/@earendil-works/pi-coding-agent
 
 node --input-type=module - "${ROOT}" "${PI_PACKAGE_DIR}" <<'NODE'
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { chmod, link, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -22,13 +22,59 @@ const alias = {
   '@earendil-works/pi-coding-agent': join(piDir, 'dist', 'index.js'),
   '@earendil-works/pi-ai': join(piDir, 'node_modules', '@earendil-works', 'pi-ai', 'dist', 'compat.js'),
 };
-const g = await createJiti(import.meta.url, { alias, fsCache: false }).import(join(root, 'docker', 'extensions', 'guardian-agent.ts'));
+const jiti = createJiti(import.meta.url, { alias, fsCache: false });
+const g = await jiti.import(join(root, 'docker', 'extensions', 'guardian', 'guardian-agent.ts'));
+const shared = await jiti.import(join(root, 'docker', 'extensions', 'guard', 'guard-reviewer-agent.ts'));
+const dockerfile = await readFile(join(root, 'docker', 'Dockerfile'), 'utf8');
+assert.ok(dockerfile.includes('COPY extensions/guard/guard-reviewer-agent.ts /usr/local/lib/node_modules/pi-run-extensions/guard/'));
 const core = await import(pathToFileURL(packagePath('pi-agent-core')).href);
 const ai = await import(pathToFileURL(join(piDir, 'node_modules', '@earendil-works', 'pi-ai', 'dist', 'compat.js')).href);
+const {createEventBus}=await import(pathToFileURL(join(piDir,'dist/core/event-bus.js')).href);
+const commands=new Set(),commandPi={events:createEventBus(),on:()=>()=>{},registerCommand:name=>commands.add(name),registerTool(){},getActiveTools:()=>[],setActiveTools(){}};
+g.default(commandPi);assert.ok(commands.has('guardian-model'));assert.ok(commands.has('guardian-thinking'));assert.ok(!commands.has('guard-model'));assert.ok(!commands.has('guard-thinking'));
 
 const workspace = await mkdtemp(join(tmpdir(), 'guardian-reviewer-'));
 const controller = new AbortController();
 try {
+  assert.deepEqual(shared.defaultGuardReviewerConfig(),{schemaVersion:1,model:null,thinking:null});
+  const explicit={schemaVersion:1,model:'trusted/reviewer',thinking:'high'};
+  assert.deepEqual(shared.parseGuardReviewerConfig(JSON.stringify(explicit)),explicit);
+  assert.deepEqual(shared.adoptLegacyGuardReviewerConfig({model:'trusted/reviewer',thinking:'low'}),{schemaVersion:1,model:'trusted/reviewer',thinking:'low'});
+  assert.deepEqual(shared.adoptLegacyGuardReviewerConfig({model:null,thinking:'high'}),shared.defaultGuardReviewerConfig(),
+    'A legacy null model must not become a conversation-model fallback');
+  for(const value of [null,{},[],{...explicit,schemaVersion:2},{...explicit,model:'invalid'},{...explicit,thinking:'extreme'},{...explicit,extra:true}])
+    assert.throws(()=>shared.parseGuardReviewerConfig(JSON.stringify(value)),/Invalid Guard reviewer configuration/);
+  const profile=join(workspace,'profile');await mkdir(profile,{mode:0o700});
+  await assert.rejects(shared.loadGuardReviewerConfig(profile),error=>error?.code==='ENOENT');
+  await shared.saveGuardReviewerConfig(profile,explicit);
+  assert.equal((await stat(join(profile,'guard'))).mode&0o777,0o700);assert.equal((await stat(join(profile,'guard','config.json'))).mode&0o777,0o600);
+  assert.deepEqual(await shared.loadGuardReviewerConfig(profile),explicit);
+  assert.equal(await readFile(join(profile,'guard','config.json'),'utf8'),JSON.stringify(explicit)+'\n');
+  const hardlink=join(profile,'guard','config-copy.json');await link(join(profile,'guard','config.json'),hardlink);
+  await assert.rejects(shared.loadGuardReviewerConfig(profile),/single-link regular file/);await rm(hardlink);
+  const redirected=join(workspace,'redirected-profile'),target=join(workspace,'redirect-target');
+  await mkdir(redirected,{mode:0o700});await mkdir(target,{mode:0o700});await symlink(target,join(redirected,'guard'));
+  await assert.rejects(shared.saveGuardReviewerConfig(redirected,explicit),/must not be redirected/);
+  await chmod(join(profile,'guard'),0o755);await assert.rejects(shared.loadGuardReviewerConfig(profile),/must be private/);await chmod(join(profile,'guard'),0o700);
+  const unselectedBinding=g.createPiReviewerBinding({pi:{getThinkingLevel:()=> 'high'},config:()=>shared.defaultGuardReviewerConfig(),
+    changed(){},async updateConfig(){},tell(){},log:()=>()=>{}});
+  assert.equal(unselectedBinding.controls,undefined,'Shared reviewer controls must not be implemented by the Guardian reviewer binding');
+  assert.throws(()=>unselectedBinding.select({modelRegistry:{find(){throw new Error('must not resolve a conversation fallback');}}}),/model is not selected/);
+  const backendHandlers=new Map(),backendPi={on:(name,handler)=>{backendHandlers.set(name,handler);return()=>backendHandlers.delete(name);}};
+  const previousProfile=process.env.PI_RUN_PROFILE_DIR;process.env.PI_RUN_PROFILE_DIR=profile;
+  const backend=shared.createAgenticGuardReviewBackend(backendPi);
+  if(previousProfile===undefined)delete process.env.PI_RUN_PROFILE_DIR;else process.env.PI_RUN_PROFILE_DIR=previousProfile;
+  const configuredModel={id:'reviewer',provider:'trusted',api:'openai-responses',reasoning:false,contextWindow:128_000,maxTokens:4096};
+  const resolutions=[];backendHandlers.get('session_start')({}, {modelRegistry:{find:(provider,id)=>{resolutions.push(`${provider}/${id}`);return provider==='trusted'&&id==='reviewer'?configuredModel:undefined;}}});
+  let backendSelection;
+  shared.registerAgenticGuardReviewDomain(backendPi,'guardian','guardian-command.v1','guardian-decision.v1',{async review(_request,_context,_session,selection){backendSelection=selection;return {schemaVersion:1,status:'completed',decision:{outcome:'ALLOW'}};}});
+  const backendResult=await backend.review({schemaVersion:1,client:{schemaVersion:1,id:'guardian',label:'Guardian',evidenceProfile:'guardian-command.v1',decisionContract:'guardian-decision.v1'},action:{},policy:{}},
+    {signal:new AbortController().signal,report(){}});
+  assert.equal(backendResult.status,'completed');assert.deepEqual(resolutions,['trusted/reviewer']);assert.equal(backendSelection.model,configuredModel);
+  assert.equal(backendSelection.requestedThinking,'high');assert.equal(backendSelection.thinking,'off');assert.equal(backendSelection.modelSource,'guard_file');
+  assert.equal(backendSelection.thinkingSource,'guard_config');assert.equal(backendSelection.budget.totalMs,180_000);
+  console.log('PASS guardian-reviewer: private shared config, backend-owned resolution, explicit legacy adoption, and no implicit model fallback');
+
   const files = [];
   for (let i = 1; i <= 4; i++) {
     const path = join(workspace, `evidence-${i}.txt`);
@@ -77,6 +123,7 @@ try {
       },
     }),
   });
+  assert.ok(reviewer instanceof shared.AgenticGuardReviewer, 'Guardian must use the extracted agentic review harness');
 
   const request = {
     action: { toolName: 'bash', toolCallId: 'synthetic', input: { command: 'printf test' }, cwd: workspace },
@@ -222,6 +269,20 @@ try {
     String(event.details?.error).includes('U-CURRENT')));
   assert.equal(chronologyCorrected.events.filter(event => event.event === 'model_request').at(-1)?.details?.finalDecisionOnly, true);
   console.log('PASS guardian-reviewer: final correction omits stale complete citations with unread chronology');
+
+  const recoveredTruncation = await assess(round => round === 1
+    ? streamed(assistant([{ type: 'text', text: 'Synthetic reasoning truncated before a decision.' }], 'length'))
+    : streamed(assistant([{ type: 'toolCall', id: 'decision-after-length', name: 'guardian_decide', arguments: {
+      outcome: 'ASK', basis: 'uncertainty', reason: 'Recovered with a bounded decision-only response.',
+      userMessageIds: [], instructionRefs: [],
+    } }])));
+  assert.equal(recoveredTruncation.result.status, 'completed');
+  assert.equal(recoveredTruncation.result.decision.outcome, 'ASK');
+  assert.equal(recoveredTruncation.requests, 2);
+  const truncationEvent=recoveredTruncation.events.find(event=>event.event==='incomplete_model_response');
+  assert.equal(truncationEvent?.details?.stopReason,'length');assert.equal(truncationEvent?.details?.recoveryScheduled,true);
+  assert.equal(recoveredTruncation.events.filter(event=>event.event==='model_request').at(-1)?.details?.finalDecisionOnly,true);
+  console.log('PASS guardian-reviewer: one truncated response receives a bounded decision-only continuation');
 
   const interrupted = await assess(() => streamed({
     ...assistant([{ type: 'toolCall', id: 'partial-decision', name: 'guardian_decide', arguments: {

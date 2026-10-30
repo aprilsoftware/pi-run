@@ -3,6 +3,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+VERSION="$(tr -d '\r\n' < "${ROOT}/VERSION")"
 TMP="$(mktemp -d)"
 trap 'rm -rf "${TMP}"' EXIT
 
@@ -88,10 +89,10 @@ manifest="$(printf '%s\n' "${create_output}" | awk '/^Manifest: / { sub(/^Manife
     || fail "create did not report the Restic snapshot ID"
 [[ -f "${manifest}" && "$(stat -c %a "${manifest}")" == 600 ]] \
     || fail "snapshot manifest is missing or has unsafe permissions"
-jq -e '
+jq -e --arg version "${VERSION}" '
     .schemaVersion == 1 and .scope == "complete" and .purpose == "manual" and
-    .piRunVersion == "0.8.7" and .piVersion == "1.1.0" and
-    .runtimeImage == "ghcr.io/aprilsoftware/pi-run:0.8.7" and
+    .piRunVersion == $version and .piVersion == "1.1.0" and
+    .runtimeImage == ("ghcr.io/aprilsoftware/pi-run:" + $version) and
     (.requestId | test("^[0-9a-f-]{36}$")) and
     (.includedPaths | index("profiles")) and
     (.excludedPaths | index("machines")) and

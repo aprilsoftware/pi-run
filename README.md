@@ -2,9 +2,9 @@
 
 Pi-Run turns [Pi](https://pi.dev/) into a durable, containerized work environment
 for software development and system administration. It combines a capable,
-versioned toolchain with profiles, sessions, Guardian command review, and
-recovery while limiting host filesystem exposure to the workspace, profile, and
-narrowly defined runtime resources.
+versioned toolchain with profiles, sessions, Guardian command review, bounded
+Call a Friend consultations, and recovery while limiting host filesystem
+exposure to the workspace, profile, and narrowly defined runtime resources.
 
 ## Why Pi-Run exists
 
@@ -36,15 +36,26 @@ profiles stay outside the container, but everything in the selected profile is
 available to the run. Credentials stored in the workspace or optional shared
 mount, and access offered by reachable services, are outside this boundary.
 
-Guardian adds another layer without requiring human interaction for every covered
-command. When enabled, a separate evidence-aware Pi reviewer examines acting-agent
-`bash` and `run` calls against the current request and applicable instructions. It
-releases supported actions; otherwise it permanently cancels the invocation and
-opens a dispute. The acting agent can inspect bounded file evidence and submit a
-structured position, which Guardian reassesses without granting authority or
-releasing the action. The human provides the final direction. Reviewer preferences
-and policy are profile-configurable; activation is session-scoped and every new
-session starts Off.
+Pi-Run separates four agent roles: the Primary agent performing the task, a
+Guardian reviewer agent for covered commands, a CAF reviewer agent for outbound
+disclosures, and the CAF advisory agent. Guardian and CAF review share one
+explicitly selected reviewer-model and thinking configuration, but each review
+runs a fresh role-specific Pi agent with its own private transcript, policy,
+tools, decision contract, effects, and journal stream. Guard Runtime coordinates
+reviewer execution,
+activity, cancellation, and presentation; it is infrastructure, not another
+agent or a policy owner.
+
+When Guard review is On, the Guardian reviewer examines covered `bash` and `run`
+calls, while the CAF reviewer examines each friend or public-search disclosure.
+Guardian releases supported commands; otherwise it permanently cancels the
+invocation and opens a challenge. The acting agent can inspect bounded file
+evidence and retract, narrow, or contest its proposal. Retraction and narrowing
+withdraw the original without human arbitration; Guard reassesses a contest and
+permits one exact retry only when the concern is resolved. The human provides
+final direction when disagreement remains or reassessment is unavailable. Guard
+review is session-scoped and starts Off unless the profile's new-session default
+was deliberately changed.
 
 Guardian is not a sandbox or an infallible security decision-maker. The temporary
 container narrows filesystem exposure, but selected mounts contain real host
@@ -71,10 +82,17 @@ resources, and other infrastructure need their own recovery mechanisms.
 - **Purpose-specific exposure:** only the selected profile is mounted, providing
   its instructions, provider access, credentials, settings, skills, Guardian
   policy, and conversations while leaving other profiles out of view.
-- **Guardian command review:** an optional, session-scoped evidence-aware
-  reviewer checks acting-agent `bash` and `run` calls. Supported actions proceed;
-  disputed invocations are cancelled and left for human direction. Guardian
-  starts Off.
+- **Shared Guard review:** one explicitly configured reviewer can check
+  acting-agent `bash` and `run` calls plus Call a Friend disclosures. Supported
+  commands proceed; challenged invocations are cancelled, and only unresolved
+  disputes require human direction. Guard review starts Off, and an enabled CAF
+  makes no reviewer call while it remains Off.
+- **Call a Friend:** the private primary agent can send one bounded disclosure
+  to a separately configured advisory model, with constrained questions,
+  continuations, and optional public search. Guard reviews each destination
+  while Guard is On; while Guard is explicitly Off, CAF sends the same bounded
+  actions without independent disclosure judgment. The friend receives no
+  automatic workspace or primary-transcript access.
 - **Continuity:** stable workspace identities and saved sessions let you leave,
   resume, move a checkout, or reconnect work after recovery.
 - **Parallel repository work:** persistent managed Git worktrees give concurrent
@@ -154,6 +172,16 @@ run and explains writable resources before you begin.
 
 ## Design background
 
+Pi-Run is an opinionated practical implementation of
+[April Software's broader bounded-autonomy approach](https://www.aprilsoftware.com/web/agentic-ai):
+human judgment stays at meaningful decision points while agents execute within
+one agreed mandate and reconnect their work with evidence before authority
+expands. The accompanying
+[16-page presentation](https://www.aprilsoftware.com/web/downloads/bounded-autonomy-development-operations.pdf)
+summarizes the methodology, controls, trade-offs, and organizational learning.
+Pi-Run explores how those principles can become working controls; it is not the
+methodology itself or a claim that one environment eliminates agentic risk.
+
 Start with
 [Beyond Permission Prompts: Building a Workstation for AI Agents](https://medium.com/@cedric.nanni/pi-run-building-a-durable-workstation-for-ai-agents-bc47c42105eb),
 which brings the ideas together in Pi-Run: short prediction horizons, explicit
@@ -181,7 +209,8 @@ implementation and its exact boundaries.
 - [Getting started](docs/getting-started.md)
 - [Profiles](docs/profiles.md), [skills](docs/skills.md), and
   [workspaces and sessions](docs/workspaces-and-sessions.md)
-- [Planning](docs/planning.md) and [Guardian command review](docs/guardian.md)
+- [Planning](docs/planning.md), [Guardian command review](docs/guardian.md), and
+  [Call a Friend](docs/call-a-friend.md)
 - [SSH access](docs/ssh.md)
 - [Encrypted snapshots and recovery](docs/snapshots.md)
 - [Security and isolation](docs/security.md)

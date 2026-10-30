@@ -4,6 +4,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PI_RUN="${ROOT}/bin/pi-run"
+VERSION="$(tr -d '\r\n' < "${ROOT}/VERSION")"
 TMP="$(mktemp -d)"
 trap 'rm -rf "${TMP}"' EXIT
 
@@ -41,9 +42,9 @@ for command_name in bash dirname readlink realpath tr; do
     ln -s "${command_path}" "${TMP}/minimal-bin/${command_name}"
 done
 version_output="$(PATH="${TMP}/minimal-bin" PI_RUN_HOME="${TMP}/never-created" "${PI_RUN}" version)"
-assert_contains "${version_output}" "pi-run v0.8.7"
-assert_contains "${version_output}" "runtime ghcr.io/aprilsoftware/pi-run:0.8.7"
-assert_contains "${version_output}" "egress ghcr.io/aprilsoftware/pi-run-egress:0.8.7"
+assert_contains "${version_output}" "pi-run v${VERSION}"
+assert_contains "${version_output}" "runtime ghcr.io/aprilsoftware/pi-run:${VERSION}"
+assert_contains "${version_output}" "egress ghcr.io/aprilsoftware/pi-run-egress:${VERSION}"
 [[ ! -e "${TMP}/never-created" ]] || fail "version created Pi-Run home"
 version_output="$(PATH="${TMP}/minimal-bin" PI_RUN_IMAGE=example.invalid/pi-run:test \
     PI_RUN_EGRESS_IMAGE=example.invalid/pi-run-egress:test "${PI_RUN}" version)"
@@ -67,9 +68,9 @@ output="$(PATH="${TMP}/fake-bin:${PATH}" PI_RUN_HOME="${TMP}/uninitialized" "${P
 assert_contains "${output}" "WARN  Pi-Run home is not initialized"
 assert_contains "${output}" "Doctor: PASS"
 [[ ! -e "${TMP}/uninitialized" ]] || fail "doctor initialized Pi-Run home"
-grep -Fx 'ghcr.io/aprilsoftware/pi-run:0.8.7' "${TMP}/image" >/dev/null \
+grep -Fx "ghcr.io/aprilsoftware/pi-run:${VERSION}" "${TMP}/image" >/dev/null \
     || fail "doctor inspected the wrong default runtime image"
-grep -Fx 'ghcr.io/aprilsoftware/pi-run-egress:0.8.7' "${TMP}/image" >/dev/null \
+grep -Fx "ghcr.io/aprilsoftware/pi-run-egress:${VERSION}" "${TMP}/image" >/dev/null \
     || fail "doctor inspected the wrong default egress image"
 [[ "$(wc -l < "${TMP}/image")" -eq 2 ]] || fail "doctor inspected an unexpected image set"
 
@@ -112,8 +113,8 @@ assert_contains "${output}" "Docker daemon is unavailable"
 
 for role in runtime egress; do
     case "${role}" in
-        runtime) missing_image='ghcr.io/aprilsoftware/pi-run:0.8.7' ;;
-        egress) missing_image='ghcr.io/aprilsoftware/pi-run-egress:0.8.7' ;;
+        runtime) missing_image="ghcr.io/aprilsoftware/pi-run:${VERSION}" ;;
+        egress) missing_image="ghcr.io/aprilsoftware/pi-run-egress:${VERSION}" ;;
     esac
     : > "${TMP}/image"
     set +e
