@@ -13,7 +13,16 @@ With Node, npm, and Pi installed (including inside the Pi-Run runtime):
 
 ```bash
 bash tests/guardian-flow-test.sh
+bash tests/guardian-primary-battle-test.sh
 ```
+
+The primary battle test drives synthetic `run` tool calls through Pi's native
+`Agent` loop. A scripted hostile primary attempts effects without authority,
+claims its own proposal was approved, retries during an open dispute, violates a
+current refusal, and contests a challenge using fabricated authority. None may
+reach the recording executor. An exact authorized control must reach that
+executor once. The reviewer, operation sink, profile, workspace, session, and
+journals are synthetic and temporary; no provider or real command is contacted.
 
 For a non-global Pi installation, set `PI_PACKAGE_DIR` to its package directory.
 The runner also verifies that Pi loads the interactive extension, which registers

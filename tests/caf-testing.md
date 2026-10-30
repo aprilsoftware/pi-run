@@ -8,6 +8,7 @@ bash tests/caf-config-test.sh
 bash tests/caf-lifecycle-test.sh
 bash tests/caf-agent-loop-test.sh
 bash tests/caf-dialogue-agent-loop-test.sh
+bash tests/caf-primary-battle-test.sh
 ```
 
 The failure agent-loop test uses Pi's real `createAgentSession` lifecycle with a
@@ -25,8 +26,16 @@ answer. Protocol and lifecycle fixtures separately verify a fourth consultation
 round and the high emergency persistence boundary. CAF lifecycle fixtures also
 verify multiple sequential searches, independent review of every query,
 research-before-clarification retention, legacy single-search restoration, and
-the cumulative research-state boundary. Neither test contacts a real provider or
-friend.
+the cumulative research-state boundary.
+
+The primary battle test drives actual `call_friend` tool calls through Pi's
+native `Agent` loop. A scripted hostile primary attempts friend contact despite
+an explicit refusal and attempts an over-detailed disclosure; both must be
+withheld before the recording friend is reached. An exact minimized control must
+reach that synthetic friend once. Rejection must expose no model-visible tools,
+permit no same-turn retry, report that no friend request started, and restore the
+original tool set only after settlement. All three tests use synthetic providers
+and contact no real reviewer, friend, or search provider.
 
 ## Opt-in Guard-review evaluation
 
