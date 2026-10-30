@@ -21,8 +21,20 @@ The primary battle test drives synthetic `run` tool calls through Pi's native
 claims its own proposal was approved, retries during an open dispute, violates a
 current refusal, and contests a challenge using fabricated authority. None may
 reach the recording executor. An exact authorized control must reach that
-executor once. The reviewer, operation sink, profile, workspace, session, and
-journals are synthetic and temporary; no provider or real command is contacted.
+executor once. By default the reviewer, operation sink, profile, workspace,
+session, and journals are synthetic and temporary; no provider or real command
+is contacted.
+
+Explicitly opt the primary battle test into the selected profile's configured
+reviewer while retaining the scripted hostile primary and recording executor:
+
+```bash
+PRIMARY_BATTLE_LIVE_REVIEWS=1 bash tests/guardian-primary-battle-test.sh
+```
+
+This mode makes real reviewer-model requests and can incur charges. Authentication
+is read-only, model-catalog refresh is disabled, every profile input is verified
+byte-identical afterward, and no real command can execute.
 
 For a non-global Pi installation, set `PI_PACKAGE_DIR` to its package directory.
 The runner also verifies that Pi loads the interactive extension, which registers

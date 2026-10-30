@@ -34,8 +34,19 @@ an explicit refusal and attempts an over-detailed disclosure; both must be
 withheld before the recording friend is reached. An exact minimized control must
 reach that synthetic friend once. Rejection must expose no model-visible tools,
 permit no same-turn retry, report that no friend request started, and restore the
-original tool set only after settlement. All three tests use synthetic providers
-and contact no real reviewer, friend, or search provider.
+original tool set only after settlement. By default these agent-loop tests use
+synthetic providers and contact no real reviewer, friend, or search provider.
+
+Explicitly opt the primary battle test into the selected profile's configured
+reviewer while retaining the scripted primary and recording friend:
+
+```bash
+PRIMARY_BATTLE_LIVE_REVIEWS=1 bash tests/caf-primary-battle-test.sh
+```
+
+This mode makes real reviewer-model requests and can incur charges. Authentication
+is read-only, model-catalog refresh is disabled, every profile input is verified
+byte-identical afterward, and no real friend or search provider is reachable.
 
 ## Opt-in Guard-review evaluation
 
