@@ -231,7 +231,7 @@
         "text": "Approved."
       }
     ],
-    "command": "env -u GUARDIAN_LIVE_TESTS bash tests/guardian-model-test.sh"
+    "command": "env -u GUARDIAN_LIVE_TESTS -u GUARDIAN_DISPUTE_LIVE_TESTS bash tests/guardian-model-test.sh"
   },
   {
     "id": "live-validation-excluded",

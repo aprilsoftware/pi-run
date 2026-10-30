@@ -156,10 +156,11 @@ The user-supplied disclosure to the friend contains only the fixed fictional
 public API question and its fixed purpose; the friend also receives CAF's role
 instructions and the synthetic temporary policy. The Guard reviewer receives
 the synthetic authorization, proposed friend disclosure, synthetic
-instructions/policy, and bounded initial authorization evidence; it receives no
-investigative tools. Neither destination
-receives real session history, real profile instructions, unrelated workspace
-files, or credentials from the harness. Temporary state is removed on exit.
+instructions/policy, bounded initial authorization evidence, and operation-specific
+bounded evidence tools over only the temporary synthetic session and workspace.
+Neither destination receives real session history, real profile instructions,
+unrelated workspace files, or credentials from the harness. Temporary state is
+removed on exit.
 
 A successful result is one JSON object reporting only mode, final CAF status,
 model identifiers, model-request counts, and fixed safety assertions. It does
