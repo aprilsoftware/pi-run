@@ -815,6 +815,9 @@ IMAGE="${PI_RUN_IMAGE:-${DEFAULT_IMAGE}}"
 EGRESS_IMAGE="${PI_RUN_EGRESS_IMAGE:-${DEFAULT_EGRESS_IMAGE}}"
 NETWORK_MODE="$(jq -r '.network.mode // "host"' "${PROFILE_CONFIG}")"
 NETWORK_BACKEND="docker-${NETWORK_MODE}"
+if [[ "${NETWORK_MODE}" == restricted ]]; then
+    configure_restricted_web_access_proxy "${PROFILE_DIR}"
+fi
 MODEL_RULES_DISPLAY="none"
 SSH_RULES_DISPLAY="none"
 MANUAL_RULES_DISPLAY="none"

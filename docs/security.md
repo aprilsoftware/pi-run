@@ -86,9 +86,15 @@ starting; there is no host-network fallback.
 
 Host and domain rules are enforced by hostname-aware HTTP CONNECT. HTTP clients
 receive loopback proxy variables, and restricted sessions configure OpenSSH to
-use the same proxy for SSH, SCP, SFTP, Git-over-SSH, and Ansible. Other
-hostname-based clients must support CONNECT. CIDR and public-internet rules are
-also enforced by the firewall and can support ordinary direct TCP clients.
+use the same proxy for SSH, SCP, SFTP, Git-over-SSH, and Ansible. A restricted
+launch also sets `ssrf.trustEnvProxy` to `true` in the selected profile's
+`web-search.json`, creating the file when needed and preserving its other
+settings. This lets the bundled web tools ask the controlled proxy to resolve
+remote hostnames instead of requiring unrestricted DNS from the workload.
+Host and offline launches do not change that file; the setting is inert when
+Pi-Run has not supplied a proxy. Other hostname-based clients must support
+CONNECT. CIDR and public-internet rules are also enforced by the firewall and
+can support ordinary direct TCP clients.
 Public-internet authority is broad exfiltration authority even when enterprise
 firewalls independently restrict it. Pi-Run does not inspect TLS, application
 methods, paths, or transferred data. Any allowed service can receive data by

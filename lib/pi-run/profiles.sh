@@ -111,6 +111,55 @@ validate_profile_config() {
         || fail "invalid profile configuration: ${config}"
 }
 
+configure_restricted_web_access_proxy() {
+    local profile_dir="$1"
+    local config="${profile_dir}/web-search.json"
+    local staging="${profile_dir}/.web-search.json.tmp.$$"
+    local profile_lock_fd
+
+    exec {profile_lock_fd}<"${profile_dir}" \
+        || fail "could not open profile directory for web-access configuration: ${profile_dir}"
+    flock -x "${profile_lock_fd}" \
+        || fail "could not lock profile directory for web-access configuration: ${profile_dir}"
+
+    if [[ -e "${config}" || -L "${config}" ]]; then
+        [[ -f "${config}" && ! -L "${config}" && "$(stat -c %h "${config}")" == 1 ]] \
+            || fail "web-access configuration must be a regular non-linked file: ${config}"
+        case "$(realpath "${config}")" in
+            "${profile_dir}"/*) ;;
+            *) fail "web-access configuration escapes its profile: ${config}" ;;
+        esac
+        jq -e '
+            type == "object" and
+            ((has("ssrf") | not) or .ssrf == null or
+             ((.ssrf | type) == "object" and
+              ((.ssrf | has("trustEnvProxy") | not) or
+               (.ssrf.trustEnvProxy | type) == "boolean")))
+        ' "${config}" >/dev/null \
+            || fail "invalid web-access configuration for restricted networking: ${config}"
+        if jq -e '.ssrf.trustEnvProxy == true' "${config}" >/dev/null; then
+            exec {profile_lock_fd}>&-
+            return 0
+        fi
+    fi
+
+    [[ ! -e "${staging}" && ! -L "${staging}" ]] \
+        || fail "web-access configuration staging path already exists: ${staging}"
+    trap 'rm -f "${staging:-}"' RETURN
+    if [[ -e "${config}" ]]; then
+        jq '.ssrf = (if .ssrf == null then {} else .ssrf end) |
+            .ssrf.trustEnvProxy = true' "${config}" > "${staging}"
+    else
+        printf '%s\n' '{"ssrf":{"trustEnvProxy":true}}' > "${staging}"
+    fi
+    chmod 0600 "${staging}"
+    jq -e '.ssrf.trustEnvProxy == true' "${staging}" >/dev/null \
+        || fail "could not stage web-access configuration for restricted networking"
+    mv "${staging}" "${config}"
+    trap - RETURN
+    exec {profile_lock_fd}>&-
+}
+
 validate_profile_definition_files() {
     local profile_dir="$1"
     local file path guardian_dir="${profile_dir}/guardian" caf_dir="${profile_dir}/caf"
