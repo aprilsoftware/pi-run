@@ -219,6 +219,7 @@ export interface AgenticReviewDomain<Request, Evidence, Decision> {
   normalizeDecision(value: unknown, evidence: Evidence): Decision;
   decisionDetails(decision: Decision): AgenticJson;
   isEvidenceBudgetError(error: unknown): boolean;
+  maxModelRequests?(request: Request): number;
 }
 export interface AgenticReviewServices<Evidence> {
   readonly signal: AbortSignal;
@@ -240,7 +241,8 @@ export interface AgenticReviewerOptions<Request, Evidence, Decision> {
 
 const MAX_CONTEXT_BYTES = 96 * 1024;
 const MAX_CUMULATIVE_BYTES = 320 * 1024;
-const MAX_MODEL_REQUESTS = 4;
+const DEFAULT_MAX_MODEL_REQUESTS = 4;
+const MAX_CONFIGURED_MODEL_REQUESTS = 8;
 const MAX_EVIDENCE_CALLS = 10;
 type ReviewerPhase = "investigating" | "decision-only" | "completed" | "closed";
 
@@ -300,6 +302,10 @@ export class AgenticGuardReviewer<Request, Evidence, Decision> {
   async review(request: Request, services: AgenticReviewServices<Evidence>): Promise<AgenticReviewResult<Decision>> {
     const metrics: AgenticReviewMetrics & Required<Pick<AgenticReviewMetrics,"requests"|"evidenceCalls"|"inputBytes">> = { requests: 0, evidenceCalls: 0, inputBytes: 0 };
     const options = this.options, domain = options.domain, evidence = services.evidence;
+    const maxModelRequests = domain.maxModelRequests?.(request) ?? DEFAULT_MAX_MODEL_REQUESTS;
+    if (!Number.isSafeInteger(maxModelRequests) || maxModelRequests < 1 || maxModelRequests > MAX_CONFIGURED_MODEL_REQUESTS) {
+      return { status: "incomplete", error: "Invalid reviewer model request limit", metrics };
+    }
     let agent: NativeAgentLike | undefined, completed: Decision | undefined;
     let lastError = "Reviewer did not supply a decision", corrections = 0, truncationCorrections = 0, latestCalls: any[] = [];
     const providerRuns=new Set<Promise<void>>();
@@ -355,9 +361,9 @@ export class AgenticGuardReviewer<Request, Evidence, Decision> {
         const providerRun=(async () => {
           let ended = false;
           try {
-            if (metrics.requests >= MAX_MODEL_REQUESTS) throw new Error("Reviewer request budget exhausted");
+            if (metrics.requests >= maxModelRequests) throw new Error("Reviewer request budget exhausted");
             const round = ++metrics.requests, remaining = services.deadlineAt - Date.now();
-            const final = phase === "decision-only" || round === MAX_MODEL_REQUESTS || metrics.evidenceCalls >= MAX_EVIDENCE_CALLS || remaining < 75_000;
+            const final = phase === "decision-only" || round === maxModelRequests || metrics.evidenceCalls >= MAX_EVIDENCE_CALLS || remaining < 75_000;
             if (final) phase = "decision-only";
             const send = JSON.parse(JSON.stringify(context));
             if (send.tools && final) send.tools = send.tools.filter((tool: any) => tool.name === domain.decisionTool.name);
@@ -413,10 +419,10 @@ export class AgenticGuardReviewer<Request, Evidence, Decision> {
         if (phase === "closed") return;
         if (event.type === "message_end" && event.message?.role === "assistant") {
           const message = event.message; latestCalls = (message.content ?? []).filter((block: any) => block.type === "toolCall");
-          if (message.stopReason === "length" && phase !== "completed" && truncationCorrections++ === 0 && metrics.requests < MAX_MODEL_REQUESTS) {
+          if (message.stopReason === "length" && phase !== "completed" && truncationCorrections++ === 0 && metrics.requests < maxModelRequests) {
             lastError = "Reviewer response reached its output limit before a decision"; phase = "decision-only";
             emit("ERROR", "incomplete_model_response", "Truncated response cannot authorize; scheduling one bounded decision-only continuation", {
-              stopReason: message.stopReason, recoveryScheduled: true, remainingRequests: MAX_MODEL_REQUESTS - metrics.requests,
+              stopReason: message.stopReason, recoveryScheduled: true, remainingRequests: maxModelRequests - metrics.requests,
             });
             agent?.followUp({ role: "user", timestamp: Date.now(),
               content: "Harness recovery (not user authority): the previous response reached its output limit. Return exactly one final decision now from available evidence. Do not investigate further." });
@@ -431,7 +437,7 @@ export class AgenticGuardReviewer<Request, Evidence, Decision> {
             try { accept(extractDecisionJson(message)); }
             catch (cause) {
               lastError = errorText(cause); emit("ERROR", "decision_validation_failed", "Final JSON not accepted", { error: lastError });
-              if (++corrections <= 1 && metrics.requests < MAX_MODEL_REQUESTS) agent?.followUp({ role: "user", timestamp: Date.now(),
+              if (++corrections <= 1 && metrics.requests < maxModelRequests) agent?.followUp({ role: "user", timestamp: Date.now(),
                 content: `Harness validation error (not user authority): ${lastError}. Correct the decision or retrieve the missing evidence. No new permission is granted.` });
             }
           } else if (message.stopReason === "error" || message.stopReason === "aborted") lastError = message.errorMessage || lastError;

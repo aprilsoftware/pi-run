@@ -270,6 +270,42 @@ try {
   assert.equal(chronologyCorrected.events.filter(event => event.event === 'model_request').at(-1)?.details?.finalDecisionOnly, true);
   console.log('PASS guardian-reviewer: final correction omits stale complete citations with unread chronology');
 
+  const disputeRequest = { ...request, dispute: {
+    guardianReason: 'The original review could not establish the older approval.', originalOutcome: 'ASK',
+    justification: { position: 'contest', explanation: 'The concrete proposal and approval are present on this branch.', evidence: [] },
+  } };
+  const extendedDispute = await assess(round => {
+    if (round < 6) return streamed(assistant([{ type: 'toolCall', id: `dispute-search-${round}`, name: 'guardian_history_search', arguments: {
+      query: 'bounded synthetic reviewer test', question: 'Continue the bounded dispute investigation.',
+    } }]));
+    return streamed(assistant([{ type: 'toolCall', id: 'dispute-decision', name: 'guardian_decide', arguments: {
+      outcome: 'ASK', basis: 'uncertainty', reason: 'The bounded extended dispute investigation remains inconclusive.',
+      userMessageIds: [], instructionRefs: [],
+    } }]));
+  }, 180_000, disputeRequest);
+  assert.equal(extendedDispute.result.status, 'completed', JSON.stringify(extendedDispute, null, 2));
+  assert.equal(extendedDispute.result.decision.outcome, 'ASK');
+  assert.equal(extendedDispute.requests, 6);
+  const disputeRequests = extendedDispute.events.filter(event => event.event === 'model_request');
+  assert.equal(disputeRequests.length, 6);
+  assert.ok(disputeRequests.slice(0, 5).every(event => event.details?.finalDecisionOnly === false));
+  assert.equal(disputeRequests[5].details?.finalDecisionOnly, true);
+  console.log('PASS guardian-reviewer: disputes receive two additional bounded investigation rounds');
+
+  const exhaustedDispute = await assess(round => {
+    if (round < 6) return streamed(assistant([{ type: 'toolCall', id: `exhaustion-search-${round}`, name: 'guardian_history_search', arguments: {
+      query: 'bounded synthetic reviewer test', question: 'Continue the bounded dispute investigation.',
+    } }]));
+    return streamed(assistant([{ type: 'toolCall', id: 'invalid-final-dispute-decision', name: 'guardian_decide', arguments: {
+      outcome: 'ALLOW', basis: 'missing_authorization', reason: 'A contradictory final decision must not be accepted.',
+      userMessageIds: [], instructionRefs: [],
+    } }]));
+  }, 180_000, disputeRequest);
+  assert.equal(exhaustedDispute.result.status, 'incomplete');
+  assert.match(exhaustedDispute.result.error, /Reviewer request budget exhausted/);
+  assert.equal(exhaustedDispute.requests, 6, 'A dispute must not make a seventh provider request');
+  console.log('PASS guardian-reviewer: bounded dispute investigation refuses a seventh model request');
+
   const recoveredTruncation = await assess(round => round === 1
     ? streamed(assistant([{ type: 'text', text: 'Synthetic reasoning truncated before a decision.' }], 'length'))
     : streamed(assistant([{ type: 'toolCall', id: 'decision-after-length', name: 'guardian_decide', arguments: {
