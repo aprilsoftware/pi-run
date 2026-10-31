@@ -108,6 +108,8 @@ RUN apt-get update \
         libglu1-mesa \
         libgl1-mesa-dri \
         mesa-vulkan-drivers \
+        libxcb-xkb1 \
+        libxkbcommon-x11-0 \
         xauth \
         xvfb \
         \
@@ -314,6 +316,8 @@ RUN set -eux; \
     xvfb-run --server-args="-screen 0 1280x720x24 -nolisten tcp" true; \
     find /usr/share/vulkan/icd.d -maxdepth 1 -type f -name '*.json' -print -quit | grep -q .; \
     find /usr/lib -type f -path '*/dri/*_dri.so' -print -quit | grep -q .; \
+    ldconfig -p | grep -F 'libxcb-xkb.so.1'; \
+    ldconfig -p | grep -F 'libxkbcommon-x11.so.0'; \
     rustc --version | grep -E "^rustc ${RUST_VERSION} "; \
     cargo --version; \
     rustup --version; \

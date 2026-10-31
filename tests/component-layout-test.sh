@@ -44,14 +44,16 @@ grep -Fx "        libasound2-dev \\" "${ROOT}/docker/Dockerfile" >/dev/null \
     || fail "runtime image does not install ALSA development headers"
 grep -Fx "    pkg-config --modversion alsa; \\" "${ROOT}/docker/Dockerfile" >/dev/null \
     || fail "runtime image does not validate ALSA pkg-config metadata"
-for package in libgl1-mesa-dri mesa-vulkan-drivers xauth xvfb; do
+for package in libgl1-mesa-dri mesa-vulkan-drivers libxcb-xkb1 libxkbcommon-x11-0 xauth xvfb; do
     grep -Fx "        ${package} \\" "${ROOT}/docker/Dockerfile" >/dev/null \
         || fail "runtime image does not install GUI test package: ${package}"
 done
 for validation in \
     'xvfb-run --server-args="-screen 0 1280x720x24 -nolisten tcp" true' \
     '/usr/share/vulkan/icd.d' \
-    "*/dri/*_dri.so"; do
+    "*/dri/*_dri.so" \
+    "libxcb-xkb.so.1" \
+    "libxkbcommon-x11.so.0"; do
     grep -F "${validation}" "${ROOT}/docker/Dockerfile" >/dev/null \
         || fail "runtime image does not validate GUI support: ${validation}"
 done
