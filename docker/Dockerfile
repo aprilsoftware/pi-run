@@ -103,8 +103,13 @@ RUN apt-get update \
         pkg-config \
         \
         # Flutter Linux development dependencies
+        libasound2-dev \
         libgtk-3-dev \
         libglu1-mesa \
+        libgl1-mesa-dri \
+        mesa-vulkan-drivers \
+        xauth \
+        xvfb \
         \
         # Useful service clients
         postgresql-client \
@@ -303,6 +308,12 @@ RUN set -eux; \
     clang --version; \
     cmake --version; \
     ninja --version; \
+    pkg-config --modversion alsa; \
+    command -v Xvfb; \
+    command -v xauth; \
+    xvfb-run --server-args="-screen 0 1280x720x24 -nolisten tcp" true; \
+    find /usr/share/vulkan/icd.d -maxdepth 1 -type f -name '*.json' -print -quit | grep -q .; \
+    find /usr/lib -type f -path '*/dri/*_dri.so' -print -quit | grep -q .; \
     rustc --version | grep -E "^rustc ${RUST_VERSION} "; \
     cargo --version; \
     rustup --version; \

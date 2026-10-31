@@ -40,6 +40,21 @@ for package in rustc cargo rustfmt rust-clippy; do
         fail "runtime image still installs Debian's ${package} package"
     fi
 done
+grep -Fx "        libasound2-dev \\" "${ROOT}/docker/Dockerfile" >/dev/null \
+    || fail "runtime image does not install ALSA development headers"
+grep -Fx "    pkg-config --modversion alsa; \\" "${ROOT}/docker/Dockerfile" >/dev/null \
+    || fail "runtime image does not validate ALSA pkg-config metadata"
+for package in libgl1-mesa-dri mesa-vulkan-drivers xauth xvfb; do
+    grep -Fx "        ${package} \\" "${ROOT}/docker/Dockerfile" >/dev/null \
+        || fail "runtime image does not install GUI test package: ${package}"
+done
+for validation in \
+    'xvfb-run --server-args="-screen 0 1280x720x24 -nolisten tcp" true' \
+    '/usr/share/vulkan/icd.d' \
+    "*/dri/*_dri.so"; do
+    grep -F "${validation}" "${ROOT}/docker/Dockerfile" >/dev/null \
+        || fail "runtime image does not validate GUI support: ${validation}"
+done
 [[ "$(sed -n '2p' "${ROOT}/docker/network-policy-resolver.mjs")" == "//${SPDX#\#}" ]] \
     || fail "network policy resolver has no SPDX license identifier"
 [[ "$(sed -n '2p' "${ROOT}/docker/egress/entrypoint.sh")" == "${SPDX}" ]] \
