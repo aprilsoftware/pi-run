@@ -292,6 +292,25 @@ try {
   assert.equal(disputeRequests[5].details?.finalDecisionOnly, true);
   console.log('PASS guardian-reviewer: disputes receive two additional bounded investigation rounds');
 
+  const correctedMalformedDispute = await assess(round => {
+    if (round < 4) return streamed(assistant([{ type: 'toolCall', id: `malformed-search-${round}`, name: 'guardian_history_search', arguments: {
+      query: 'bounded synthetic reviewer test', question: 'Continue the bounded dispute investigation.',
+    } }]));
+    if (round === 4) return streamed(assistant([{ type: 'toolCall', id: 'overlong-dispute-decision', name: 'guardian_decide', arguments: {
+      outcome: 'ASK', basis: 'uncertainty', reason: 'x'.repeat(2401), userMessageIds: [], instructionRefs: [],
+    } }]));
+    return streamed(assistant([{ type: 'toolCall', id: 'corrected-dispute-decision', name: 'guardian_decide', arguments: {
+      outcome: 'ASK', basis: 'uncertainty', reason: 'The corrected bounded reassessment remains inconclusive.',
+      userMessageIds: [], instructionRefs: [],
+    } }]));
+  }, 180_000, disputeRequest);
+  assert.equal(correctedMalformedDispute.result.status, 'completed', JSON.stringify(correctedMalformedDispute, null, 2));
+  assert.equal(correctedMalformedDispute.result.decision.outcome, 'ASK');
+  assert.equal(correctedMalformedDispute.requests, 5);
+  assert.ok(correctedMalformedDispute.events.some(event => event.event === 'reviewer_function_finished' &&
+    event.details?.functionName === 'guardian_decide' && event.details?.isError === true));
+  console.log('PASS guardian-reviewer: malformed dispute decision is corrected within the existing request bound');
+
   const exhaustedDispute = await assess(round => {
     if (round < 6) return streamed(assistant([{ type: 'toolCall', id: `exhaustion-search-${round}`, name: 'guardian_history_search', arguments: {
       query: 'bounded synthetic reviewer test', question: 'Continue the bounded dispute investigation.',
@@ -302,7 +321,7 @@ try {
     } }]));
   }, 180_000, disputeRequest);
   assert.equal(exhaustedDispute.result.status, 'incomplete');
-  assert.match(exhaustedDispute.result.error, /Reviewer request budget exhausted/);
+  assert.match(exhaustedDispute.result.error, /Reviewer response was invalid/);
   assert.equal(exhaustedDispute.requests, 6, 'A dispute must not make a seventh provider request');
   console.log('PASS guardian-reviewer: bounded dispute investigation refuses a seventh model request');
 

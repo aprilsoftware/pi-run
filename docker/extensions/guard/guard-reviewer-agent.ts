@@ -307,7 +307,8 @@ export class AgenticGuardReviewer<Request, Evidence, Decision> {
       return { status: "incomplete", error: "Invalid reviewer model request limit", metrics };
     }
     let agent: NativeAgentLike | undefined, completed: Decision | undefined;
-    let lastError = "Reviewer did not supply a decision", corrections = 0, truncationCorrections = 0, latestCalls: any[] = [];
+    let lastError = "Reviewer did not supply a decision", decisionValidationError: string | undefined;
+    let corrections = 0, truncationCorrections = 0, latestCalls: any[] = [];
     const providerRuns=new Set<Promise<void>>();
     let phase: ReviewerPhase = "investigating";
     const emit = (level: "INFO" | "INVESTIGATE" | "ERROR", event: string, message: string, details?: AgenticJson) =>
@@ -346,7 +347,10 @@ export class AgenticGuardReviewer<Request, Evidence, Decision> {
           services.signal.throwIfAborted(); signal?.throwIfAborted();
           if (latestCalls.length !== 1) throw new Error("A final decision must not be mixed with investigation calls");
           try { accept(args); }
-          catch (cause) { lastError = errorText(cause); emit("ERROR", "decision_validation_failed", "Decision not accepted", { error: lastError }); throw cause; }
+          catch (cause) {
+            decisionValidationError = errorText(cause); lastError = `Reviewer response was invalid: ${decisionValidationError}`;
+            emit("ERROR", "decision_validation_failed", "Decision not accepted", { error: decisionValidationError }); throw cause;
+          }
           return { content: [{ type: "text", text: "Decision accepted. Review complete." }], details: { completed: true }, terminate: true };
         } };
       const tools = [...definitions.map(definition => ({ name: definition.name, label: definition.label ?? definition.name,
@@ -361,7 +365,8 @@ export class AgenticGuardReviewer<Request, Evidence, Decision> {
         const providerRun=(async () => {
           let ended = false;
           try {
-            if (metrics.requests >= maxModelRequests) throw new Error("Reviewer request budget exhausted");
+            if (metrics.requests >= maxModelRequests) throw new Error(decisionValidationError
+              ? `Reviewer response was invalid: ${decisionValidationError}` : "Reviewer request budget exhausted");
             const round = ++metrics.requests, remaining = services.deadlineAt - Date.now();
             const final = phase === "decision-only" || round === maxModelRequests || metrics.evidenceCalls >= MAX_EVIDENCE_CALLS || remaining < 75_000;
             if (final) phase = "decision-only";
@@ -436,17 +441,25 @@ export class AgenticGuardReviewer<Request, Evidence, Decision> {
           if (phase !== "completed" && !latestCalls.length && message.stopReason === "stop") {
             try { accept(extractDecisionJson(message)); }
             catch (cause) {
-              lastError = errorText(cause); emit("ERROR", "decision_validation_failed", "Final JSON not accepted", { error: lastError });
+              decisionValidationError = errorText(cause); lastError = `Reviewer response was invalid: ${decisionValidationError}`;
+              emit("ERROR", "decision_validation_failed", "Final JSON not accepted", { error: decisionValidationError });
               if (++corrections <= 1 && metrics.requests < maxModelRequests) agent?.followUp({ role: "user", timestamp: Date.now(),
-                content: `Harness validation error (not user authority): ${lastError}. Correct the decision or retrieve the missing evidence. No new permission is granted.` });
+                content: `Harness validation error (not user authority): ${decisionValidationError}. Correct the decision or retrieve the missing evidence. No new permission is granted.` });
             }
           } else if (message.stopReason === "error" || message.stopReason === "aborted") lastError = message.errorMessage || lastError;
         }
         if (event.type === "tool_execution_start") emit("INVESTIGATE", "reviewer_function_started", "Private function started",
           { functionName: event.toolName, functionCallId: event.toolCallId, arguments: event.args });
-        if (event.type === "tool_execution_end") emit(event.isError ? "ERROR" : "INFO", "reviewer_function_finished", "Private function completed",
-          { functionName: event.toolName, functionCallId: event.toolCallId, isError: event.isError,
-            error: event.isError ? clip(toolResultText({ content: event.result?.content }), 800) : undefined, contentsLogged: false });
+        if (event.type === "tool_execution_end") {
+          const toolError=event.isError?clip(toolResultText({ content: event.result?.content }),800):undefined;
+          if(event.isError&&event.toolName===domain.decisionTool.name){
+            decisionValidationError=toolError||"Decision tool arguments failed validation";
+            lastError=`Reviewer response was invalid: ${decisionValidationError}`;
+          }
+          emit(event.isError ? "ERROR" : "INFO", "reviewer_function_finished", "Private function completed",
+            { functionName: event.toolName, functionCallId: event.toolCallId, isError: event.isError,
+              error: toolError, contentsLogged: false });
+        }
       });
       try {
         await abortable(agent.prompt({ role: "user", timestamp: Date.now(), content: JSON.stringify(domain.initialPrompt(request, evidence)) }), services.signal);
