@@ -220,6 +220,7 @@ export interface AgenticReviewDomain<Request, Evidence, Decision> {
   decisionDetails(decision: Decision): AgenticJson;
   isEvidenceBudgetError(error: unknown): boolean;
   maxModelRequests?(request: Request): number;
+  maxCumulativeBytes?(request: Request): number;
 }
 export interface AgenticReviewServices<Evidence> {
   readonly signal: AbortSignal;
@@ -241,6 +242,7 @@ export interface AgenticReviewerOptions<Request, Evidence, Decision> {
 
 const MAX_CONTEXT_BYTES = 96 * 1024;
 const MAX_CUMULATIVE_BYTES = 320 * 1024;
+const MAX_CONFIGURED_CUMULATIVE_BYTES = 512 * 1024;
 const DEFAULT_MAX_MODEL_REQUESTS = 4;
 const MAX_CONFIGURED_MODEL_REQUESTS = 8;
 const MAX_EVIDENCE_CALLS = 10;
@@ -305,6 +307,10 @@ export class AgenticGuardReviewer<Request, Evidence, Decision> {
     const maxModelRequests = domain.maxModelRequests?.(request) ?? DEFAULT_MAX_MODEL_REQUESTS;
     if (!Number.isSafeInteger(maxModelRequests) || maxModelRequests < 1 || maxModelRequests > MAX_CONFIGURED_MODEL_REQUESTS) {
       return { status: "incomplete", error: "Invalid reviewer model request limit", metrics };
+    }
+    const maxCumulativeBytes = domain.maxCumulativeBytes?.(request) ?? MAX_CUMULATIVE_BYTES;
+    if (!Number.isSafeInteger(maxCumulativeBytes) || maxCumulativeBytes < MAX_CONTEXT_BYTES || maxCumulativeBytes > MAX_CONFIGURED_CUMULATIVE_BYTES) {
+      return { status: "incomplete", error: "Invalid reviewer cumulative context limit", metrics };
     }
     let agent: NativeAgentLike | undefined, completed: Decision | undefined;
     let lastError = "Reviewer did not supply a decision", decisionValidationError: string | undefined;
@@ -371,10 +377,15 @@ export class AgenticGuardReviewer<Request, Evidence, Decision> {
             const final = phase === "decision-only" || round === maxModelRequests || metrics.evidenceCalls >= MAX_EVIDENCE_CALLS || remaining < 75_000;
             if (final) phase = "decision-only";
             const send = JSON.parse(JSON.stringify(context));
-            if (send.tools && final) send.tools = send.tools.filter((tool: any) => tool.name === domain.decisionTool.name);
+            if (final) {
+              const decisionName=domain.decisionTool.name,keepDecision=(tool:any)=>tool?.name===decisionName;
+              if(Array.isArray(send.tools))send.tools=send.tools.filter(keepDecision);
+              if(Array.isArray(send.messages))for(const message of send.messages)
+                if(Array.isArray(message?.toolsAdded))message.toolsAdded=message.toolsAdded.filter(keepDecision);
+            }
             domain.prepareContext(send, evidence, { final, evidenceToolNames: definitions.map(definition => definition.name) });
             const bytes = Buffer.byteLength(JSON.stringify(send)); metrics.inputBytes += bytes;
-            if (bytes > MAX_CONTEXT_BYTES || metrics.inputBytes > MAX_CUMULATIVE_BYTES) throw new Error("Review context budget exhausted; no authority silently omitted");
+            if (bytes > MAX_CONTEXT_BYTES || metrics.inputBytes > maxCumulativeBytes) throw new Error("Review context budget exhausted; no authority silently omitted");
             emit("INFO", "model_request", "Pi reviewer request started", { round, requestBytes: bytes, cumulativeBytes: metrics.inputBytes,
               finalDecisionOnly: final, remainingMs: remaining, ...(domain.requestDetails?.(evidence) ?? {}) });
             const requestLimit = Math.min(["high", "xhigh", "max"].includes(options.thinking) ? 120_000 : 60_000, Math.max(1, remaining));
