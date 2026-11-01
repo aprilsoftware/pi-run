@@ -28,21 +28,30 @@ const pi = {
     on: (event, handler) => handlers.set(event, handler),
 };
 module.default(pi);
-assert.deepEqual([...handlers.keys()], ['agent_start', 'agent_settled']);
+assert.deepEqual([...handlers.keys()],
+    ['session_start', 'session_info_changed', 'agent_start', 'agent_settled']);
 
 const titles = [];
 const tui = { mode: 'tui', ui: { setTitle: title => titles.push(title) } };
+await handlers.get('session_start')({}, tui);
 await handlers.get('agent_start')({}, tui);
-await handlers.get('agent_settled')({}, tui);
-assert.deepEqual(titles, ['π …', 'π ✓']);
+assert.deepEqual(titles, ['π', 'π …']);
 
 sessionName = 'Migration task';
-await handlers.get('agent_start')({}, tui);
+await handlers.get('session_info_changed')({ name: sessionName }, tui);
 await handlers.get('agent_settled')({}, tui);
 assert.deepEqual(titles.slice(-2), ['π … — Migration task', 'π ✓ — Migration task']);
 
+await handlers.get('session_info_changed')({ name: undefined }, tui);
+assert.equal(titles.at(-1), 'π ✓');
+sessionName = 'Review';
+await handlers.get('session_start')({}, tui);
+assert.equal(titles.at(-1), 'π — Review');
+
 const before = titles.length;
 const ignored = { mode: 'json', ui: { setTitle: title => titles.push(title) } };
+await handlers.get('session_start')({}, ignored);
+await handlers.get('session_info_changed')({ name: 'Ignored' }, ignored);
 await handlers.get('agent_start')({}, ignored);
 await handlers.get('agent_settled')({}, ignored);
 assert.equal(titles.length, before, 'non-TUI modes must not receive terminal titles');
@@ -54,5 +63,5 @@ assert.ok(dockerfile.includes(
 assert.ok(launcher.includes(
     '--extension /usr/local/lib/node_modules/pi-run-extensions/title/title-agent.ts'));
 
-console.log('Pi-Run TUI title reports working and settled states without affecting non-TUI modes');
+console.log('Pi-Run owns the TUI title lifecycle without exposing the container workspace label');
 NODE
