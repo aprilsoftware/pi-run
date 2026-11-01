@@ -8,9 +8,9 @@ const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", 
 const SPINNER_INTERVAL_MS = 160;
 
 function activityTitle(activity: Activity, frame: string, sessionName?: string): string {
-    const status = activity === "working" ? `π ${frame}` : activity === "settled" ? "π ✓" : "π";
+    const status = activity === "working" ? `${frame} π` : activity === "settled" ? "✓ π" : "π";
     const session = sessionName?.trim();
-    return session ? `${status} | ${session}` : status;
+    return session ? `${status} · ${session}` : status;
 }
 
 export default function titleAgent(pi: ExtensionAPI): void {

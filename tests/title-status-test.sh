@@ -33,16 +33,18 @@ assert.deepEqual([...handlers.keys()],
 
 const nextTimer = () => new Promise(resolve => setTimeout(resolve, 0));
 const spinnerTick = () => new Promise(resolve => setTimeout(resolve, 220));
-const spinnerTitle = /^π [⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏](?: \| .+)?$/u;
+const spinnerTitle = /^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] π(?: · .+)?$/u;
 const titles = [];
 const tui = { mode: 'tui', ui: { setTitle: title => titles.push(title) } };
+titles.push('π - workspace');
+await new Promise(resolve => setTimeout(resolve, 10)); // Earlier extensions may perform async startup work.
 await handlers.get('session_start')({}, tui);
 titles.push('π - workspace'); // Pi updates its default title after extension binding.
 await nextTimer();
-assert.deepEqual(titles, ['π', 'π - workspace', 'π']);
+assert.deepEqual(titles, ['π - workspace', 'π', 'π - workspace', 'π']);
 
 await handlers.get('agent_start')({}, tui);
-assert.equal(titles.at(-1), 'π ⠋');
+assert.equal(titles.at(-1), '⠋ π');
 const beforeTick = titles.length;
 await spinnerTick();
 assert.ok(titles.length > beforeTick, 'working title spinner did not advance');
@@ -50,12 +52,12 @@ assert.match(titles.at(-1), spinnerTitle);
 
 sessionName = 'Migration task';
 await handlers.get('session_info_changed')({ name: sessionName }, tui);
-assert.match(titles.at(-1), /^π [⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] \| Migration task$/u);
+assert.match(titles.at(-1), /^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] π · Migration task$/u);
 titles.push('π - Migration task - workspace');
 await nextTimer();
-assert.match(titles.at(-1), /^π [⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] \| Migration task$/u);
+assert.match(titles.at(-1), /^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] π · Migration task$/u);
 await handlers.get('agent_settled')({}, tui);
-assert.equal(titles.at(-1), 'π ✓ | Migration task');
+assert.equal(titles.at(-1), '✓ π · Migration task');
 const afterSettled = titles.length;
 await spinnerTick();
 assert.equal(titles.length, afterSettled, 'settlement must stop the title spinner');
@@ -63,12 +65,12 @@ assert.equal(titles.length, afterSettled, 'settlement must stop the title spinne
 sessionName = undefined;
 await handlers.get('session_info_changed')({ name: undefined }, tui);
 await nextTimer();
-assert.equal(titles.at(-1), 'π ✓');
+assert.equal(titles.at(-1), '✓ π');
 sessionName = 'Review';
 await handlers.get('session_start')({}, tui);
 titles.push('π - Review - workspace');
 await nextTimer();
-assert.equal(titles.at(-1), 'π | Review');
+assert.equal(titles.at(-1), 'π · Review');
 
 sessionName = undefined;
 await handlers.get('session_start')({}, tui);
@@ -98,8 +100,13 @@ const dockerfile = await readFile(join(root, 'docker/Dockerfile'), 'utf8');
 const launcher = await readFile(join(root, 'bin/pi-run'), 'utf8');
 assert.ok(dockerfile.includes(
     'COPY extensions/title/title-agent.ts /usr/local/lib/node_modules/pi-run-extensions/title/'));
-assert.ok(launcher.includes(
-    '--extension /usr/local/lib/node_modules/pi-run-extensions/title/title-agent.ts'));
+const titleExtension = '--extension /usr/local/lib/node_modules/pi-run-extensions/title/title-agent.ts';
+assert.ok(launcher.includes(titleExtension));
+const extensionLines = launcher.split('\n')
+    .map(line => line.trim())
+    .filter(line => line.startsWith('--extension '));
+assert.equal(extensionLines.at(-1), titleExtension,
+    'title extension must load after extensions with asynchronous session_start handlers');
 
-console.log('Pi-Run reclaims the TUI title and animates a bounded working-state spinner');
+console.log('Pi-Run loads title ownership last and prefixes animated activity status');
 NODE
