@@ -29,24 +29,61 @@ const pi = {
 };
 module.default(pi);
 assert.deepEqual([...handlers.keys()],
-    ['session_start', 'session_info_changed', 'agent_start', 'agent_settled']);
+    ['session_start', 'session_info_changed', 'agent_start', 'agent_settled', 'session_shutdown']);
 
+const nextTimer = () => new Promise(resolve => setTimeout(resolve, 0));
+const spinnerTick = () => new Promise(resolve => setTimeout(resolve, 220));
+const spinnerTitle = /^π [⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏](?: \| .+)?$/u;
 const titles = [];
 const tui = { mode: 'tui', ui: { setTitle: title => titles.push(title) } };
 await handlers.get('session_start')({}, tui);
+titles.push('π - workspace'); // Pi updates its default title after extension binding.
+await nextTimer();
+assert.deepEqual(titles, ['π', 'π - workspace', 'π']);
+
 await handlers.get('agent_start')({}, tui);
-assert.deepEqual(titles, ['π', 'π …']);
+assert.equal(titles.at(-1), 'π ⠋');
+const beforeTick = titles.length;
+await spinnerTick();
+assert.ok(titles.length > beforeTick, 'working title spinner did not advance');
+assert.match(titles.at(-1), spinnerTitle);
 
 sessionName = 'Migration task';
 await handlers.get('session_info_changed')({ name: sessionName }, tui);
+assert.match(titles.at(-1), /^π [⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] \| Migration task$/u);
+titles.push('π - Migration task - workspace');
+await nextTimer();
+assert.match(titles.at(-1), /^π [⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] \| Migration task$/u);
 await handlers.get('agent_settled')({}, tui);
-assert.deepEqual(titles.slice(-2), ['π … — Migration task', 'π ✓ — Migration task']);
+assert.equal(titles.at(-1), 'π ✓ | Migration task');
+const afterSettled = titles.length;
+await spinnerTick();
+assert.equal(titles.length, afterSettled, 'settlement must stop the title spinner');
 
+sessionName = undefined;
 await handlers.get('session_info_changed')({ name: undefined }, tui);
+await nextTimer();
 assert.equal(titles.at(-1), 'π ✓');
 sessionName = 'Review';
 await handlers.get('session_start')({}, tui);
-assert.equal(titles.at(-1), 'π — Review');
+titles.push('π - Review - workspace');
+await nextTimer();
+assert.equal(titles.at(-1), 'π | Review');
+
+sessionName = undefined;
+await handlers.get('session_start')({}, tui);
+titles.push('π - workspace');
+await handlers.get('session_shutdown')({}, tui);
+await nextTimer();
+assert.equal(titles.at(-1), 'π - workspace', 'shutdown must cancel a deferred title update');
+
+await handlers.get('session_start')({}, tui);
+await nextTimer();
+await handlers.get('agent_start')({}, tui);
+const beforeSpinnerShutdown = titles.length;
+await handlers.get('session_shutdown')({}, tui);
+await spinnerTick();
+assert.equal(titles.length, beforeSpinnerShutdown, 'shutdown must stop the title spinner');
 
 const before = titles.length;
 const ignored = { mode: 'json', ui: { setTitle: title => titles.push(title) } };
@@ -54,6 +91,7 @@ await handlers.get('session_start')({}, ignored);
 await handlers.get('session_info_changed')({ name: 'Ignored' }, ignored);
 await handlers.get('agent_start')({}, ignored);
 await handlers.get('agent_settled')({}, ignored);
+await handlers.get('session_shutdown')({}, ignored);
 assert.equal(titles.length, before, 'non-TUI modes must not receive terminal titles');
 
 const dockerfile = await readFile(join(root, 'docker/Dockerfile'), 'utf8');
@@ -63,5 +101,5 @@ assert.ok(dockerfile.includes(
 assert.ok(launcher.includes(
     '--extension /usr/local/lib/node_modules/pi-run-extensions/title/title-agent.ts'));
 
-console.log('Pi-Run owns the TUI title lifecycle without exposing the container workspace label');
+console.log('Pi-Run reclaims the TUI title and animates a bounded working-state spinner');
 NODE
