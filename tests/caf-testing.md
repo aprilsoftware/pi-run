@@ -105,6 +105,38 @@ not proceed while the configured release reviewer repeatedly disagrees with the
 case contract. Ordinary offline tests still use fake providers and remain the
 required deterministic gate.
 
+## Opt-in live failure settlement
+
+`tests/caf-failure-live-test.sh` verifies the primary-provider settlement after
+CAF rejects a non-standalone call. It skips by default:
+
+```bash
+bash tests/caf-failure-live-test.sh
+```
+
+Enable its single live primary-model request explicitly:
+
+```bash
+CAF_FAILURE_LIVE_TESTS=1 bash tests/caf-failure-live-test.sh
+```
+
+The first model response is synthetic and deterministically proposes
+`call_friend` beside an inert fixture tool. CAF must reject the friend call
+locally, hide all model-visible tools, and send exactly one explanation request
+to the primary model selected in `settings.json`. The OpenAI-completions wire
+payload must omit the empty `tools` field. Because a compatible provider may
+successfully return no text for this tool-history shape, CAF also persists its
+own displayed failure message without triggering another model request. The
+original active tools must return after settlement.
+
+No friend, Guard reviewer, search provider, command, or real workspace resource
+is reachable. The primary receives only temporary fictional instructions, the
+synthetic request, and the local failure result. Authentication is read-only,
+model-catalog refresh and provider retries are disabled, relevant real-profile
+files are checked byte-for-byte afterward, and the complete run has a
+300-second timeout. The request can incur the configured primary provider's
+normal cost.
+
 ## Opt-in live candidate
 
 `tests/caf-live-test.sh` is a source-level interoperability check. By default it
