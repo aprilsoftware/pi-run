@@ -122,7 +122,7 @@ async function runScenario(name: Scenario, realUI?: ExtensionUIContext, withRunt
               assert.match(request.dispute.guardianReason,/TEST ONLY|Review could not complete/,"Assessment must include Guardian's original concern");
               if(name==="unavailable")assert.match(request.dispute.guardianReason,new RegExp(journalPath().replace(/[.*+?^${}()|[\]\\]/g,"\\$&")),"Unavailable review disputes must carry the exact active journal path");
               if(scenario.assessment==="delayed")await new Promise((_resolve,reject)=>services.signal.addEventListener("abort",()=>reject(services.signal.reason),{once:true}));
-              if(scenario.assessment==="unavailable")return {status:"incomplete",error:"Synthetic assessment failure"};
+              if(scenario.assessment==="unavailable")return {status:"incomplete",error:"Reviewer response was invalid: synthetic final decision failed validation"};
               const assessed=scenario.assessment as ReviewDecision["outcome"];
               return {status:"completed",decision:{outcome:assessed,basis:assessed==="ALLOW"?"explicit_authorization":assessed==="ASK"?"uncertainty":"user_refusal",
                 reason:assessed==="ALLOW"?"TEST ONLY: assessment ALLOW; concern resolved for one exact retry.":`TEST ONLY: assessment ${assessed}; human judgment remains required.`,userMessageIds:[request.conversation.filter(m=>m.role==="user").at(-1)!.id]}};
@@ -238,8 +238,9 @@ async function runScenario(name: Scenario, realUI?: ExtensionUIContext, withRunt
           const rendered=justificationTool.renderResult(result,{},theme,{}).render(120).join("\n");
           assert.match(rendered,/Agent position: (contest|retract|narrow)/);assert.match(rendered,/fixture action remains intentionally synthetic/);
           if(scenario.assessment!=="skipped"){
-            const label=scenario.assessment==="ALLOW"?"Concern resolved":scenario.assessment==="ASK"?"Concern remains":scenario.assessment==="USER_REFUSED"?"User restriction remains":"Assessment unavailable";
+            const label=scenario.assessment==="ALLOW"?"Concern resolved":scenario.assessment==="ASK"?"Concern remains":scenario.assessment==="USER_REFUSED"?"User restriction remains":"Reassessment could not complete";
             assert.match(rendered,new RegExp(`Guardian assessment: ${label}`));
+            if(scenario.assessment==="unavailable")assert.match(rendered,/Reviewer response was invalid/);
           }else assert.doesNotMatch(rendered,/Guardian assessment:/,"Withdrawal must not spend another reviewer request");
           assert.ok(!activeTools.includes("guardian_justify"),"Submitted justification must remove its model tool");
           const savedAssessment=[...entries].reverse().find(e=>e.type==="custom"&&e.customType==="guardian-dispute"&&e.data?.assessment);

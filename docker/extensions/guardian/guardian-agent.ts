@@ -205,7 +205,7 @@ function canonicalJson(value:unknown):string{
 }
 function actionCwd(ctx:ExtensionContext,input:Json):string{const supplied=input.cwd;return typeof supplied==="string"?resolve(ctx.cwd,supplied):ctx.cwd;}
 function assessmentLabel(assessment:GuardianAssessment):string{
-  if(assessment.status==="unavailable")return "Assessment unavailable";
+  if(assessment.status==="unavailable")return "Reassessment could not complete";
   return assessment.outcome==="ALLOW"?"Concern resolved":assessment.outcome==="ASK"?"Concern remains":"User restriction remains";
 }
 function justificationPanel(details:JustificationDetails):string{

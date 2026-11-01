@@ -32,7 +32,7 @@ const { SettingsManager } = await import(pathToFileURL(join(piDir, 'dist', 'core
 const ai = await import(pathToFileURL(join(piDir, 'node_modules', '@earendil-works', 'pi-ai', 'dist', 'index.js')).href);
 const usage = { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2,
   cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
-const model = { id: 'primary', name: 'Synthetic Primary', provider: 'synthetic', api: 'caf-loop-test',
+const model = { id: 'primary', name: 'Synthetic Primary', provider: 'synthetic', api: 'openai-completions',
   baseUrl: 'https://synthetic.invalid', reasoning: false, input: ['text'], cost: usage.cost,
   contextWindow: 128000, maxTokens: 4096 };
 const requests = [];
@@ -60,11 +60,14 @@ const providerExtension = pi => {
     name: 'Synthetic CAF loop provider', baseUrl: model.baseUrl, apiKey: 'synthetic-test-key', api: model.api,
     models: [{ id: model.id, name: model.name, reasoning: false, input: ['text'], cost: model.cost,
       contextWindow: model.contextWindow, maxTokens: model.maxTokens }],
-    streamSimple: (_selected, context) => {
+    streamSimple: async (_selected, context, options) => {
       const tools = activeToolNames(context.messages), toolResults = context.messages.filter(message => message.role === 'toolResult');
-      requests.push({ tools, toolResults: toolResults.length });
+      const wirePayload = await options?.onPayload?.({ messages: context.messages, tools: tools.map(name => ({ name })) }) ??
+        { messages: context.messages, tools: tools.map(name => ({ name })) };
+      requests.push({ tools, toolResults: toolResults.length, wirePayload });
       if (requests.length === 1) {
         assert.deepEqual(tools, ['call_friend']);
+        assert.deepEqual(wirePayload.tools?.map(tool => tool.name), ['call_friend'], 'Non-empty provider tools must remain intact');
         assert.equal(toolResults.length, 0);
         return streamed(assistant([{ type: 'toolCall', id: 'caf-loop-call', name: 'call_friend', arguments: {
           message: 'Assess a fictional abstract reliability statement.', purpose: 'Synthetic failure-workflow test',
@@ -72,13 +75,14 @@ const providerExtension = pi => {
       }
       assert.equal(requests.length, 2, 'The primary must receive exactly one explain-only follow-up');
       assert.deepEqual(tools, [], 'No tool may be model-visible during the explain-only follow-up');
+      assert.equal(Object.hasOwn(wirePayload, 'tools'), false, 'The explain-only provider payload must omit an empty tools field');
       assert.equal(toolResults.length, 1);
       assert.equal(toolResults[0].toolName, 'call_friend');
       assert.equal(toolResults[0].details?.friendRequestStarted, false);
       assert.equal(toolResults[0].details?.retryAllowed, false);
       assert.equal(toolResults[0].details?.explainOnly, true);
       assert.match(toolResults[0].content[0].text, /Nothing was sent to the friend/);
-      return streamed(assistant([{ type: 'text', text: 'Call a Friend is disabled for this session, so nothing was sent. Enable CAF before trying again.' }], 'stop'));
+      return streamed(assistant([], 'stop'));
     },
   });
 };
@@ -99,11 +103,14 @@ try {
   assert.equal(requests.length, 2);
   assert.equal(events.filter(event => event.type === 'tool_execution_start' && event.toolName === 'call_friend').length, 1);
   assert.ok(events.some(event => event.type === 'agent_settled' && event.aborted === false));
-  assert.match(session.getLastAssistantText(), /nothing was sent/i);
+  assert.equal(session.getLastAssistantText(), undefined, 'The synthetic provider should reproduce an empty successful settlement');
+  const fallback = session.messages.find(message => message.role === 'custom' && message.customType === 'pi-run-caf-failure');
+  assert.equal(fallback?.display, true, 'CAF must persist a displayed failure fallback');
+  assert.match(fallback?.content, /Nothing was sent to the friend/);
   assert.deepEqual(session.getActiveToolNames(), ['call_friend'], 'The original tool set must return only after settlement');
 } finally {
   unsubscribe();
   session.dispose();
 }
-console.log('native Pi agent loop explains CAF failure once, hides tools, and restores them after settlement');
+console.log('native Pi agent loop preserves a visible CAF failure across an empty settlement, hides tools, and restores them');
 NODE

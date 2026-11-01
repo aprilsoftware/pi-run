@@ -142,7 +142,7 @@ function normalizeCafGuardDecision(value:unknown,evidence:CafGuardEvidence):CafG
   return freeze({schemaVersion:1,outcome,reason,userMessageIds:[...new Set(ids)]});
 }
 export const CAF_GUARD_REVIEW_DOMAIN:AgenticReviewDomain<CafGuardReviewRequest,CafGuardEvidence,CafGuardDecision>={
-  id:"caf-guard",systemPrompt:()=>CAF_GUARD_PROMPT,evidenceTools:cafEvidenceTools,
+  id:"caf-guard",systemPrompt:()=>CAF_GUARD_PROMPT,evidenceTools:cafEvidenceTools,maxModelRequests:()=>5,maxCumulativeBytes:()=>416*1024,
   decisionTool:{name:"caf_guard_decide",label:"CAF disclosure decision",description:"Return the final CAF disclosure decision without contacting the friend.",
     parameters:cafObjectSchema({outcome:{type:"string",enum:["ALLOW","ASK","USER_REFUSED"]},reason:{type:"string",minLength:1,maxLength:2400},userMessageIds:{type:"array",items:CAF_TEXT,maxItems:12}})},
   initialPrompt:(_request,evidence)=>evidence.initial(),prepareContext:(context,evidence,state)=>{if(state.final)context.messages.push({role:"system",timestamp:Date.now(),content:`Harness budget (not user authority): final request. Return exactly one caf_guard_decide call now for the current candidate; do not continue investigating. ASK if evidence is incomplete or materially ambiguous. Decision-ready user source IDs: ${JSON.stringify(evidence.decisionReadyUserSourceIds())}`});},
@@ -416,6 +416,11 @@ export default function cafAgent(pi:ExtensionAPI){
   let explainOnlyTools:readonly string[]|undefined;
   const beginExplainOnly=()=>{if(explainOnlyTools)return;const previous=[...pi.getActiveTools()];pi.setActiveTools([]);explainOnlyTools=previous;};
   const endExplainOnly=()=>{if(!explainOnlyTools)return;const previous=explainOnlyTools;pi.setActiveTools([...previous]);explainOnlyTools=undefined;};
+  pi.on("before_provider_request",(event,ctx)=>{
+    if(!explainOnlyTools||ctx.model?.api!=="openai-completions"||!event.payload||typeof event.payload!=="object"||Array.isArray(event.payload))return;
+    const payload=event.payload as Record<string,unknown>;if(!Array.isArray(payload.tools)||payload.tools.length)return;
+    const {tools:_emptyTools,...withoutEmptyTools}=payload;return withoutEmptyTools;
+  });
   const tell=(ctx:ExtensionContext,text:string,level:"info"|"warning"|"error"="info")=>ctx.ui.notify(text,level);
   const warnJournal=(warning:string)=>{const notice=`${warning.replace(/^Guard journal unavailable:/,"CAF diagnostics unavailable:")}. CAF authorization and release behavior are unchanged.`;
     try{journalContext?tell(journalContext,notice,"warning"):console.error(notice);}catch{/* Diagnostics cannot affect CAF. */}};
@@ -576,8 +581,10 @@ export default function cafAgent(pi:ExtensionAPI){
   const toolFailure=(reason:string,status:string,usage?:Usage,started=false)=>{
     const failureStage=started?"friend-or-research":/^(guard-|review-)|review-withheld$/.test(status)?"guard-review":"local";
     let explainOnly=false;try{beginExplainOnly();explainOnly=true;}catch{/* Strict fail-stop remains when the explain-only loadout cannot be established. */}
-    const transmission=started?"A friend or research provider request may have occurred.":"Nothing was sent to the friend.";
-    return {content:[{type:"text" as const,text:`Call a Friend failed: ${reason} ${transmission} Explain this failure to the user now; do not retry or call tools, then end the turn.`}],
+    const transmission=started?"A friend or research provider request may have occurred.":"Nothing was sent to the friend.",visible=`Call a Friend failed: ${reason} ${transmission}`;
+    try{pi.sendMessage({customType:"pi-run-caf-failure",content:visible,display:true,details:{schemaVersion:1,status,failureStage,friendRequestStarted:started,retryAllowed:false}},{triggerTurn:false});}
+    catch{/* The tool result remains the authoritative visible failure if presentation cannot be queued. */}
+    return {content:[{type:"text" as const,text:`${visible} Explain this failure to the user now; do not retry or call tools, then end the turn.`}],
       details:{schemaVersion:1,status,failureStage,friendRequestStarted:started,retryAllowed:false,explainOnly},isError:true,...(!explainOnly?{terminate:true}:{}),...(usage?{usage}:{})};
   };
   const logsCommand=async(args:string,ctx:ExtensionContext)=>{journalContext=ctx;pinSessionMode(ctx);

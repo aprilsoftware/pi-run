@@ -306,6 +306,7 @@ const guardianReviewDomain:AgenticReviewDomain<ReviewRequest,EvidenceService,Dec
     if(state.final)context.messages.push({role:"user",timestamp:Date.now(),content:"Harness budget: final response. Decide now from available evidence; ASK if a material gap remains. Do not investigate further."});
   },
   requestDetails:evidence=>({instructionSources:[...evidence.instructions.values()].map(instruction=>instruction.id)}),
+  maxModelRequests:request=>request.dispute?6:4,
   normalizeDecision,
   decisionDetails:decision=>({outcome:decision.outcome,basis:decision.basis,userMessageIds:decision.userMessageIds,instructionRefs:decision.instructionRefs}),
   isEvidenceBudgetError:error=>error instanceof EvidenceBudgetError,
