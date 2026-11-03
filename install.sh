@@ -42,6 +42,106 @@ INSTALL_ROOT=$(realpath -m "${INSTALL_ROOT_INPUT}")
 BIN_DIR=$(realpath -m "${BIN_DIR_INPUT}")
 BIN_LINK="${BIN_DIR}/pi-run"
 
+shell_quote() {
+    printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
+}
+
+print_path_instruction() {
+    quoted_bin_dir=$(shell_quote "${BIN_DIR}")
+    echo "To use Pi-Run in this terminal now, run:"
+    printf "  export PATH=%s:\"\$PATH\"\n" "${quoted_bin_dir}"
+}
+
+path_config_target() {
+    configured_shell=${SHELL:-}
+    shell_name=${configured_shell##*/}
+    case "${shell_name}" in
+        bash) printf '%s\n' "${HOME}/.bashrc" ;;
+        zsh) printf '%s\n' "${HOME}/.zshrc" ;;
+        sh|dash|ash|ksh|mksh) printf '%s\n' "${HOME}/.profile" ;;
+        *) return 1 ;;
+    esac
+}
+
+configure_shell_path() {
+    case ":${PATH:-}:" in
+        *":${BIN_DIR}:"*) return ;;
+    esac
+
+    config_target=$(path_config_target) || {
+        echo "Executable directory is not on PATH; shell '${SHELL:-unknown}' is not supported for automatic configuration."
+        print_path_instruction
+        return
+    }
+    if [ -L "${config_target}" ] || { [ -e "${config_target}" ] && [ ! -f "${config_target}" ]; }; then
+        echo "Executable directory is not on PATH; refusing unsafe shell configuration target: ${config_target}"
+        print_path_instruction
+        return
+    fi
+    if [ -e "${config_target}" ] && [ ! -w "${config_target}" ]; then
+        echo "Executable directory is not on PATH; shell configuration is not writable: ${config_target}"
+        print_path_instruction
+        return
+    fi
+    quoted_bin_dir=$(shell_quote "${BIN_DIR}")
+    if grep -Fqx '# >>> pi-run PATH >>>' "${config_target}" 2>/dev/null; then
+        if ! grep -Fqx '# <<< pi-run PATH <<<' "${config_target}"; then
+            echo "Executable directory is not on PATH; refusing incomplete Pi-Run block in ${config_target}."
+        elif grep -Fqx "_pi_run_bin_dir=${quoted_bin_dir}" "${config_target}"; then
+            echo "Pi-Run PATH configuration already exists in ${config_target}."
+        else
+            echo "Executable directory is not on PATH; refusing a Pi-Run block for a different directory in ${config_target}."
+        fi
+        print_path_instruction
+        return
+    fi
+    if grep -Fqx '# <<< pi-run PATH <<<' "${config_target}" 2>/dev/null; then
+        echo "Executable directory is not on PATH; refusing incomplete Pi-Run block in ${config_target}."
+        print_path_instruction
+        return
+    fi
+
+    configure_path=false
+    case "${PATH_SETUP_MODE}" in
+        yes) configure_path=true ;;
+        no) ;;
+        ask)
+            if ( : </dev/tty ) 2>/dev/null; then
+                printf '%s' "Add a managed Pi-Run PATH entry to ${config_target}? [Y/n] " >/dev/tty
+                answer=
+                IFS= read -r answer </dev/tty || answer=n
+                case "${answer}" in
+                    ''|y|Y|yes|YES|Yes) configure_path=true ;;
+                esac
+            else
+                echo "No interactive terminal is available; shell PATH configuration was skipped."
+            fi
+            ;;
+    esac
+
+    if [ "${configure_path}" = true ]; then
+        if {
+            printf '\n# >>> pi-run PATH >>>\n'
+            printf '_pi_run_bin_dir=%s\n' "${quoted_bin_dir}"
+            cat <<'EOF'
+case ":${PATH:-}:" in
+    *":${_pi_run_bin_dir}:"*) ;;
+    *) PATH="${_pi_run_bin_dir}:${PATH:-}"; export PATH ;;
+esac
+unset _pi_run_bin_dir
+# <<< pi-run PATH <<<
+EOF
+        } >> "${config_target}"; then
+            echo "Added Pi-Run PATH configuration to ${config_target}; new shells will load it."
+        else
+            echo "Could not update shell configuration: ${config_target}"
+        fi
+    else
+        echo "Shell PATH configuration was not changed."
+    fi
+    print_path_instruction
+}
+
 case "${INSTALL_ROOT}" in
     /|"${HOME}") fail "refusing unsafe installation root: ${INSTALL_ROOT}" ;;
 esac
@@ -84,6 +184,13 @@ case "${1:-}" in
         ;;
     "") ;;
     *) fail "usage: install.sh [--uninstall]" ;;
+esac
+
+require_command sed
+PATH_SETUP_MODE=${PI_RUN_CONFIGURE_PATH:-ask}
+case "${PATH_SETUP_MODE}" in
+    ask|yes|no) ;;
+    *) fail "PI_RUN_CONFIGURE_PATH must be ask, yes, or no" ;;
 esac
 
 [ "$(uname -s)" = Linux ] || fail "only Linux is currently supported"
@@ -248,7 +355,4 @@ mv -Tf "${BIN_TMP}" "${BIN_LINK}"
 
 echo "Pi-Run ${PI_RUN_VERSION} installed at ${INSTALL_ROOT}."
 echo "Executable: ${BIN_LINK}"
-case ":${PATH:-}:" in
-    *":${BIN_DIR}:"*) ;;
-    *) echo "Add ${BIN_DIR} to PATH before running: pi-run ." ;;
-esac
+configure_shell_path

@@ -145,13 +145,17 @@ and open the current directory:
 
 ```bash
 curl -fsSL https://github.com/aprilsoftware/pi-run/releases/latest/download/install.sh | sh
+export PATH="$HOME/.local/bin:$PATH"
 pi-run init
 pi-run .
 ```
 
 The downloaded installer contains its matching version. It verifies the
 versioned application archive, pulls the matching runtime and egress images,
-and installs the `pi-run` command. `pi-run init` creates the data home and
+and installs the `pi-run` command. When needed, it offers to persist the default
+executable directory for supported shells; the explicit `export` above also
+makes the command available immediately in the current shell. `pi-run init`
+creates the data home and
 initial profile;
 `pi-run .` opens the current directory as a writable workspace. For explicitly
 isolated parallel repository work, `pi-run worktree start <task-name> <repository>`

@@ -132,8 +132,13 @@ release you trust. If release assets or images require authentication, use the
 [restricted-release instructions](maintainers/private-release-access.md).
 
 On success, the installer reports the application location and executable path.
-If that executable directory is not on `PATH`, follow the printed instruction
-before continuing.
+If that directory is not on `PATH`, an interactive installation detects Bash,
+Zsh, or a POSIX-compatible login shell and asks before adding a managed entry to
+its configuration file. The installer never silently changes shell files and
+cannot change the environment of the shell that launched it. Follow the printed
+`export PATH=...` instruction to use `pi-run` immediately; newly started shells
+load an accepted persistent entry automatically. Non-interactive or unsupported
+shells receive the manual instruction without modifying configuration.
 
 For an exact older/newer tag, custom locations, and installer refusal behavior,
 see the [Installation reference](reference/installation.md#select-a-release).

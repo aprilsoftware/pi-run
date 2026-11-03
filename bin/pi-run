@@ -827,10 +827,14 @@ if [[ "${NETWORK_MODE}" == restricted ]]; then
         fail "restricted runtime policy staging would overlap workspace: ${WORKSPACE}"
     fi
     if ! RESOLVER_OUTPUT="$(docker run --rm --pull never \
-        --network none --cap-drop=ALL --security-opt=no-new-privileges \
-        --user "${HOST_UID}:${HOST_GID}" \
+        --network none --cap-drop=ALL \
+        --cap-add=CHOWN --cap-add=SETUID --cap-add=SETGID --cap-add=DAC_READ_SEARCH \
+        --security-opt=no-new-privileges \
         --mount "type=bind,src=${PROFILE_DIR},dst=/profile,readonly" \
-        --entrypoint /usr/local/bin/pi-run-network-policy-resolver "${IMAGE}")"; then
+        --env "HOST_UID=${HOST_UID}" --env "HOST_GID=${HOST_GID}" \
+        --env PI_RUN_SKIP_SSH_CONFIG=1 \
+        --entrypoint /usr/local/bin/entrypoint.sh "${IMAGE}" \
+        /usr/local/bin/pi-run-network-policy-resolver)"; then
         fail "restricted network policy resolution failed"
     fi
     if ! RESOLVED_POLICY="$(jq -cse '

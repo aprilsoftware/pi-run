@@ -131,6 +131,19 @@ Application-path precedence is:
 `$HOME/.local/bin`. The installer records that directory under the application
 root so upgrades can preserve it.
 
+`PI_RUN_CONFIGURE_PATH` controls optional shell configuration when the selected
+directory is absent from `PATH`:
+
+- `ask` (default) prompts through the controlling terminal;
+- `yes` writes the supported shell's managed entry without prompting;
+- `no` never changes shell configuration.
+
+Bash uses `~/.bashrc`, Zsh uses `~/.zshrc`, and `sh`, Dash, Ash, Ksh, and Mksh use
+`~/.profile`. Unknown shells and non-interactive `ask` installations fall back
+to printed instructions. The installer refuses linked, non-regular, unwritable,
+or partially marked configuration targets. Fish has distinct PATH syntax and is
+not modified automatically.
+
 The launcher data home is independent:
 
 1. `pi-run --home <path> ...` for one invocation.
@@ -157,15 +170,19 @@ It does not elevate privileges.
 ## Executable lookup and installation checks
 
 If the shell cannot find `pi-run`, add the configured executable directory to
-`PATH`. For the default location, test the current shell with:
+`PATH`. For the default location, update the current shell with:
 
 ```bash
 export PATH="$HOME/.local/bin:$PATH"
 pi-run version
 ```
 
-Persist that change using the appropriate shell configuration only after
-confirming the path.
+An installer-approved managed entry applies to newly started shells, not the
+already-running parent shell. The entry is bounded by `# >>> pi-run PATH >>>`
+and `# <<< pi-run PATH <<<` markers and checks for an existing PATH element
+before prepending it. Reinstalling or upgrading does not duplicate the block.
+When automatic configuration is skipped, persist the printed command manually
+in the appropriate shell configuration after confirming the path.
 
 `pi-run version` reports the launcher version and selected runtime and egress
 images without checking Docker. `pi-run home` resolves the data path without

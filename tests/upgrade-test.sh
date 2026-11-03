@@ -313,8 +313,81 @@ BIN_DIR="${TMP}/executable dir"
 HOME_DIR="${TMP}/home"
 RELEASE_BASE="file://${TMP}/releases"
 
+run_path_install() {
+    local version="$1" home="$2" root="$3" bin="$4" mode="$5" shell="$6"
+    PATH="${TMP}/fake-bin:${PATH}" \
+    HOME="${home}" \
+    SHELL="${shell}" \
+    PI_RUN_CONFIGURE_PATH="${mode}" \
+    PI_RUN_RELEASE_BASE_URL="${RELEASE_BASE}" \
+    PI_RUN_INSTALL_ROOT="${root}" \
+    PI_RUN_BIN_DIR="${bin}" \
+    "${TMP}/source-${version}/install.sh"
+}
+
+# Explicit consent adds one safe, effective, and idempotent managed shell block.
+PATH_HOME="${TMP}/path home"
+PATH_ROOT="${TMP}/path application"
+PATH_BIN="${TMP}/path bin's"
+mkdir -p "${PATH_HOME}"
+path_output="$(run_path_install 0.5.3 "${PATH_HOME}" "${PATH_ROOT}" "${PATH_BIN}" yes /bin/bash)"
+assert_contains "${path_output}" "Added Pi-Run PATH configuration to ${PATH_HOME}/.bashrc"
+assert_contains "${path_output}" "To use Pi-Run in this terminal now, run:"
+grep -Fqx '# >>> pi-run PATH >>>' "${PATH_HOME}/.bashrc" \
+    || fail "installer did not add the managed PATH block"
+grep -Fqx '# <<< pi-run PATH <<<' "${PATH_HOME}/.bashrc" \
+    || fail "installer did not close the managed PATH block"
+EXPECTED_BIN="${PATH_BIN}/pi-run" PATH=/usr/bin:/bin HOME="${PATH_HOME}" \
+    bash --noprofile --norc -c '. "$HOME/.bashrc"; [[ "$(command -v pi-run)" == "$EXPECTED_BIN" ]]' \
+    || fail "managed Bash PATH block did not expose pi-run"
+run_path_install 0.5.4 "${PATH_HOME}" "${PATH_ROOT}" "${PATH_BIN}" yes /bin/bash >/dev/null
+[[ "$(grep -Fc '# >>> pi-run PATH >>>' "${PATH_HOME}/.bashrc")" == 1 ]] \
+    || fail "installer duplicated the managed PATH block"
+
+for shell_case in 'zsh .zshrc' 'dash .profile'; do
+    read -r shell_name config_name <<< "${shell_case}"
+    shell_home="${TMP}/path-${shell_name}-home"
+    mkdir -p "${shell_home}"
+    run_path_install 0.5.3 "${shell_home}" "${TMP}/path-${shell_name}-app" \
+        "${TMP}/path-${shell_name}-bin" yes "/bin/${shell_name}" >/dev/null
+    grep -Fqx '# >>> pi-run PATH >>>' "${shell_home}/${config_name}" \
+        || fail "installer did not configure ${shell_name} PATH"
+done
+
+# Explicit refusal, unsupported shells, unsafe targets, and non-interactive ask mode stay read-only.
+NO_HOME="${TMP}/path-no-home"
+mkdir -p "${NO_HOME}"
+no_output="$(run_path_install 0.5.3 "${NO_HOME}" "${TMP}/path-no-app" "${TMP}/path-no-bin" no /bin/zsh)"
+[[ ! -e "${NO_HOME}/.zshrc" ]] || fail "PATH setup refusal created .zshrc"
+assert_contains "${no_output}" "Shell PATH configuration was not changed."
+
+UNKNOWN_HOME="${TMP}/path-unknown-home"
+mkdir -p "${UNKNOWN_HOME}"
+unknown_output="$(run_path_install 0.5.3 "${UNKNOWN_HOME}" "${TMP}/path-unknown-app" "${TMP}/path-unknown-bin" yes /usr/bin/fish)"
+[[ ! -e "${UNKNOWN_HOME}/.config/fish/config.fish" ]] || fail "unsupported shell was modified"
+assert_contains "${unknown_output}" "is not supported for automatic configuration"
+
+UNSAFE_HOME="${TMP}/path-unsafe-home"
+mkdir -p "${UNSAFE_HOME}"
+printf '%s\n' 'preserve me' > "${UNSAFE_HOME}/target"
+ln -s "${UNSAFE_HOME}/target" "${UNSAFE_HOME}/.bashrc"
+unsafe_output="$(run_path_install 0.5.3 "${UNSAFE_HOME}" "${TMP}/path-unsafe-app" "${TMP}/path-unsafe-bin" yes /bin/bash)"
+[[ "$(cat "${UNSAFE_HOME}/target")" == 'preserve me' ]] || fail "unsafe shell target was modified"
+assert_contains "${unsafe_output}" "refusing unsafe shell configuration target"
+
+ASK_HOME="${TMP}/path-ask-home"
+mkdir -p "${ASK_HOME}"
+ask_output="$(setsid -w env \
+    PATH="${TMP}/fake-bin:${PATH}" HOME="${ASK_HOME}" SHELL=/bin/bash \
+    PI_RUN_CONFIGURE_PATH=ask PI_RUN_RELEASE_BASE_URL="${RELEASE_BASE}" \
+    PI_RUN_INSTALL_ROOT="${TMP}/path-ask-app" PI_RUN_BIN_DIR="${TMP}/path-ask-bin" \
+    "${TMP}/source-0.5.3/install.sh" </dev/null)"
+[[ ! -e "${ASK_HOME}/.bashrc" ]] || fail "non-interactive ask mode modified .bashrc"
+assert_contains "${ask_output}" "No interactive terminal is available"
+
 PATH="${TMP}/fake-bin:${PATH}" \
 HOME="${HOME_DIR}" \
+PI_RUN_CONFIGURE_PATH=no \
 PI_RUN_RELEASE_BASE_URL="${RELEASE_BASE}" \
 PI_RUN_INSTALL_ROOT="${INSTALL_ROOT}" \
 PI_RUN_BIN_DIR="${BIN_DIR}" \
