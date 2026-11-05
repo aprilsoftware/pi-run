@@ -216,9 +216,10 @@ for (const [index, scenario] of scenarios.entries()) {
   for (let attempt = 0; attempt < 100; attempt++) {
     try { journal = (await readFile(journalPath, 'utf8')).trim().split('\n').filter(Boolean).map(line => JSON.parse(line)); } catch (error) { if (error?.code !== 'ENOENT') throw error; }
     const dispositionReady = journal.some(entry => entry.event === expectedDisposition);
+    const resultReady = scenario.outcome !== 'ALLOW' || journal.some(entry => entry.event === 'tool_result' && entry.details?.resultKind === 'tool_success');
     const repeatReady = !scenario.repeat || journal.some(entry => entry.event === 'dispute_tool_withheld');
     const contestReady = !scenario.contest || journal.some(entry => entry.event === 'dispute_assessment_decision');
-    if (dispositionReady && repeatReady && contestReady) break;
+    if (dispositionReady && resultReady && repeatReady && contestReady) break;
     await new Promise(resolve => setTimeout(resolve, 10));
   }
   if (scenario.outcome === 'ALLOW') {
