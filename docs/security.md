@@ -64,9 +64,12 @@ Each rule has exactly one selector. `host` is an exact lowercase DNS hostname;
 `domain` covers the named apex and all subdomains; `cidr` is a normalized IPv4
 or IPv6 subnet; `internet: true` permits public destinations while excluding
 private and special-purpose ranges. `tcpPorts` contains unique ports from 1
-through 65535. Omitting it permits all TCP ports for that rule. External UDP,
-loopback TCP other than the local proxy, link-local, multicast, unspecified, and
-other reserved destinations remain blocked.
+through 65535. Omitting it permits all TCP ports for that rule. External UDP
+other than DNS, loopback TCP other than the local proxy, link-local, multicast,
+unspecified, and other reserved destinations remain
+blocked. Restricted workloads use Docker's host-derived `/etc/resolv.conf` and
+may issue DNS over UDP or TCP port 53; resolving a name does not authorize the
+resulting connection.
 
 Before the sidecar starts, an offline resolver reads provider identities and
 HTTPS endpoints from the selected profile and adds exact TCP/443 model rules.
@@ -90,7 +93,8 @@ use the same proxy for SSH, SCP, SFTP, Git-over-SSH, and Ansible. A restricted
 launch also sets `ssrf.trustEnvProxy` to `true` in the selected profile's
 `web-search.json`, creating the file when needed and preserving its other
 settings. This lets the bundled web tools ask the controlled proxy to resolve
-remote hostnames instead of requiring unrestricted DNS from the workload.
+remote hostnames while ordinary workload DNS continues to use Docker's host-derived
+configuration.
 Host and offline launches do not change that file; the setting is inert when
 Pi-Run has not supplied a proxy. Other hostname-based clients must support
 CONNECT. CIDR and public-internet rules are also enforced by the firewall and

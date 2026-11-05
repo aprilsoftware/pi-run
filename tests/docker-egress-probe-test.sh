@@ -112,9 +112,15 @@ grep -Fx 'iptables -w -A OUTPUT -o lo -p udp -j ACCEPT' \
 grep -Fx 'ip6tables -w -A OUTPUT -o lo -p udp -j ACCEPT' \
     "${ROOT}/experiments/docker-egress/entrypoint.sh" >/dev/null \
     || fail "IPv6 loopback UDP was not allowed for proxy IPC"
+grep -F "\"\${command}\" -w -A OUTPUT -m owner --uid-owner \"\${WORKLOAD_UID}\" -p udp --dport 53 -j ACCEPT" \
+    "${ROOT}/docker/egress/entrypoint.sh" >/dev/null \
+    || fail "restricted workload UDP DNS was not allowed"
+grep -F "\"\${command}\" -w -A OUTPUT -m owner --uid-owner \"\${WORKLOAD_UID}\" -p tcp --dport 53 -j ACCEPT" \
+    "${ROOT}/docker/egress/entrypoint.sh" >/dev/null \
+    || fail "restricted workload TCP DNS was not allowed"
 grep -F 'expect_blocked "alternate DNS"' \
     "${ROOT}/experiments/docker-egress/probe.sh" >/dev/null \
-    || fail "external UDP denial is not tested"
+    || fail "legacy probe external UDP denial is not tested"
 grep -F -- 'dst=/policy/allowed-hosts.txt,readonly' "$DOCKER_LOG" >/dev/null \
     || fail "policy was not mounted read-only"
 grep -F -- '--network container:pirun-egress-' "$DOCKER_LOG" >/dev/null \

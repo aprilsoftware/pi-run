@@ -112,10 +112,12 @@ whose IPv4 and IPv6 output policies default to deny. Squid permits CONNECT when
 a requested exact host, domain suffix, CIDR, or public-internet destination and
 TCP port match a rule. CIDR and internet rules also allow matching direct TCP
 from Pi's mapped UID. Internet rules exclude private and special-purpose ranges;
-explicit CIDRs can separately grant selected private networks. External UDP,
-alternate DNS, unlisted destinations, gateway access, direct TCP loopback other
-than the local proxy, link-local, multicast, unspecified, and configured
-adjacent ports remain blocked.
+explicit CIDRs can separately grant selected private networks. External UDP
+other than DNS, unlisted destinations, gateway access, direct TCP loopback
+other than the local proxy, link-local, multicast, unspecified, and configured
+adjacent ports remain blocked. Restricted workloads use Docker's host-derived
+`/etc/resolv.conf` and may issue DNS over UDP or TCP port 53; resolving a name
+does not authorize the resulting connection.
 
 The launcher supplies HTTP proxy variables and enables Node's environment proxy
 support. Before Docker starts, a restricted launch also configures the bundled
@@ -131,8 +133,8 @@ unsafe, structurally incompatible, or colliding staging path prevents launch
 before Docker starts rather than being overwritten. Host and offline launches
 do not change this file. The setting may remain after a later mode change and is
 inert when Pi-Run has not supplied a proxy. In restricted mode it lets the
-controlled proxy resolve remote hostnames without exposing unrestricted DNS to
-the workload.
+controlled proxy resolve remote hostnames while ordinary workload DNS continues
+to use Docker's host-derived configuration.
 
 Restricted mode also generates an OpenSSH `ProxyCommand` using `nc -X connect`,
 so SSH, SCP, SFTP, Git-over-SSH, and OpenSSH-based Ansible use the sidecar. Other

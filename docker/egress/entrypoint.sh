@@ -125,6 +125,8 @@ configure_firewall() {
     "${command}" -w -A OUTPUT -o lo -p tcp --dport 3128 -j ACCEPT
     "${command}" -w -A OUTPUT -m owner --uid-owner "${PROXY_UID}" -p udp --dport 53 -j ACCEPT
     "${command}" -w -A OUTPUT -m owner --uid-owner "${PROXY_UID}" -p tcp --dport 53 -j ACCEPT
+    "${command}" -w -A OUTPUT -m owner --uid-owner "${WORKLOAD_UID}" -p udp --dport 53 -j ACCEPT
+    "${command}" -w -A OUTPUT -m owner --uid-owner "${WORKLOAD_UID}" -p tcp --dport 53 -j ACCEPT
 
     if [[ "${family}" == 4 ]]; then
         core_blocked=("${CORE_BLOCKED_V4[@]}")
