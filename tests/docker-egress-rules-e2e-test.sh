@@ -2,13 +2,16 @@
 # SPDX-License-Identifier: MIT
 
 set -euo pipefail
-[[ $# -eq 1 && "$1" == --execute ]] || {
-    echo "Usage: experiments/docker-egress-tcp-rules/probe.sh --execute" >&2
-    exit 2
-}
-command -v docker >/dev/null 2>&1 || { echo "docker-egress-tcp-rules: docker unavailable" >&2; exit 1; }
 
-DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ "${PI_RUN_TEST_REAL_DOCKER:-0}" != 1 ]]; then
+    echo "docker-egress-rules-e2e-test: SKIP (set PI_RUN_TEST_REAL_DOCKER=1 to use real Docker)"
+    exit 0
+fi
+command -v docker >/dev/null 2>&1 \
+    || { echo "docker-egress-rules-e2e-test: docker unavailable" >&2; exit 1; }
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+FIXTURE="${ROOT}/tests/fixtures/docker-egress-rules-workload"
 SUFFIX="$(date +%s)-$$"; NETWORK="pirun-rules-${SUFFIX}"
 SIDECAR="pirun-rules-sidecar-${SUFFIX}"; ALL_SIDECAR="pirun-rules-all-${SUFFIX}"
 WORKLOAD="pirun-rules-workload-${SUFFIX}"
@@ -28,7 +31,7 @@ cleanup() {
 }
 trap cleanup EXIT
 fail() {
-    echo "docker-egress-tcp-rules: FAIL: $*" >&2
+    echo "docker-egress-rules-e2e-test: FAIL: $*" >&2
     docker logs "${SIDECAR}" 2>&1 | tail -40 >&2 || true
     exit 1
 }
@@ -46,9 +49,10 @@ expect_blocked() {
     echo "PASS blocked: ${label}"
 }
 
-echo "Building disposable generalized-egress images..."
-docker build --target sidecar -t "${SIDECAR_IMAGE}" -f "${DIR}/Dockerfile" "${DIR}" >/dev/null
-docker build --target workload -t "${WORKLOAD_IMAGE}" -f "${DIR}/Dockerfile" "${DIR}" >/dev/null
+echo "Building disposable production-egress test images..."
+docker build -t "${SIDECAR_IMAGE}" -f "${ROOT}/docker/egress/Dockerfile" \
+    "${ROOT}/docker" >/dev/null
+docker build -t "${WORKLOAD_IMAGE}" -f "${FIXTURE}/Dockerfile" "${FIXTURE}" >/dev/null
 docker network create "${NETWORK}" >/dev/null
 start_target() {
     local name="$1" alias; shift
@@ -175,4 +179,4 @@ docker kill "${SIDECAR}" >/dev/null
 [[ "$(docker inspect -f '{{.State.Running}}' "${WORKLOAD}")" == true ]] \
     || fail "workload stopped with sidecar"
 expect_blocked "sidecar termination bypass" "${DIRECT[@]}" "${DENIED_TARGET_IP}" 5432
-echo "docker-egress-tcp-rules: PASS"
+echo "docker-egress-rules-e2e-test: PASS"

@@ -110,9 +110,18 @@ grep -Fx 'COPY network-policy-resolver.mjs /usr/local/bin/pi-run-network-policy-
     || fail "network policy resolver is missing or unsafe"
 [[ -x "${ROOT}/docker/egress/entrypoint.sh" && ! -L "${ROOT}/docker/egress/entrypoint.sh" ]] \
     || fail "egress entrypoint is missing or unsafe"
-cmp -s "${ROOT}/experiments/docker-egress-tcp-rules/entrypoint.sh" \
-    "${ROOT}/docker/egress/entrypoint.sh" \
-    || fail "production egress entrypoint differs from the generalized TCP experiment"
+[[ ! -e "${ROOT}/experiments/docker-egress-tcp-rules" &&
+   ! -L "${ROOT}/experiments/docker-egress-tcp-rules" ]] \
+    || fail "promoted TCP egress implementation remains duplicated under experiments"
+[[ -x "${ROOT}/tests/docker-egress-rules-e2e-test.sh" &&
+   ! -L "${ROOT}/tests/docker-egress-rules-e2e-test.sh" ]] \
+    || fail "production egress real-Docker test is missing or unsafe"
+[[ -f "${ROOT}/tests/fixtures/docker-egress-rules-workload/Dockerfile" &&
+   ! -L "${ROOT}/tests/fixtures/docker-egress-rules-workload/Dockerfile" ]] \
+    || fail "production egress workload fixture is missing or unsafe"
+grep -F "\"\${ROOT}/docker/egress/Dockerfile\"" \
+    "${ROOT}/tests/docker-egress-rules-e2e-test.sh" >/dev/null \
+    || fail "real-Docker egress test does not build the production implementation"
 for package in iproute2 jq; do
     grep -Fx "        ${package} \\" "${ROOT}/docker/egress/Dockerfile" >/dev/null \
         || fail "egress Dockerfile does not install ${package}"
