@@ -61,6 +61,21 @@ export HOME=/home/node
 export USER=node
 export LOGNAME=node
 
+# Java does not consume the PEM bundle that Pi-Run mounts from the host. Replace
+# the container's ephemeral JKS with the image defaults plus that authoritative
+# host bundle. Keep it root-owned and immutable to the mapped workload user.
+JAVA_TRUST_STORE=/etc/ssl/certs/java/cacerts
+JAVA_TRUST_TEMP=/run/pi-run-java-cacerts.tmp
+rm -f "${JAVA_TRUST_TEMP}"
+env -u JAVA_TOOL_OPTIONS -u JDK_JAVA_OPTIONS -u _JAVA_OPTIONS \
+    java -cp /usr/local/lib/pi-run PiRunJavaTrustStore \
+    "${JAVA_TRUST_STORE}" \
+    /etc/ssl/certs/ca-certificates.crt \
+    "${JAVA_TRUST_TEMP}" \
+    changeit
+chmod 0444 "${JAVA_TRUST_TEMP}"
+mv "${JAVA_TRUST_TEMP}" "${JAVA_TRUST_STORE}"
+
 # Prepare ephemeral OpenSSH configuration as the mapped runtime user. Internal
 # credential-management commands skip this so they can diagnose invalid keys.
 if [[ "${PI_RUN_SKIP_SSH_CONFIG:-0}" != 1 ]]; then

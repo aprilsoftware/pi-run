@@ -105,6 +105,14 @@ grep -Fx 'COPY licenses/pi-run-LICENSE /usr/local/share/licenses/pi-run/LICENSE'
 grep -Fx 'COPY network-policy-resolver.mjs /usr/local/bin/pi-run-network-policy-resolver' \
     "${ROOT}/docker/Dockerfile" >/dev/null \
     || fail "runtime image does not install the network policy resolver"
+grep -Fx 'COPY PiRunJavaTrustStore.java /usr/local/src/pi-run/PiRunJavaTrustStore.java' \
+    "${ROOT}/docker/Dockerfile" >/dev/null \
+    || fail "runtime image does not install the Java host-CA bridge"
+[[ -f "${ROOT}/docker/PiRunJavaTrustStore.java" && \
+   ! -L "${ROOT}/docker/PiRunJavaTrustStore.java" ]] \
+    || fail "Java host-CA bridge is missing or unsafe"
+[[ "$(sed -n '1p' "${ROOT}/docker/PiRunJavaTrustStore.java")" == "//${SPDX#\#}" ]] \
+    || fail "Java host-CA bridge has no SPDX license identifier"
 [[ -f "${ROOT}/docker/network-policy-resolver.mjs" && \
    ! -L "${ROOT}/docker/network-policy-resolver.mjs" ]] \
     || fail "network policy resolver is missing or unsafe"
@@ -223,5 +231,28 @@ for component in ${EXPECTED}; do
     [[ "$(stat -c %a "${path}")" == 644 ]] || fail "archive component mode is not 644: ${component}"
     [[ "$(stat -c %h "${path}")" == 1 ]] || fail "archive component is hard-linked: ${component}"
 done
+
+JAVA_TEST_DIR="${TMP}/java-host-ca"
+mkdir -p "${JAVA_TEST_DIR}/classes"
+openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+    -subj '/O=Pi-Run Test/CN=Host CA Bridge Test' \
+    -keyout "${JAVA_TEST_DIR}/ca.key" -out "${JAVA_TEST_DIR}/ca.crt" \
+    >/dev/null 2>&1
+javac -d "${JAVA_TEST_DIR}/classes" "${ROOT}/docker/PiRunJavaTrustStore.java"
+java -cp "${JAVA_TEST_DIR}/classes" PiRunJavaTrustStore \
+    /etc/ssl/certs/java/cacerts "${JAVA_TEST_DIR}/ca.crt" \
+    "${JAVA_TEST_DIR}/java-cacerts" changeit
+expected_alias="pi-run-host-$(openssl x509 -in "${JAVA_TEST_DIR}/ca.crt" -outform DER | sha256sum | awk '{print $1}')"
+keytool -list -keystore "${JAVA_TEST_DIR}/java-cacerts" -storepass changeit \
+    -alias "${expected_alias}" >/dev/null \
+    || fail "Java host-CA bridge omitted the synthetic host CA"
+printf 'not a certificate\n' > "${JAVA_TEST_DIR}/invalid.crt"
+if java -cp "${JAVA_TEST_DIR}/classes" PiRunJavaTrustStore \
+    /etc/ssl/certs/java/cacerts "${JAVA_TEST_DIR}/invalid.crt" \
+    "${JAVA_TEST_DIR}/invalid-cacerts" changeit >/dev/null 2>&1; then
+    fail "Java host-CA bridge accepted an invalid host bundle"
+fi
+[[ ! -e "${JAVA_TEST_DIR}/invalid-cacerts" ]] \
+    || fail "Java host-CA bridge left a truststore after invalid input"
 
 echo "component layout and packaging tests passed"

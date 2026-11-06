@@ -187,9 +187,19 @@ within the session's other permissions.
 ## CA trust
 
 The host CA bundle is mounted read-only and selected tools can use it for TLS.
-This permits organization certificate authorities configured on the host to be
-trusted inside Pi-Run. Read-only access prevents container modification of the
-host bundle; it does not limit which peers those authorities can authenticate.
+At each normal startup, the runtime loads the image's default Java authorities,
+adds certificates from that mounted bundle, and replaces the container's
+ephemeral Java JKS. The JKS is root-owned and read-only to the mapped workload
+user, while Java's standard truststore path continues to select it. Generation
+failure prevents the workload from starting.
+
+This permits organization certificate authorities configured in the host's
+generated bundle to be trusted by Java and PEM-based clients inside Pi-Run. The
+host's source certificate directory is not mounted, and host changes require a
+fresh session. Read-only access prevents container modification of the host
+bundle or generated JKS; it does not limit which peers those authorities can
+authenticate. Pi-Run does not fetch certificate authorities or independently
+verify authorities installed by the host operator.
 
 ## Managed discovery and executable trust
 

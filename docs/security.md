@@ -32,6 +32,21 @@ workspace mappings, snapshot repositories and recovery secrets, or the Docker
 socket. Technical mounts and operation-specific management containers are
 listed in the [security reference](reference/security.md#normal-session-mounts).
 
+## Use host-managed CA trust
+
+Pi-Run mounts the host's generated CA bundle read-only. Configure organization
+certificate authorities on the host and run its normal CA update command before
+launching Pi-Run. At startup, the runtime combines that mounted bundle with the
+image's default Java authorities in the container's ephemeral, root-owned Java
+truststore, so Java and PEM-based clients use the same host-managed authority.
+Host CA changes apply only to newly launched sessions.
+
+Pi-Run does not mount `/usr/local/share/ca-certificates`, fetch authorities, or
+persist the container-generated truststore. Verify private CA material through an
+independent trusted channel before installing it. Trusting an authority permits
+it to authenticate every certificate within its scope; it does not authorize a
+network destination that restricted mode otherwise blocks.
+
 ## Choose profile networking
 
 Networking is selected by the profile, not by normal launch arguments:
