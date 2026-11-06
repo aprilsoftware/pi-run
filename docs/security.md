@@ -65,11 +65,13 @@ Each rule has exactly one selector. `host` is an exact lowercase DNS hostname;
 or IPv6 subnet; `internet: true` permits public destinations while excluding
 private and special-purpose ranges. `tcpPorts` contains unique ports from 1
 through 65535. Omitting it permits all TCP ports for that rule. External UDP
-other than DNS, loopback TCP other than the local proxy, link-local, multicast,
-unspecified, and other reserved destinations remain
-blocked. Restricted workloads use Docker's host-derived `/etc/resolv.conf` and
+other than DNS, link-local, multicast, unspecified, and other reserved
+destinations remain blocked. TCP and UDP loopback remain available inside the
+shared Pi/sidecar network namespace, including to services started by the
+workload and through proxy CONNECT; container loopback is not Docker-host
+loopback. Restricted workloads use Docker's host-derived `/etc/resolv.conf` and
 may issue DNS over UDP or TCP port 53; resolving a name does not authorize the
-resulting connection.
+resulting external connection.
 
 Before the sidecar starts, an offline resolver reads provider identities and
 HTTPS endpoints from the selected profile and adds exact TCP/443 model rules.

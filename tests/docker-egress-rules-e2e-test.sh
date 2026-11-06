@@ -140,6 +140,9 @@ for _ in $(seq 1 50); do
 done
 docker exec "${SIDECAR}" test -f /tmp/pi-run-egress-ready >/dev/null 2>&1 \
     || fail "sidecar did not become ready"
+docker exec "${SIDECAR}" grep -Fx 'acl local_loopback dst 127.0.0.0/8 ::1/128' \
+    /tmp/pi-run-squid.conf >/dev/null \
+    || fail "loopback was not allowed through the proxy"
 docker exec "${SIDECAR}" grep -Fx 'acl internet_ports port 443 9418' \
     /tmp/pi-run-squid.conf >/dev/null \
     || fail "internet TCP ports were not configured in the proxy"
@@ -153,15 +156,26 @@ docker exec "${SIDECAR}" iptables -w -C OUTPUT -m owner \
 docker exec "${SIDECAR}" iptables -w -C OUTPUT -m owner \
     --uid-owner "${WORKLOAD_UID}" -d 10.0.0.0/8 -p tcp -j REJECT \
     || fail "private IPv4 was not excluded from public internet access"
+docker exec "${SIDECAR}" iptables -w -C OUTPUT -o lo -p tcp -j ACCEPT \
+    || fail "shared-namespace loopback TCP was not allowed"
 docker run -d --name "${WORKLOAD}" --network "container:${SIDECAR}" \
     --user "${WORKLOAD_UID}:${WORKLOAD_UID}" --cap-drop ALL \
     --security-opt no-new-privileges=true "${WORKLOAD_IMAGE}" >/dev/null
 docker exec "${WORKLOAD}" sh -c '! capsh --has-p=cap_net_admin 2>/dev/null' \
     || fail "workload retained NET_ADMIN"
 docker exec "${WORKLOAD}" test ! -e /policy || fail "workload can see sidecar policy"
+docker exec -d "${WORKLOAD}" socat TCP-LISTEN:8084,bind=127.0.0.1,reuseaddr,fork EXEC:/bin/cat
+for _ in $(seq 1 30); do
+    docker exec "${WORKLOAD}" nc -z 127.0.0.1 8084 >/dev/null 2>&1 && break
+    sleep 0.1
+done
+docker exec "${WORKLOAD}" nc -z 127.0.0.1 8084 >/dev/null 2>&1 \
+    || fail "workload loopback service did not become reachable"
 
 PROXY=(docker exec -i "${WORKLOAD}" nc -w 3 -X connect -x 127.0.0.1:3128)
 DIRECT=(docker exec -i "${WORKLOAD}" nc -w 3)
+expect_echo "direct loopback TCP/8084" "${DIRECT[@]}" 127.0.0.1 8084
+expect_echo "proxied loopback TCP/8084" "${PROXY[@]}" 127.0.0.1 8084
 expect_echo "exact host TCP/2222" "${PROXY[@]}" exact.rules.test 2222
 expect_echo "domain suffix TCP/8080" "${PROXY[@]}" sub.wild.rules.test 8080
 expect_echo "CIDR selected TCP/5432" "${DIRECT[@]}" "${TARGET_IP}" 5432

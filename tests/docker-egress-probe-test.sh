@@ -112,6 +112,12 @@ grep -Fx 'iptables -w -A OUTPUT -o lo -p udp -j ACCEPT' \
 grep -Fx 'ip6tables -w -A OUTPUT -o lo -p udp -j ACCEPT' \
     "${ROOT}/experiments/docker-egress/entrypoint.sh" >/dev/null \
     || fail "IPv6 loopback UDP was not allowed for proxy IPC"
+grep -Fx 'acl local_loopback dst 127.0.0.0/8 ::1/128' \
+    "${ROOT}/docker/egress/entrypoint.sh" >/dev/null \
+    || fail "production proxy did not allow shared-namespace loopback"
+grep -F "\"\${command}\" -w -A OUTPUT -o lo -p tcp -j ACCEPT" \
+    "${ROOT}/docker/egress/entrypoint.sh" >/dev/null \
+    || fail "production firewall did not allow shared-namespace loopback TCP"
 grep -F "\"\${command}\" -w -A OUTPUT -m owner --uid-owner \"\${WORKLOAD_UID}\" -p udp --dport 53 -j ACCEPT" \
     "${ROOT}/docker/egress/entrypoint.sh" >/dev/null \
     || fail "restricted workload UDP DNS was not allowed"
