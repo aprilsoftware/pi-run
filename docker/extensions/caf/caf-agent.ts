@@ -142,7 +142,7 @@ function normalizeCafGuardDecision(value:unknown,evidence:CafGuardEvidence):CafG
   return freeze({schemaVersion:1,outcome,reason,userMessageIds:[...new Set(ids)]});
 }
 export const CAF_GUARD_REVIEW_DOMAIN:AgenticReviewDomain<CafGuardReviewRequest,CafGuardEvidence,CafGuardDecision>={
-  id:"caf-guard",systemPrompt:()=>CAF_GUARD_PROMPT,evidenceTools:cafEvidenceTools,maxModelRequests:()=>5,maxCumulativeBytes:()=>416*1024,
+  id:"caf-guard",systemPrompt:()=>CAF_GUARD_PROMPT,evidenceTools:cafEvidenceTools,maxModelRequests:()=>6,decisionOnlyAtRequest:()=>5,maxCumulativeBytes:()=>416*1024,
   decisionTool:{name:"caf_guard_decide",label:"CAF disclosure decision",description:"Return the final CAF disclosure decision without contacting the friend.",
     parameters:cafObjectSchema({outcome:{type:"string",enum:["ALLOW","ASK","USER_REFUSED"]},reason:{type:"string",minLength:1,maxLength:2400},userMessageIds:{type:"array",items:CAF_TEXT,maxItems:12}})},
   initialPrompt:(_request,evidence)=>evidence.initial(),prepareContext:(context,evidence,state)=>{if(state.final)context.messages.push({role:"system",timestamp:Date.now(),content:`Harness budget (not user authority): final request. Return exactly one caf_guard_decide call now for the current candidate; do not continue investigating. ASK if evidence is incomplete or materially ambiguous. Decision-ready user source IDs: ${JSON.stringify(evidence.decisionReadyUserSourceIds())}`});},

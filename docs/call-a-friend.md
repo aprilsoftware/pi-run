@@ -57,6 +57,15 @@ current user direction. The reviewer must return `ALLOW`, `ASK`, or
 and that exact action and destination, releases it. Reviewer evidence,
 rationale, tools, and policy never become part of the CAF agent payload.
 
+Each disclosure review permits at most six Guard-reviewer model requests. The
+first four may investigate; requests five and six are decision-only, with the
+sixth reserved for one bounded correction when the first final response is
+invalid or attempts more investigation. A seventh request is blocked, and an
+absent or invalid final decision remains fail-closed. This is a per-invocation
+harness boundary, not a profile setting, provider quota, time window, or budget
+that resets by waiting. Retrying starts another independently bounded review
+and may incur reviewer usage even when nothing reaches the friend.
+
 A reviewer request is itself disclosure to the configured Guard provider.
 Separate model requests isolate contexts; they do not prove provider
 confidentiality. A reviewer can make mistakes, and an unreviewed primary can
