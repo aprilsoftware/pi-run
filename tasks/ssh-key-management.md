@@ -1,12 +1,16 @@
-# SSH key management for transparent Ansible authentication
+# SSH key management design record (completed)
 
 ## Status and goal
 
-This document describes the agreed solution direction, not implemented behavior.
+**Status: completed.** This file is retained as the historical design record for
+the implemented profile SSH-key workflow. Current behavior is documented in the
+[SSH task guide](../docs/ssh.md) and
+[SSH behavior reference](../docs/reference/ssh.md); those documents are
+authoritative when this original proposal uses future tense or differs in detail.
 
-The goal is to make SSH authentication easy inside Pi-Run: Ansible should use the
-selected profile's credentials without private-key paths or key-selection
-settings in inventory, playbooks, or command-line arguments.
+The original goal was to make SSH authentication easy inside Pi-Run: Ansible
+should use the selected profile's credentials without private-key paths or
+key-selection settings in inventory, playbooks, or command-line arguments.
 
 An SSH agent and compatibility with the existing host-agent interface are not
 requirements; the design starts from straightforward Ansible authentication.

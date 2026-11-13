@@ -65,8 +65,9 @@ ssh server.example.test
 ```
 
 The same configuration applies to `scp`, `sftp`, Git SSH remotes, and tools that
-use OpenSSH. Ansible is not bundled; when supplied separately with its OpenSSH
-connection plugin, it can use the configured hostname.
+use OpenSSH. Ansible is bundled in the runtime image and uses its OpenSSH
+connection plugin by default, so inventory can use the configured hostname
+without repeating the profile key path.
 
 ### Remove local key files
 
