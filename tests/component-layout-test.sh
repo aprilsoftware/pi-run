@@ -66,6 +66,7 @@ done
 [[ "$(sed -n '2p' "${BASH_SOURCE[0]}")" == "${SPDX}" ]] \
     || fail "packaging test has no SPDX license identifier"
 expected_extension_layout="$(printf '%s\n' \
+    cache/cache-policy-agent.ts \
     caf/caf-agent.ts \
     caf/caf-log-viewer.ts \
     caf/caf-protocol.ts \

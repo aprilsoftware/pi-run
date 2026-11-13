@@ -135,6 +135,18 @@ directories must also be ordinary contained directories. When `caf/` is
 present, it receives the same directory checks; an optional `caf/caf.md`
 receives the same containment and link checks as other definition files.
 
+Pi 1.5's global `cacheWarming` setting accepts `"off"`, `"streaming"`, or
+`"idle"`; its upstream default is `"idle"`. The final built-in Pi-Run cache
+policy reads the profile's current `settings.json` before each proposed refresh.
+When a valid explicit `"idle"` is absent, the policy returns `"stop"` for idle
+refreshes while leaving active-run decisions unchanged. Missing, unreadable,
+malformed, or invalid settings therefore fail conservatively without modifying
+the file. Explicit `"idle"` leaves Pi's decision unchanged; explicit `"off"`
+and `"streaming"` retain their normal Pi behavior. A later user-supplied
+extension can deliberately override this because Pi uses the last returned
+cache-warming action. `/session` may show Pi's upstream `idle` mode for an unset
+setting while also reporting the Pi-Run extension override.
+
 See [Call a Friend](../call-a-friend.md) for the focused configuration,
 dialogue, public-search, diagnostic, and boundary guide.
 

@@ -198,6 +198,14 @@ write separate workspace-scoped diagnostic journals under the profile.
 `caf/caf.md` supply review priorities. Instructions guide behavior but are not
 an operating-system permission boundary.
 
+Pi 1.5 can keep an eligible provider prompt cache warm after a run has become
+idle. Pi-Run preserves the earlier active-run-only behavior when the profile has
+no explicit `cacheWarming` setting: its final built-in policy stops each idle
+refresh before provider contact without writing `settings.json`. Set
+`cacheWarming` to `"idle"` in `/settings` to opt into idle refreshes, or choose
+`"streaming"` or `"off"` explicitly. This policy affects cache-refresh calls,
+not ordinary model requests.
+
 The complete profile lives under `<Pi-Run home>/profiles/<name>/`; use
 `pi-run home` to find the data home. User-owned profile definitions survive
 application upgrades.

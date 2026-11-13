@@ -10,8 +10,8 @@ RUN rustup component add --toolchain "${RUST_VERSION}" rustfmt clippy \
 FROM node:24-trixie
 
 ARG RUST_VERSION
-ARG PI_VERSION=1.1.0
-ARG PI_WEB_ACCESS_VERSION=0.37.0
+ARG PI_VERSION=1.5.2
+ARG PI_WEB_ACCESS_VERSION=0.47.0
 ARG PI_OKF_VERSION=0.4.0
 ARG RESTIC_VERSION=0.19.1
 ARG RESTIC_LINUX_AMD64_SHA256=f415415624dcc452f2a02b8c33641791a8c6d6d3b65bbb3543fcf9a25151585c
@@ -227,6 +227,7 @@ RUN npm install -g \
         "pi-okf@${PI_OKF_VERSION}"
 
 # Copy the Pi-Run extension bundle with shared Guard infrastructure and sibling clients.
+COPY extensions/cache/cache-policy-agent.ts /usr/local/lib/node_modules/pi-run-extensions/cache/
 COPY extensions/plan/plan-agent.ts /usr/local/lib/node_modules/pi-run-extensions/plan/
 COPY extensions/guard/guard-runtime-contract.ts /usr/local/lib/node_modules/pi-run-extensions/guard/
 COPY extensions/guard/guard-runtime.ts /usr/local/lib/node_modules/pi-run-extensions/guard/

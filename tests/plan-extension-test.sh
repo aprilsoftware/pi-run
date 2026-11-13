@@ -494,7 +494,7 @@ runner.bindCore({ getActiveTools: () => runtimeTools, setActiveTools: names => {
 await runner.emit({ type: 'session_start', reason: 'startup' });
 await loaded.extensions[0].commands.get('plan').handler('', runner.createCommandContext());
 const runtimeBase = { cwd: root };
-const runtimePrompt = await runner.emitBeforeAgentStart('inspect', undefined, runtimeBase);
+const runtimePrompt = await runner.emitBeforeAgentStart({ messageType: 'user', prompt: 'inspect', images: undefined }, runtimeBase);
 assert.ok(runtimePrompt.systemPromptOptions.sections.pi_run_plan.includes('Develop the overall plan'));
 assert.deepEqual(runtimeTools, planning);
 for (const toolName of ['write', 'bash', 'run']) {
@@ -510,7 +510,7 @@ assert.equal(laterCalls, 8);
 await recordTool.execute('record', draft, undefined, undefined, runner.createToolContext('record'));
 assert.deepEqual(runtimeBranch.at(-1).data, { schemaVersion: 2, draft });
 await loaded.extensions[0].commands.get('plan-exit').handler('', runner.createCommandContext());
-const disabledPrompt = await runner.emitBeforeAgentStart('ordinary work', undefined, runtimeBase);
+const disabledPrompt = await runner.emitBeforeAgentStart({ messageType: 'user', prompt: 'ordinary work', images: undefined }, runtimeBase);
 assert.equal(disabledPrompt.systemPromptOptions.sections.pi_run_plan, undefined);
 assert.deepEqual(runtimeTools, original);
 assert.equal((await runner.emitToolCall({ type: 'tool_call', toolName: 'plan_record', toolCallId: 'record', input: draft })).block, true);
