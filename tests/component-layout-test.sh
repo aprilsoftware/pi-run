@@ -122,6 +122,9 @@ grep -Fx 'COPY PiRunJavaTrustStore.java /usr/local/src/pi-run/PiRunJavaTrustStor
 [[ ! -e "${ROOT}/experiments/docker-egress-tcp-rules" &&
    ! -L "${ROOT}/experiments/docker-egress-tcp-rules" ]] \
     || fail "promoted TCP egress implementation remains duplicated under experiments"
+[[ ! -e "${ROOT}/experiments/docker-git-worktree" &&
+   ! -L "${ROOT}/experiments/docker-git-worktree" ]] \
+    || fail "promoted managed-worktree implementation remains duplicated under experiments"
 [[ -x "${ROOT}/tests/docker-egress-rules-e2e-test.sh" &&
    ! -L "${ROOT}/tests/docker-egress-rules-e2e-test.sh" ]] \
     || fail "production egress real-Docker test is missing or unsafe"
