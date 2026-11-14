@@ -30,6 +30,9 @@ mkdir -p "${TMP}/fake-bin"
 cat > "${TMP}/fake-bin/docker" <<'FAKE_DOCKER'
 #!/usr/bin/env bash
 set -euo pipefail
+if [[ "${1:-}" == image && "${2:-}" == inspect ]]; then
+    exec "${RUNTIME_IMAGE_FIXTURE:?}" --emit-image "${3:?}"
+fi
 printf '%q ' "$@" >> "${DOCKER_LOG:?}"
 printf '\n' >> "${DOCKER_LOG}"
 [[ "${1:-}" == run ]] || exit 2
@@ -73,6 +76,7 @@ printf '%s\n' "${count}" > "${COUNT_FILE}"
 } > "${CAPTURE_PREFIX:?}.${count}"
 FAKE_DOCKER
 chmod 0755 "${TMP}/fake-bin/docker"
+export RUNTIME_IMAGE_FIXTURE="${ROOT}/tests/runtime-launch-selection-test.sh"
 
 PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" init >/dev/null
 git init -q -b main "${REPOSITORY}"

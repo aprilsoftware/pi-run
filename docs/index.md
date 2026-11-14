@@ -1,8 +1,9 @@
 # Pi-Run documentation
 
 Pi-Run turns [Pi](https://pi.dev/) into a durable local work environment for
-software development and system administration. One launcher provides a broad,
-versioned toolchain, keeps agent state in visible user-owned profiles, and limits
+software development and system administration. One launcher combines a small
+versioned core with profile-owned toolchains, keeps agent state in visible
+user-owned profiles, and limits
 host filesystem exposure to the selected workspace, profile, and narrowly
 defined runtime resources.
 
@@ -75,7 +76,7 @@ essays.
 
 | Component | Benefit |
 | --- | --- |
-| [Runtime and installation](installation.md) | Pi, Node.js, language toolchains, diagnostics, service clients, and baseline extensions arrive in a versioned runtime image, paired with the restricted-egress image. Application upgrades leave user data untouched. |
+| [Runtime and installation](installation.md) | Pi, Node.js, baseline extensions, and launch contracts arrive in a versioned core image. Profiles build their own toolchains from ordinary Dockerfiles; the restricted-egress image remains separately versioned. |
 | [Security boundaries](security.md) | A disposable container receives the selected workspace and profile—not the complete host home, every profile, or the Docker socket. Choose host, offline, or restricted TCP session networking explicitly. |
 | [Profiles](profiles.md) | Select a purpose-specific identity, credentials, instructions, skills, preferences, and conversations. Only that profile is mounted, and all of it is available to the run. |
 | [Skills](skills.md) and [shared files](security.md#treat-mounted-data-as-exposed) | Reuse reviewed expertise and supporting material across tasks without copying it into every request or every profile. |

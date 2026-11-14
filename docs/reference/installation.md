@@ -12,9 +12,10 @@ utilities including `curl`, `tar`, `sha256sum`, `readlink`, `realpath`, `stat`,
 `sync`, and `timeout`.
 
 Workspace IDs use `/proc/sys/kernel/random/uuid` when available or `uuidgen` as
-a fallback. The host user must be able to reach the Docker daemon. The runtime
-image supplies Pi, Node.js, and the in-container toolchain; it does not supply
-host launcher requirements.
+a fallback. The host user must be able to reach the Docker daemon. The release
+core image supplies Pi, Node.js, and launch-contract components; profile-owned
+images add their selected toolchain. Containers do not supply host launcher
+requirements.
 
 ### Experimental Windows/WSL configuration
 
@@ -39,8 +40,9 @@ This check does not inspect workspace storage, create directories, change
 permissions, move data, or introduce a runtime storage rejection. Existing
 permission checks remain unchanged.
 
-Doctor checks daemon reachability and local presence of both versioned images,
-not the active Docker context's locality, host-network behavior,
+Doctor checks daemon reachability, the versioned core and egress images, any
+distinct utility override, and the selected profile's prepared image. It does
+not certify the active Docker context's locality, host-network behavior,
 container-visible permissions,
 locking, or restore durability. Distribution-local Engine host networking
 shares WSL networking; Windows service access needs separate verification.
@@ -65,13 +67,14 @@ pi-run-X.Y.Z.tar.gz.sha256
 Its matching versioned images are:
 
 ```text
-ghcr.io/aprilsoftware/pi-run:X.Y.Z
-ghcr.io/aprilsoftware/pi-run-egress:X.Y.Z
+ghcr.io/aprilsoftware/pi-run:X.Y.Z          # small core
+ghcr.io/aprilsoftware/pi-run-egress:X.Y.Z   # restricted sidecar
 ```
 
-The installer requires both images even before the restricted backend is exposed
-as a normal launcher option. This keeps installed application and image versions
-paired rather than deferring an unverified image pull to a later launch.
+The installer requires both images. Profile images are local build outputs and
+are never pulled or built implicitly. This keeps installed application and core
+versions paired while leaving profile Docker execution under an explicit host
+command.
 
 The public latest-release URL redirects to the installer attached to GitHub's
 current Latest release. The installer contains its own default version and uses
@@ -107,8 +110,8 @@ managed by the selected installation. After extraction it requires the expected 
 launcher, version match, installer, and safe component files. Archives containing
 symlinks or special files under the package directory are refused.
 
-Both matching images must pull successfully before application activation. The
-installer then copies the package through a temporary release directory and
+Both matching release images must pull successfully before application
+activation. The installer then copies the package through a temporary release directory and
 atomically replaces the `current` and executable symlinks. A failed download,
 checksum, validation, or either image pull does not activate that release. A
 successful first pull may remain cached when the second pull fails; image-cache
@@ -184,15 +187,16 @@ before prepending it. Reinstalling or upgrading does not duplicate the block.
 When automatic configuration is skipped, persist the printed command manually
 in the appropriate shell configuration after confirming the path.
 
-`pi-run version` reports the launcher version and selected runtime and egress
-images without checking Docker. `pi-run home` resolves the data path without
-initializing it. `pi-run doctor` checks the platform, required commands, UUID
-source, Docker daemon, both local images, CA bundle, installed templates,
-data-home safety, and selected profile.
+`pi-run version` reports the launcher version and selected core, utility, and
+egress images without checking Docker. `pi-run home` resolves the data path
+without initializing it. `pi-run doctor` checks the platform, required commands,
+UUID source, Docker daemon, release images, a distinct utility override, CA
+bundle, installed templates, data-home safety, selected profile, and matching
+prepared profile runtime.
 
-Doctor never repairs failures. It reports the exact role and image to pull when
-either image is unavailable locally. Confirm the tag and registry authentication
-before following that instruction.
+Doctor never repairs failures. It reports the exact release or utility image to
+pull, or the exact `runtime build` command for a missing or stale prepared image.
+Confirm tags and registry authentication before pulling release images.
 
 ## Upgrade selection and activation
 
@@ -229,9 +233,12 @@ separate.
 
 A successful upgrade adds `releases/<new-version>` and uses temporary symlinks
 and atomic replacement when repointing `current` and the managed executable.
-Older release directories remain. Pi-Run
-does not provide automatic rollback or release cleanup; do not repoint symlinks
-or remove packages without understanding the recorded installation layout.
+Older release directories remain. Profiles and runtime Dockerfiles are
+preserved, but prepared images are not rebuilt automatically. A legacy profile
+without `runtime/` requires explicit `runtime init`; every profile requires
+`runtime build` against the new core before its next launch. Pi-Run does not
+provide automatic rollback or release cleanup; do not repoint symlinks or remove
+packages without understanding the recorded installation layout.
 
 ## Custom-location uninstall
 

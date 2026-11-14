@@ -231,21 +231,30 @@ scope restrictions. See [Pi's security guidance](https://pi.dev/docs/latest/secu
 
 ## Runtime-image trust
 
-Released launchers derive their default image from the installed Pi-Run version.
-`PI_RUN_IMAGE` overrides that selection for development or alternate runtimes.
-An image controls the entrypoint and bundled executables and receives the
-selected workspace, profile, startup capabilities, network, and optional mounts.
-Use the override only with an image trusted for that exposure.
+Released launchers derive their default core, utility, and egress references
+from the installed Pi-Run version. `PI_RUN_CORE_IMAGE` selects the exact local
+base used for profile source identity and explicit profile builds.
+`PI_RUN_IMAGE` selects host-side utility containers only; it cannot replace the
+main session image or bypass prepared-profile checks.
 
-Inspect the selected launcher and image with:
+The prepared profile image inherits the selected core and the profile's trusted
+Dockerfile instructions. It controls the main entrypoint and bundled executables
+and receives the selected workspace, profile, startup capabilities, network, and
+optional mounts. Review profile runtime changes and use only core and prepared
+images trusted for that exposure. A successful build and matching identity
+labels provide consistency checks, not proof that Dockerfile instructions or
+locally tagged images are safe.
+
+Inspect the release-image roles and prepared profile state with:
 
 ```bash
 pi-run version
+pi-run runtime status
 ```
 
-A matching tag and successful checksum verification do not create independent
-security certification. Registry access, image provenance, host Docker security,
-and surrounding network controls remain external concerns.
+Matching tags, labels, and checksum verification do not create independent
+security certification. Registry access, image provenance, local Docker state,
+host Docker security, and surrounding network controls remain external concerns.
 
 ## Workflow-control boundaries
 

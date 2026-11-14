@@ -21,9 +21,9 @@ done
 VERSION="$(tr -d '\r\n' < "${ROOT}/VERSION")"
 [[ "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
     || fail "VERSION is invalid"
-IMAGE="${PI_RUN_TEST_IMAGE:-ghcr.io/aprilsoftware/pi-run:${VERSION}}"
-docker image inspect "${IMAGE}" >/dev/null 2>&1 \
-    || fail "selected runtime image is unavailable locally: ${IMAGE}"
+CORE_IMAGE="${PI_RUN_TEST_CORE_IMAGE:-ghcr.io/aprilsoftware/pi-run:${VERSION}}"
+docker image inspect "${CORE_IMAGE}" >/dev/null 2>&1 \
+    || fail "selected core image is unavailable locally: ${CORE_IMAGE}"
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "${TMP}"' EXIT
@@ -31,18 +31,21 @@ HOME_DIR="${TMP}/Pi Run"
 REPOSITORY="${TMP}/source repository"
 
 run_pi() {
-    PI_RUN_HOME="${HOME_DIR}" PI_RUN_IMAGE="${IMAGE}" "${ROOT}/bin/pi-run" "$@"
+    PI_RUN_HOME="${HOME_DIR}" PI_RUN_IMAGE="${CORE_IMAGE}" \
+        PI_RUN_CORE_IMAGE="${CORE_IMAGE}" "${ROOT}/bin/pi-run" "$@"
 }
 
 run_confirmed_finish() {
     local task_name="$1" answer="${2:-$1}" command
-    printf -v command '%q ' env "PI_RUN_HOME=${HOME_DIR}" "PI_RUN_IMAGE=${IMAGE}" \
-        "${ROOT}/bin/pi-run" worktree finish "${task_name}"
+    printf -v command '%q ' env "PI_RUN_HOME=${HOME_DIR}" "PI_RUN_IMAGE=${CORE_IMAGE}" \
+        "PI_RUN_CORE_IMAGE=${CORE_IMAGE}" "${ROOT}/bin/pi-run" worktree finish "${task_name}"
     printf '%s\n' "${answer}" | \
         script -qefc "cd $(printf '%q' "${REPOSITORY}") && ${command}" /dev/null
 }
 
 PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" init >/dev/null
+PI_RUN_HOME="${HOME_DIR}" PI_RUN_CORE_IMAGE="${CORE_IMAGE}" \
+    "${ROOT}/bin/pi-run" runtime build >/dev/null
 git init -q -b main "${REPOSITORY}"
 git -C "${REPOSITORY}" config user.name fixture
 git -C "${REPOSITORY}" config user.email fixture@pi-run.invalid

@@ -1,8 +1,8 @@
 # Pi-Run
 
 Pi-Run turns [Pi](https://pi.dev/) into a durable, containerized work environment
-for software development and system administration. It combines a capable,
-versioned toolchain with profiles, sessions, Guardian command review, bounded
+for software development and system administration. It combines a small,
+versioned core with profile-owned toolchains, sessions, Guardian command review, bounded
 Call a Friend consultations, and recovery while limiting host filesystem
 exposure to the workspace, profile, and narrowly defined runtime resources.
 
@@ -76,9 +76,9 @@ resources, and other infrastructure need their own recovery mechanisms.
 
 ## What Pi-Run provides
 
-- **Ready-to-use environment:** Pi, language toolchains, diagnostics, service
-  clients, web access, and baseline extensions come in one matching runtime
-  image.
+- **Profile-owned environment:** a versioned Pi-Run core supplies Pi and launch
+  contracts; each profile owns an ordinary Dockerfile for its required language
+  toolchains, diagnostics, and service clients.
 - **Purpose-specific exposure:** only the selected profile is mounted, providing
   its instructions, provider access, credentials, settings, skills, Guardian
   policy, and conversations while leaving other profiles out of view.
@@ -147,17 +147,19 @@ and open the current directory:
 curl -fsSL https://github.com/aprilsoftware/pi-run/releases/latest/download/install.sh | sh
 export PATH="$HOME/.local/bin:$PATH"
 pi-run init
+pi-run runtime build
 pi-run .
 ```
 
 The downloaded installer contains its matching version. It verifies the
-versioned application archive, pulls the matching runtime and egress images,
-and installs the `pi-run` command. When needed, it offers to persist the default
+versioned application archive, pulls the matching core and egress images, and
+installs the `pi-run` command. When needed, it offers to persist the default
 executable directory for supported shells; the explicit `export` above also
 makes the command available immediately in the current shell. `pi-run init`
-creates the data home and
-initial profile;
-`pi-run .` opens the current directory as a writable workspace. For explicitly
+creates the data home and initial profile; `runtime build` explicitly prepares
+that profile's local image; `pi-run .` opens the current directory as a writable
+workspace. Add maintained capabilities with `runtime add <bundle>` or
+`runtime add all` before rebuilding. For explicitly
 isolated parallel repository work, `pi-run worktree start <task-name> <repository>`
 creates a named persistent host-visible Git worktree. Use `.` for the current
 repository. Ordinary launches remain in the selected checkout. See

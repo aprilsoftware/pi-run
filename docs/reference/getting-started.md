@@ -10,6 +10,8 @@ Run launcher commands in the host terminal:
 
 ```bash
 pi-run init
+pi-run runtime build
+pi-run runtime status
 pi-run doctor
 pi-run .
 ```
@@ -48,7 +50,9 @@ change the next launch, not the active sidecar.
 `pi-run init` resolves the data home, validates its path, creates missing base
 directories, and installs the initial `default` profile from the application
 template. It also creates initial configuration, workspace registry, and
-home-level README files when absent.
+home-level README files when absent. The initial profile receives its fixed
+`runtime/Dockerfile` and bounded build context, but initialization does not run
+Docker or prepare an image.
 
 With the default location, important paths include:
 
@@ -103,14 +107,18 @@ These checks do not have the same effect:
 
 | Command | Purpose |
 | --- | --- |
-| `pi-run version` | Print the launcher version and selected runtime and egress images. |
+| `pi-run version` | Print the launcher version and selected core, utility, and egress images. |
 | `pi-run home` | Print the resolved data-home path without initializing it. |
-| `pi-run doctor` | Validate host commands, installation, both images, and selected profile; do not repair them. |
+| `pi-run doctor` | Validate host commands, release/utility images, selected profile, and its prepared runtime; do not repair them. |
 | `pi-run init` | Create missing persistent data-home structure and the initial profile. |
+| `pi-run runtime build` | Explicitly build and prepare the selected profile image without pulling. |
+| `pi-run runtime status` | Inspect the profile context, source identity, core, and prepared-image state. |
 
 `doctor` reports `OK`, `WARN`, and `FAIL` and exits nonzero when required checks
-fail. An uninitialized home is a warning. Doctor does not pull images, contact a
-registry, initialize or repair state, or reveal credential contents.
+fail. An uninitialized home is a warning. For an initialized home, a missing or
+stale prepared profile image is a failure with the exact `runtime build` command.
+Doctor does not pull images, contact a registry, initialize or repair state, or
+reveal credential contents.
 
 When checking another profile or data home, select it explicitly:
 
@@ -121,9 +129,10 @@ pi-run --home /private/pi-run --profile operations doctor
 ## How launch selection works
 
 A normal launch requires an existing workspace directory. Pi-Run resolves its
-real path, initializes missing home state, reads the selected profile, registers
-or finds the workspace identity, creates that profile's workspace session
-directory, validates managed resources, and then starts the container.
+real path, initializes missing home state, reads the selected profile, and
+registers or finds the workspace identity. It then requires the exact matching
+prepared profile image before creating that profile's session directory,
+resolving restricted policy, or starting containers.
 
 Unless `--profile <name>` is supplied, the launcher reads `defaultProfile` from
 the selected home's `config.json`. The initial value is `default`. An explicit
@@ -136,11 +145,13 @@ workspace is independently selected by its path; changing profiles does not
 create another workspace identity.
 
 Before Docker starts, Pi-Run validates required profile files and configuration,
-the host CA bundle, skills, and session paths. On launch it reports:
+the runtime context and prepared-image identity, the host CA bundle, skills, and
+session paths. On launch it reports:
 
 ```text
 pi-run: home=<resolved-data-home>
 pi-run: profile=<profile> workspace=<resolved-workspace>
+pi-run: runtime=pi-run-profile:<profile-path-hash-prefix>
 pi-run: network=<docker-host|docker-offline|docker-restricted>
 pi-run: model-tcp=<count> provider targets on port 443      # restricted only
 pi-run: ssh-tcp=<count> managed targets on port 22           # restricted only
@@ -203,14 +214,17 @@ intended daemon access. Docker access is highly privileged. Do not solve a
 permission error by exposing the Docker socket inside Pi or broadly changing
 unrelated filesystem ownership.
 
-### A runtime or egress image is missing
+### A core, prepared, or egress image is missing
 
-Run `pi-run version` to identify both exact selected images. Follow the
-role-specific Doctor diagnostic and confirm required registry authentication
-before pulling it. Do not substitute an unrelated runtime image;
-`PI_RUN_IMAGE` is a development boundary that grants an alternate image the
-selected mounts and privileges. `PI_RUN_EGRESS_IMAGE` is the corresponding
-maintainer override for the policy-enforcement sidecar image.
+Run `pi-run version` to identify the exact core, utility, and egress images, then
+follow the role-specific Doctor diagnostic and confirm registry authentication
+before pulling them. Run `pi-run --profile <name> runtime status` for the local
+profile image and use the exact reported `runtime build` command when it is
+missing or stale.
+
+`PI_RUN_CORE_IMAGE` is the maintainer override for profile identity and builds.
+`PI_RUN_IMAGE` affects utility containers only and cannot bypass prepared profile
+selection. `PI_RUN_EGRESS_IMAGE` selects the policy-enforcement sidecar.
 
 ### Initialization is refused
 

@@ -680,10 +680,17 @@ console.log('PASS planning: loading, commands, prompt, direct/nested hooks, rest
 NODE
 
 mkdir -p "${TMP}/fake-bin" "${TMP}/workspace"
-# shellcheck disable=SC2016 # Expand these variables in the fake Docker process.
-printf '%s\n' '#!/bin/sh' 'printf "%s\n" "$@" > "${DOCKER_LOG:?}"' > "${TMP}/fake-bin/docker"
+cat > "${TMP}/fake-bin/docker" <<'EOF'
+#!/bin/sh
+set -eu
+if [ "${1:-}" = image ] && [ "${2:-}" = inspect ]; then
+    exec "${RUNTIME_IMAGE_FIXTURE:?}" --emit-image "${3:?}"
+fi
+printf '%s\n' "$@" > "${DOCKER_LOG:?}"
+EOF
 chmod 0755 "${TMP}/fake-bin/docker"
 PATH="${TMP}/fake-bin:${PATH}" PI_RUN_HOME="${TMP}/Pi-Run" DOCKER_LOG="${TMP}/docker.log" \
+    RUNTIME_IMAGE_FIXTURE="${ROOT}/tests/runtime-launch-selection-test.sh" \
     "${ROOT}/bin/pi-run" "${TMP}/workspace" >/dev/null
 grep -Fx -- /usr/local/lib/node_modules/pi-run-extensions/plan/plan-agent.ts "${TMP}/docker.log" >/dev/null
 grep -Fx -- /usr/local/lib/node_modules/pi-run-extensions/guard/guard-runtime.ts "${TMP}/docker.log" >/dev/null

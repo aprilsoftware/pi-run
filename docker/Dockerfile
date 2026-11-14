@@ -267,15 +267,16 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends gosu && \
     rm -rf /var/lib/apt/lists/*
 
-# Install the dynamic UID/GID entrypoint, host-to-Java CA bridge, and profile SSH helper.
+# Install the dynamic UID/GID entrypoint, capability-aware Java CA bridge, and
+# profile SSH helper. Java-capable runtimes execute the helper in source-file
+# mode; core-only runtimes do not need a JDK merely to prepare the image.
 COPY entrypoint.sh ssh-credentials /usr/local/bin/
-COPY PiRunJavaTrustStore.java /usr/local/src/pi-run/PiRunJavaTrustStore.java
+COPY java-trust-store.sh /usr/local/bin/pi-run-java-trust-store
+COPY PiRunJavaTrustStore.java /usr/local/lib/pi-run/PiRunJavaTrustStore.java
 COPY network-policy-resolver.mjs /usr/local/bin/pi-run-network-policy-resolver
-RUN mkdir -p /usr/local/lib/pi-run \
-    && javac -d /usr/local/lib/pi-run /usr/local/src/pi-run/PiRunJavaTrustStore.java \
-    && rm -rf /usr/local/src/pi-run \
-    && chmod 0755 \
+RUN chmod 0755 \
         /usr/local/bin/entrypoint.sh \
+        /usr/local/bin/pi-run-java-trust-store \
         /usr/local/bin/ssh-credentials \
         /usr/local/bin/pi-run-network-policy-resolver
 

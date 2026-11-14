@@ -125,6 +125,9 @@ mkdir -p "${TMP}/fake-bin" "${TMP}/workspace"
 cat > "${TMP}/fake-bin/docker" <<'EOF'
 #!/bin/sh
 set -eu
+if [ "${1:-}" = image ] && [ "${2:-}" = inspect ]; then
+    exec "${RUNTIME_IMAGE_FIXTURE:?}" --emit-image "${3:?}"
+fi
 [ "${1:-}" = run ] || exit 2
 operation=
 entrypoint=
@@ -203,6 +206,7 @@ esac
 EOF
 chmod 0755 "${TMP}/fake-bin/docker"
 export DOCKER_LOG="${TMP}/docker.log" MAIN_LOG="${TMP}/main.log"
+export RUNTIME_IMAGE_FIXTURE="${ROOT}/tests/runtime-launch-selection-test.sh"
 HOME_DIR="${TMP}/Pi-Run"
 PATH="${TMP}/fake-bin:${PATH}" PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" init >/dev/null
 git init -q -b main "${TMP}/workspace"

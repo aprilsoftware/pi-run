@@ -28,12 +28,14 @@ case "$1" in
     image)
         [ "$2" = inspect ] || exit 2
         printf '%s\n' "$3" >> "${DOCKER_IMAGE_CAPTURE:?}"
-        [ "$3" != "${DOCKER_IMAGE_FAIL:-}" ]
+        [ "$3" != "${DOCKER_IMAGE_FAIL:-}" ] || exit 1
+        exec "${RUNTIME_IMAGE_FIXTURE:?}" --emit-image "$3"
         ;;
     *) exit 2 ;;
 esac
 EOF
 chmod 0755 "${TMP}/fake-bin/docker"
+export RUNTIME_IMAGE_FIXTURE="${ROOT}/tests/runtime-launch-selection-test.sh"
 
 # Version reporting has no Docker, jq, or initialized-home dependency.
 mkdir -p "${TMP}/minimal-bin"
@@ -43,12 +45,16 @@ for command_name in bash dirname readlink realpath tr; do
 done
 version_output="$(PATH="${TMP}/minimal-bin" PI_RUN_HOME="${TMP}/never-created" "${PI_RUN}" version)"
 assert_contains "${version_output}" "pi-run v${VERSION}"
-assert_contains "${version_output}" "runtime ghcr.io/aprilsoftware/pi-run:${VERSION}"
+assert_contains "${version_output}" "core ghcr.io/aprilsoftware/pi-run:${VERSION}"
+assert_contains "${version_output}" "utility ghcr.io/aprilsoftware/pi-run:${VERSION}"
 assert_contains "${version_output}" "egress ghcr.io/aprilsoftware/pi-run-egress:${VERSION}"
 [[ ! -e "${TMP}/never-created" ]] || fail "version created Pi-Run home"
-version_output="$(PATH="${TMP}/minimal-bin" PI_RUN_IMAGE=example.invalid/pi-run:test \
+version_output="$(PATH="${TMP}/minimal-bin" \
+    PI_RUN_CORE_IMAGE=example.invalid/pi-run-core:test \
+    PI_RUN_IMAGE=example.invalid/pi-run-utility:test \
     PI_RUN_EGRESS_IMAGE=example.invalid/pi-run-egress:test "${PI_RUN}" version)"
-assert_contains "${version_output}" "runtime example.invalid/pi-run:test"
+assert_contains "${version_output}" "core example.invalid/pi-run-core:test"
+assert_contains "${version_output}" "utility example.invalid/pi-run-utility:test"
 assert_contains "${version_output}" "egress example.invalid/pi-run-egress:test"
 
 if [[ -s /etc/machine-id ]]; then
@@ -69,25 +75,49 @@ assert_contains "${output}" "WARN  Pi-Run home is not initialized"
 assert_contains "${output}" "Doctor: PASS"
 [[ ! -e "${TMP}/uninitialized" ]] || fail "doctor initialized Pi-Run home"
 grep -Fx "ghcr.io/aprilsoftware/pi-run:${VERSION}" "${TMP}/image" >/dev/null \
-    || fail "doctor inspected the wrong default runtime image"
+    || fail "doctor inspected the wrong default core image"
 grep -Fx "ghcr.io/aprilsoftware/pi-run-egress:${VERSION}" "${TMP}/image" >/dev/null \
     || fail "doctor inspected the wrong default egress image"
 [[ "$(wc -l < "${TMP}/image")" -eq 2 ]] || fail "doctor inspected an unexpected image set"
 
-# An initialized home and both image overrides pass validation.
+# An initialized home, prepared runtime, and all image roles pass validation.
 PI_RUN_HOME="${TMP}/healthy home" "${PI_RUN}" init >/dev/null
 : > "${TMP}/image"
 output="$(PATH="${TMP}/fake-bin:${PATH}" PI_RUN_HOME="${TMP}/healthy home" \
-    PI_RUN_IMAGE="example.invalid/pi-run:test" \
+    PI_RUN_CORE_IMAGE="example.invalid/pi-run-core:test" \
+    PI_RUN_IMAGE="example.invalid/pi-run-utility:test" \
     PI_RUN_EGRESS_IMAGE="example.invalid/pi-run-egress:test" "${PI_RUN}" doctor)"
 assert_contains "${output}" "home configuration is valid"
 assert_contains "${output}" "selected profile configuration is valid: default"
+assert_contains "${output}" "prepared profile runtime is matching: pi-run-profile:"
 assert_contains "${output}" "Doctor: PASS"
-grep -Fx 'example.invalid/pi-run:test' "${TMP}/image" >/dev/null \
+grep -Fx 'example.invalid/pi-run-core:test' "${TMP}/image" >/dev/null \
+    || fail "doctor ignored PI_RUN_CORE_IMAGE"
+grep -Fx 'example.invalid/pi-run-utility:test' "${TMP}/image" >/dev/null \
     || fail "doctor ignored PI_RUN_IMAGE"
 grep -Fx 'example.invalid/pi-run-egress:test' "${TMP}/image" >/dev/null \
     || fail "doctor ignored PI_RUN_EGRESS_IMAGE"
-[[ "$(wc -l < "${TMP}/image")" -eq 2 ]] || fail "doctor inspected an unexpected override image set"
+[[ "$(wc -l < "${TMP}/image")" -eq 5 ]] || fail "doctor inspected an unexpected override image set"
+
+# Missing and stale prepared profile images fail with the exact build command and no repair.
+prepared_home="${TMP}/prepared-home"
+PI_RUN_HOME="${prepared_home}" "${PI_RUN}" init >/dev/null
+prepared_dockerfile="${prepared_home}/profiles/default/runtime/Dockerfile"
+prepared_hash="$(sha256sum "${prepared_dockerfile}" | awk '{print $1}')"
+prepared_inode="$(stat -c %i "${prepared_dockerfile}")"
+for prepared_state in prepared-missing stale; do
+    set +e
+    output="$(PATH="${TMP}/fake-bin:${PATH}" PI_RUN_HOME="${prepared_home}" \
+        RUNTIME_IMAGE_STATE="${prepared_state}" "${PI_RUN}" doctor 2>&1)"
+    status=$?
+    set -e
+    [[ ${status} -ne 0 ]] || fail "doctor accepted ${prepared_state} profile runtime state"
+    assert_contains "${output}" "prepared profile runtime is not launchable"
+    assert_contains "${output}" "run: pi-run --profile default runtime build"
+done
+[[ "$(sha256sum "${prepared_dockerfile}" | awk '{print $1}')" == "${prepared_hash}" &&
+   "$(stat -c %i "${prepared_dockerfile}")" == "${prepared_inode}" ]] \
+    || fail "prepared runtime diagnostics mutated the profile Dockerfile"
 
 # Malformed state and unsafe permissions are failures, not repairs.
 printf '%s\n' '{"schemaVersion":99}' > "${TMP}/healthy home/config.json"
@@ -111,15 +141,20 @@ set -e
 assert_contains "${output}" "Docker daemon is unavailable"
 [[ ! -s "${TMP}/image" ]] || fail "doctor inspected images while Docker was unavailable"
 
-for role in runtime egress; do
+for role in core utility egress; do
+    utility_override=
     case "${role}" in
-        runtime) missing_image="ghcr.io/aprilsoftware/pi-run:${VERSION}" ;;
+        core) missing_image="ghcr.io/aprilsoftware/pi-run:${VERSION}" ;;
+        utility)
+            missing_image=example.invalid/pi-run-utility:missing
+            utility_override="PI_RUN_IMAGE=${missing_image}"
+            ;;
         egress) missing_image="ghcr.io/aprilsoftware/pi-run-egress:${VERSION}" ;;
     esac
     : > "${TMP}/image"
     set +e
-    output="$(PATH="${TMP}/fake-bin:${PATH}" PI_RUN_HOME="${TMP}/absent-b-${role}" \
-        DOCKER_IMAGE_FAIL="${missing_image}" "${PI_RUN}" doctor 2>&1)"
+    output="$(env PATH="${TMP}/fake-bin:${PATH}" PI_RUN_HOME="${TMP}/absent-b-${role}" \
+        ${utility_override} DOCKER_IMAGE_FAIL="${missing_image}" "${PI_RUN}" doctor 2>&1)"
     status=$?
     set -e
     [[ ${status} -ne 0 ]] || fail "doctor accepted a missing ${role} image"
@@ -254,5 +289,14 @@ status=$?
 set -e
 [[ ${status} -ne 0 ]] || fail "WSL diagnostics accepted ARM64"
 assert_contains "${output}" "unsupported platform: Linux/aarch64"
+
+"${ROOT}/scripts/build-release" "${TMP}/release" >/dev/null
+tar -xzf "${TMP}/release/pi-run-${VERSION}.tar.gz" -C "${TMP}"
+packaged_pi="${TMP}/pi-run-${VERSION}/bin/pi-run"
+version_output="$(PATH="${TMP}/minimal-bin" PI_RUN_HOME="${TMP}/packaged-never-created" \
+    "${packaged_pi}" version)"
+assert_contains "${version_output}" "core ghcr.io/aprilsoftware/pi-run:${VERSION}"
+assert_contains "${version_output}" "utility ghcr.io/aprilsoftware/pi-run:${VERSION}"
+[[ ! -e "${TMP}/packaged-never-created" ]] || fail "packaged version initialized a home"
 
 echo "version and doctor tests passed"

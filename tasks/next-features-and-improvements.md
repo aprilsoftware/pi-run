@@ -20,13 +20,40 @@ immutable runtime identities, and avoid adding storage or image variants before
 their lifecycle is understood. New presentation should remain terminal-native
 and non-disruptive.
 
-## Recommended order
+## Current release-preparation state
 
-No active product increment remains without new user evidence. Select future
-work from the deferred ideas or operational follow-up only when a concrete need
-establishes an observable result and justifies its lifecycle cost.
+The profile-owned runtime Dockerfile foundation is implemented and accepted in
+the current source tree. It no longer represents the next roadmap item. Release
+metadata, commit creation, publication, and selection of any subsequent product
+increment remain separate decisions requiring approval.
 
 ## Delivered foundation
+
+### Profile-owned runtime Dockerfiles
+
+Each profile owns a fixed `runtime/Dockerfile`, with `runtime/` as its complete
+Docker build context. Pi-Run provides a small immutable core image, visible
+Dockerfile fragments through `runtime list` and `runtime add`, and an `all` group
+that generates the maintained broad capability set. Users can edit the
+Dockerfile directly or add custom fragments, then explicitly build and reuse the
+matching local image.
+
+There is no separate profile bundle manifest, hidden fallback image, or
+automatic host build. The Dockerfile is generated once and remains user-owned.
+Fresh and copied profiles carry the runtime definition; legacy profiles use
+explicit `runtime init`. Normal, resumed, restricted, snapshot-restarted, and
+managed-worktree launches require a matching prepared profile image.
+
+The isolated source suite passes with 68 tests and seven opt-in skips. Actual
+Linux/amd64 Docker acceptance passed for the core and `runtime add all`
+full-development image, mapped startup and Java CA initialization, real launcher
+selection, managed-worktree lifecycle, and production restricted-egress rules.
+The remaining four non-Docker skips require optional live-provider calls and are
+not runtime acceptance failures.
+
+See the [profile runtime Dockerfile design](profile-runtime-dockerfile-design.md)
+for the command contract, current-image inventory, trust boundary, acceptance
+evidence, and remaining optional design questions.
 
 ### Todo prompt queue
 
@@ -109,19 +136,6 @@ separate authorization. See [Guardian](../docs/guardian.md) and
 [Call a Friend](../docs/call-a-friend.md).
 
 ## Deferred ideas
-
-### Profile-specific runtime images
-
-A profile could select an additional or specialized toolchain without making
-every Pi-Run image larger, but no repeated profile need currently justifies the
-lifecycle cost. Any future design must preserve immutable image versions and keep
-the runtime and restricted-egress version relationship explicit.
-
-Open questions include image naming and trust, profile schema, installation and
-upgrade behavior, offline availability, doctor diagnostics, release ownership,
-and compatibility with snapshots and managed worktrees. The first increment, if
-user evidence appears, should document concrete use cases and compare a small set
-of immutable selection models without changing the profile schema.
 
 ### Stronger planning-state visibility
 

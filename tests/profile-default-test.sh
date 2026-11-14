@@ -275,7 +275,10 @@ cat > "${TMP}/fake-bin/docker" <<'EOF'
 set -eu
 case "${1:-}" in
     info) exit 0 ;;
-    image) [ "${2:-}" = inspect ]; exit ;;
+    image)
+        [ "${2:-}" = inspect ] || exit 2
+        exec "${RUNTIME_IMAGE_FIXTURE:?}" --emit-image "${3:?}"
+        ;;
     run)
         : > "${DOCKER_LOG:?}"
         for argument in "$@"; do printf '%s\n' "$argument" >> "${DOCKER_LOG}"; done
@@ -286,6 +289,7 @@ esac
 EOF
 chmod 0755 "${TMP}/fake-bin/docker"
 export DOCKER_LOG="${TMP}/docker.log"
+export RUNTIME_IMAGE_FIXTURE="${ROOT}/tests/runtime-launch-selection-test.sh"
 
 PATH="${TMP}/fake-bin:${PATH}" PI_RUN_HOME="${HOME_DIR}" \
     "${ROOT}/bin/pi-run" "${WORKSPACE}" >/dev/null 2>&1

@@ -1,8 +1,9 @@
 # Profiles
 
 A profile is a complete Pi-Run working context: instructions, provider access,
-credentials, settings, skills, shared Guard reviewer preferences, Guardian and
-CAF policy, CAF preferences, and saved conversations. Use separate profiles when
+credentials, settings, skills, runtime definition, shared Guard reviewer
+preferences, Guardian and CAF policy, CAF preferences, and saved conversations.
+Use separate profiles when
 work needs different behavior or access—for example,
 development, review, and system administration.
 
@@ -57,7 +58,7 @@ pi-run profile create review --from development
 ```
 
 Creation refuses an existing name and does not select the new profile, connect
-to services, or copy private runtime state.
+to services, or copy credentials, logs, sessions, or generated image state.
 
 ### What is copied
 
@@ -66,8 +67,10 @@ The new profile receives:
 - `profile.json`, with the new name;
 - `AGENTS.md` instructions;
 - `guardian/guardian.md` review policy;
-- `caf/caf.md` disclosure policy, when the source has one; and
-- validated profile-local skills.
+- `caf/caf.md` disclosure policy, when the source has one;
+- validated profile-local skills; and
+- the validated `runtime/` Docker build context, or a base runtime definition
+  when deriving from a legacy profile without one.
 
 Provider authentication, SSH keys, settings, Git configuration, Guard/Guardian
 and CAF preferences and logs, and sessions are **not copied**. Authenticate and
@@ -76,6 +79,68 @@ configure the new profile deliberately.
 Shared-folder and network configuration are inherited, so review both before
 first launch. The global skill filter resets to `null`, meaning all installed
 global skills are initially selected.
+
+## Compose the profile runtime
+
+List the maintained runtime bundles without reading a profile or invoking
+Docker:
+
+```bash
+pi-run runtime list
+```
+
+Fresh profiles already contain `runtime/Dockerfile` and `.dockerignore`. For an
+older profile without that layout, initialize it explicitly:
+
+```bash
+pi-run --profile development runtime init
+```
+
+Add one maintained capability or the complete broad development set:
+
+```bash
+pi-run --profile development runtime add java-development
+pi-run --profile development runtime add all
+```
+
+Bundle blocks are appended visibly to the profile-owned Dockerfile. Repeating an
+already satisfied command leaves the file unchanged. `all` adds only missing
+blocks and preserves existing edits. Malformed or duplicate reserved markers
+fail closed rather than being rewritten.
+
+Inspect the current source identity and local image readiness without building or
+pulling:
+
+```bash
+pi-run --profile development runtime status
+```
+
+Status hashes the complete bounded runtime context, reports the selected core
+reference and exact local core identity when available, and classifies the
+stable profile image as matching, stale, missing, or unavailable.
+
+Build the profile runtime through an explicit host command:
+
+```bash
+pi-run --profile development runtime build
+```
+
+The command itself is the build authority; there is no additional confirmation
+flag. It never pulls an image. The selected local base must exist and match the
+host architecture. A successful build is checked under temporary tags before
+replacing the stable profile tag, so failed builds retain the previous prepared
+image.
+
+Normal, resumed, and managed-worktree launches require that exact prepared image.
+A missing, stale, malformed, or wrong-architecture image stops with the explicit
+`runtime build` command; Pi-Run never builds, pulls, or falls back during launch.
+`PI_RUN_IMAGE` remains only an override for utility containers and cannot bypass
+profile runtime selection.
+
+The default base coordinate is `ghcr.io/aprilsoftware/pi-run:<version>`. Until
+the release cutover replaces its broad contents with the small core, maintainers
+can use `PI_RUN_CORE_IMAGE` to select a locally built core candidate. Building or
+editing a runtime does not change an already running session.
 
 ## Manage network mode
 
@@ -222,8 +287,9 @@ and keep snapshot recovery secrets separately. Snapshots include every profile
 and its credentials.
 
 Pi-Run currently provides profile listing, creation, default selection, one-run
-selection, network-mode changes, and host/domain/CIDR/internet manual-rule
-management. It does not provide profile deletion, import, or definition export.
+selection, runtime definition initialization, bundle composition and status,
+network-mode changes, and host/domain/CIDR/internet manual-rule management. It
+does not provide profile deletion, import, or definition export.
 
 For exact file layout, creation permissions, schema validation, inherited and
 reset fields, and unsupported operations, see the

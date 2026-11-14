@@ -216,6 +216,7 @@ materialize_profile_definition() {
     fi
     cp -a "${source_dir}/skills/." "${staging}/skills/"
     chmod -R u+rwX,go-w "${staging}/skills"
+    materialize_profile_runtime "${source_dir}" "${staging}"
     mv "${staging}" "${target}"
     trap - EXIT
 }
@@ -223,14 +224,20 @@ materialize_profile_definition() {
 create_profile() {
     local name="$1"
     local source_name="$2"
-    local source_dir
+    local source_dir source_lock_fd
     validate_profile_name "${name}"
     validate_profile_name "${source_name}"
     source_dir="$(resolve_named_profile_directory "${source_name}")"
+    exec {source_lock_fd}<"${source_dir}" \
+        || fail "could not open source profile directory for locking: ${source_dir}"
+    flock -s "${source_lock_fd}" \
+        || fail "could not lock source profile directory: ${source_dir}"
     validate_profile_config "${source_dir}" "${source_name}"
     validate_profile_definition_files "${source_dir}"
     validate_profile_skills_directory "${source_dir}"
+    validate_optional_profile_runtime "${source_dir}"
     materialize_profile_definition "${source_dir}" "${name}"
+    exec {source_lock_fd}>&-
     printf 'Created profile %s from %s.\n' "${name}" "${source_name}"
 }
 

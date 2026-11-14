@@ -87,11 +87,15 @@ mkdir "${WORKSPACE}" "${TMP}/fake-bin"
 cat > "${TMP}/fake-bin/docker" <<'EOF'
 #!/bin/sh
 set -eu
+if [ "${1:-}" = image ] && [ "${2:-}" = inspect ]; then
+    exec "${RUNTIME_IMAGE_FIXTURE:?}" --emit-image "${3:?}"
+fi
 [ "${1:-}" = run ] || exit 2
 : > "${DOCKER_LOG:?}"
 for argument in "$@"; do printf '%s\n' "${argument}" >> "${DOCKER_LOG}"; done
 EOF
 chmod 0755 "${TMP}/fake-bin/docker"
+export RUNTIME_IMAGE_FIXTURE="${ROOT}/tests/runtime-launch-selection-test.sh"
 run_workspace() {
     PATH="${TMP}/fake-bin:${PATH}" PI_RUN_HOME="${HOME_DIR}" DOCKER_LOG="${DOCKER_LOG}" \
         "${ROOT}/bin/pi-run" "${WORKSPACE}" >/dev/null 2>&1

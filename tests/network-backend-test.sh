@@ -57,6 +57,9 @@ chmod 0600 "${SSH_CREDENTIAL_DIR}/user@ssh.example.test"
 cat > "${TMP}/fake-bin/docker" <<'EOF'
 #!/bin/sh
 set -eu
+if [ "${1:-}" = image ] && [ "${2:-}" = inspect ]; then
+    exec "${RUNTIME_IMAGE_FIXTURE:?}" --emit-image "${3:?}"
+fi
 printf '%s\n' '---' "$@" >> "${DOCKER_LOG:?}"
 case "${1:-}" in
     run)
@@ -113,6 +116,7 @@ exit 0
 EOF
 chmod 0755 "${TMP}/fake-bin/docker" "${TMP}/fake-bin/sleep"
 export DOCKER_LOG="${TMP}/docker.log"
+export RUNTIME_IMAGE_FIXTURE="${ROOT}/tests/runtime-launch-selection-test.sh"
 export POLICY_CAPTURE="${TMP}/rules.json"
 export POLICY_DIR_CAPTURE="${TMP}/policy-dir"
 
