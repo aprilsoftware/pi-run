@@ -166,6 +166,24 @@ Fresh profiles and genuinely new sessions default Guard and CAF Off unless their
 profile-specific future-session defaults were deliberately changed. Neither is
 a sandbox. Continue to inspect commands, disclosures, and changed files yourself.
 
+### Queue your next prompts while Pi works
+
+When you think of a later request while the current response is still running,
+open the session's Todo menu:
+
+```text
+/todo
+```
+
+Create, edit, delete, or reorder multiline prompt drafts. Selecting **Use as next
+prompt** loads an item into Pi's normal editor without submitting or removing it.
+The queue follows this conversation when resumed and remains shared across its
+branches; new conversations, forks, and clones start empty.
+
+Todo is not planning or authorization. The extension does not automatically put
+queued items into model context, but its files remain part of the selected
+profile rather than a secret store. See the [Todo prompt queue guide](todo.md).
+
 ## 6. Name, leave, and continue your session
 
 Give useful work a recognizable name and leave normally:

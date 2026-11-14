@@ -56,7 +56,9 @@ Inspect the saved revision:
 ```
 
 Discussion after the last record is not part of the saved draft. Ask the agent
-to record refinements, then use `/plan-show` again before approval.
+to record refinements, then use `/plan-show` again before approval. While planning,
+the model can use `plan_read` to retrieve the current saved revision; before the
+first record it reports that no active Plan exists.
 
 A bare `/plan` returns to planning mode without discarding the draft or starting
 a new model turn. By contrast, `/plan <goal>` starts a fresh goal and discards
@@ -82,6 +84,28 @@ increments or shell commands.
 
 Guardian settings remain unchanged. Re-approving the same revision does not send
 a second handoff, while recording a new revision requires fresh approval.
+
+## Let the normal agent read the saved Plan
+
+The approval handoff includes the exact approved Plan once. After planning mode
+exits, the model can retrieve that authoritative saved revision again with the
+read-only `plan_read` tool. This is useful after a long implementation session,
+compaction, resume, or branch navigation.
+
+`plan_read` returns the saved title, goal, body, revision ID, SHA-256 identity,
+and whether that exact revision is approved. It remains available on a branch
+that retains a saved draft, including after approval. Recording another revision
+changes the identity and reports it as unapproved until separately approved.
+Discarding the draft with `/plan-exit` removes access.
+
+This is a model tool, not a slash command; there is no `/plan-read`. You can ask
+the agent to read the current saved Plan when needed, or continue to use
+`/plan-show` for your own inspection. Pi does not automatically invoke the tool
+or inject the complete Plan into every request.
+
+Reading a Plan does not approve, modify, export, submit, or execute it. Applicable
+`AGENTS.md` instructions, Guardian review, and human checkpoints still control
+subsequent work.
 
 ## Export an optional Markdown copy
 

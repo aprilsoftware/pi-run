@@ -13,6 +13,7 @@ const DRAFT_ENTRY = "pi-run-plan-draft";
 const DISCARD_ENTRY = "pi-run-plan-discard";
 const APPROVAL_ENTRY = "pi-run-plan-approval";
 const RECORD = "plan_record";
+const READ = "plan_read";
 const Text = Type.String({ minLength: 1, maxLength: 2000, pattern: "\\S" });
 const DraftSchema = Type.Object({
     title: Type.String({ minLength: 1, maxLength: 200, pattern: "\\S" }),
@@ -29,6 +30,7 @@ const ApprovalSchema = Type.Object({
     draftEntryId: Type.String({ minLength: 1 }),
     planHash: Type.String({ pattern: "^[a-f0-9]{64}$" }),
 }, { additionalProperties: false });
+const ReadSchema = Type.Object({}, { additionalProperties: false });
 const INSTRUCTIONS = `Planning mode: investigate the user's goal and discuss a plan; do not implement or execute the planned work.
 Follow the current conversation and applicable AGENTS.md instructions. Use normal tools
 for investigation, including writing and running investigative scripts, within that scope.
@@ -189,10 +191,14 @@ export default function planAgent(pi: ExtensionAPI): void {
         indicator.redraw?.();
     }
 
-    function syncRecorder(): void {
+    function syncPlanTools(ctx: ExtensionContext): void {
         const tools = pi.getActiveTools();
-        if (enabled && !tools.includes(RECORD)) pi.setActiveTools([...tools, RECORD]);
-        if (!enabled && tools.includes(RECORD)) pi.setActiveTools(tools.filter(name => name !== RECORD));
+        const entry = activeDraftEntry(ctx);
+        const readable = enabled || (entry?.type === "custom" && entry.customType === DRAFT_ENTRY);
+        let next = tools.filter(name => (name !== RECORD || enabled) && (name !== READ || readable));
+        if (enabled && !next.includes(RECORD)) next = [...next, RECORD];
+        if (readable && !next.includes(READ)) next = [...next, READ];
+        if (next.length !== tools.length || next.some((name, index) => name !== tools[index])) pi.setActiveTools(next);
     }
 
     function restore(ctx: ExtensionContext): void {
@@ -201,7 +207,7 @@ export default function planAgent(pi: ExtensionAPI): void {
         const data = entry?.type === "custom" ? entry.data : undefined;
         // Retain guidance for invalid state, but never impose a tool blockade.
         enabled = entry ? !validState(data) || data.enabled : false;
-        syncRecorder();
+        syncPlanTools(ctx);
         status(ctx);
         if (entry && !validState(data) && ctx.hasUI) {
             ctx.ui.notify("Saved planning state is invalid; planning guidance retained.", "warning");
@@ -226,6 +232,28 @@ export default function planAgent(pi: ExtensionAPI): void {
         },
     });
 
+    pi.registerTool({
+        name: READ,
+        label: "Read saved plan",
+        description: "Read the current branch's exact saved Plan revision and approval state. Reading a Plan does not approve, modify, or authorize its execution.",
+        exposure: "model-only",
+        defaultActive: false,
+        parameters: ReadSchema,
+        async execute(_id, _params, signal, _onUpdate, ctx) {
+            if (signal?.aborted) throw new Error("Plan reading cancelled");
+            const revision = currentDraftRevision(ctx);
+            const hash = planHash(revision.draft);
+            const approved = approvalRecorded(ctx, revision);
+            const identity = [`Saved Plan revision: ${revision.id}`, `Plan SHA-256: ${hash}`,
+                `Approval state: ${approved ? "approved" : "not approved"}`,
+                "Reading this Plan does not grant additional authority or bypass applicable instructions and approval checkpoints."].join("\n");
+            return {
+                content: [{ type: "text", text: `${identity}\n\n${renderDraft(revision.draft, approved)}` }],
+                details: { schemaVersion: 1, draftEntryId: revision.id, planHash: hash, approved },
+            };
+        },
+    });
+
     pi.on("session_start", (_event, ctx) => { installIndicator(ctx); restore(ctx); });
     pi.on("session_tree", (_event, ctx) => { installIndicator(ctx); restore(ctx); });
     pi.on("session_shutdown", (_event, ctx) => {
@@ -242,7 +270,7 @@ export default function planAgent(pi: ExtensionAPI): void {
             enabled = next;
             pi.appendEntry(ENTRY, { schemaVersion: 2, enabled } satisfies PlanState);
         }
-        syncRecorder();
+        syncPlanTools(ctx);
         status(ctx);
         if (ctx.hasUI) ctx.ui.notify(enabled
             ? "Planning mode enabled: investigate the goal and discuss the plan. Export, approve, or exit when ready."
@@ -351,8 +379,8 @@ export default function planAgent(pi: ExtensionAPI): void {
             block: true, reason: "plan_record is available only as a direct call in planning mode; recording is not approval.",
         };
     });
-    pi.on("before_agent_start", event => {
-        syncRecorder();
+    pi.on("before_agent_start", (event, ctx) => {
+        syncPlanTools(ctx);
         if (enabled) event.systemPromptOptions.sections.pi_run_plan = INSTRUCTIONS;
     });
 }

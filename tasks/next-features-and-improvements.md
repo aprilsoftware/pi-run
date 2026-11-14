@@ -22,128 +22,118 @@ and non-disruptive.
 
 ## Recommended order
 
-1. Todo extension.
-2. Stronger planning-state visibility.
-3. Repository-linked Plan design.
-4. Managed-worktree missing-directory recovery assurance.
-5. Guardian, CAF, and cache-policy regression assurance.
-6. Profile-specific runtime-image design.
+No active product increment remains without new user evidence. Select future
+work from the deferred ideas or operational follow-up only when a concrete need
+establishes an observable result and justifies its lifecycle cost.
 
-The order may change when user evidence identifies a more valuable or urgent
-problem. Reliability work can also be selected independently of feature order.
+## Delivered foundation
 
-## Product features
+### Todo prompt queue
 
-### 1. Todo extension
+Todo is implemented in the current source tree as a user-owned queue of future
+prompts for one Pi conversation. `/todo` opens the interactive menu for creating,
+editing, deleting, reordering, and loading items into Pi's normal editor. Loading
+never submits a prompt, and items remain queued until explicitly deleted.
 
-**User-visible goal:** maintain a small actionable list that survives session
-resume and remains correctly scoped when conversation branches diverge.
+State is keyed by session ID under private profile storage. It survives resume
+and is shared across `/tree` branches; genuinely new sessions, forks, and clones
+start empty. Stable item IDs preserve identity across edits and reordering. The
+extension registers no model-callable Todo tool and performs no automatic prompt
+or transcript injection. Todo content is still selected-profile data rather than
+a filesystem confidentiality boundary.
 
-**Current recommendation:** store todos as branch-local session entries by
-default. Workspace files should be an explicit durability/export choice rather
-than an automatic side effect. Todo state must remain distinct from
-[Plan](../docs/planning.md) drafts and approvals: a todo is work tracking, not
-planning authority or implementation approval.
+The implementation limits each session to 100 items and each item to 16 KiB,
+uses private atomic state writes, and fails closed on malformed or unsafe state.
+Todo remains separate from Plan drafts, Plan approval identity, roadmaps,
+backlogs, and execution authority. See the [Todo guide](../docs/todo.md) and
+[behavior reference](../docs/reference/todo.md).
 
-**Open decisions:**
+This source work has not changed release metadata or published images. Further
+Todo behavior should require new user evidence rather than treating the former
+open design questions as an active backlog.
 
-- command and tool surface for adding, listing, completing, reopening, and
-  removing items;
-- stable item identity and ordering;
-- branch inheritance and divergence behavior;
-- whether completed items remain visible by default;
-- optional export or workspace-backed mode; and
-- compact TUI rendering without prompt or transcript noise.
+### Model-readable saved Plans
 
-**Smallest likely first increment:** define and test a branch-local session schema
-with one minimal add/list workflow and no workspace writes.
+The current source tree provides the model-only, read-only `plan_read` tool. It
+is available during planning and remains available after approval while the
+current branch retains a saved draft. It returns the exact revision ID, SHA-256
+identity, title, goal, body, and approval state without mutating session state or
+starting another model turn.
 
-**Validation expectations:** resume persistence, branch isolation, malformed
-entry handling, bounded storage, deterministic ordering, and no effect on Plan
-approval state.
+Resume and branch navigation restore the correct branch-local availability. New
+revisions fail closed as unapproved until that exact identity is approved, while
+`/plan-exit` discards the active draft and removes read access. Reading a Plan
+does not approve, export, execute, or grant authority. See the
+[Planning guide](../docs/planning.md) and
+[behavior reference](../docs/reference/planning.md).
 
-### 2. Stronger planning-state visibility
+### Missing managed-worktree directory assurance
 
-**User-visible goal:** make it difficult to forget that a conversation is still
-in planning mode, especially after resume, branch navigation, or a custom-message
-turn.
+The deterministic managed-worktree lifecycle test now removes its own disposable
+checkout and verifies the existing fail-closed contract. Listing reports the
+active task as `missing`, opening refuses before Docker starts, and Pi-Run does
+not silently recreate, repair, finish, or unregister the task. Machine and
+portable metadata, session data, Git administration, and the task branch remain
+preserved for explicit recovery.
 
-**Current state:** Plan mode, drafts, and approval identity are durable session
-entries, and planning already owns a terminal status/widget. The system-prompt
-section is restored for user- and custom-message turns, but the visible reminder
-can still be missed.
+No automatic recovery behavior was added. Further recovery work should require
+a concrete user need and a separately selected lifecycle rather than treating a
+missing checkout as authority to mutate or discard task state.
 
-**Current recommendation:** add one restrained terminal-native reminder rather
-than bells, desktop notifications, repeated chat messages, or broad prompt
-changes. Preserve the exact session-entry authority described in the
-[planning reference](../docs/reference/planning.md).
+### Cache-policy runtime assurance
 
-**Open decisions:** reminder surface, timing, behavior outside TUI mode, and how
-to avoid competing with Guardian, CAF, title, or normal status presentation.
+The deterministic cache-policy test now exercises Pi 1.5.2's actual cache-warmer
+scheduling and provider-dispatch path with controlled timers and a fake provider.
+With no explicit idle opt-in, an idle refresh is stopped by the extension before
+provider execution or usage persistence. The same warming decision during an
+active run reaches the fake provider unchanged and reschedules normally.
 
-**Smallest likely first increment:** choose one observable planning-state surface
-and test it across startup, resume, tree navigation, custom-message turns, and
-exit.
+This assurance uses no network access, credentials, paid provider, or wall-clock
+wait and does not rewrite profile settings. Live-provider cache checks are not an
+active roadmap item.
 
-### 3. Repository-linked Plan behavior
+### Guardian and CAF live regression assurance
 
-**User-visible goal:** optionally discover that a repository already has relevant
-planning work without confusing repository metadata with session approval.
+A bounded Guardian action-review regression passed representative `ALLOW`,
+`ASK`, and `USER_REFUSED` cases with one reviewer request each and unchanged
+settings. A guarded CAF candidate initially exposed Pi 1.5.2's optional
+`usage.cost.totalFromProvider` field; CAF now validates and aggregates that field,
+and its deterministic configuration, agent-loop, dialogue, and lifecycle suites
+pass.
 
-**Current recommendation:** keep branch-local session entries authoritative. Any
-repository link should be an index or reference to planning context, never a
-portable proof of approval and never an automatic instruction to execute work.
+The explicitly authorized guarded CAF retry completed with one reviewer request,
+one friend request, no other model or search requests, no command execution, and
+no real-profile writes. Future live checks remain optional assurance operations:
+they disclose fictional test content, consume provider capacity, and require
+separate authorization. See [Guardian](../docs/guardian.md) and
+[Call a Friend](../docs/call-a-friend.md).
 
-**Open decisions:** repository identity, worktree behavior, stale or missing
-sessions, multiple competing plans, privacy of plan titles, snapshot behavior,
-and whether linking is explicit or automatic.
+## Deferred ideas
 
-**Smallest likely first increment:** produce a design record comparing no link,
-an explicit repository index, and a workspace document reference. Do not write
-repository metadata until one lifecycle is selected.
+### Profile-specific runtime images
 
-### 4. Profile-specific runtime images
+A profile could select an additional or specialized toolchain without making
+every Pi-Run image larger, but no repeated profile need currently justifies the
+lifecycle cost. Any future design must preserve immutable image versions and keep
+the runtime and restricted-egress version relationship explicit.
 
-**User-visible goal:** allow a profile to select an additional or specialized
-toolchain without making every Pi-Run image larger.
-
-**Current recommendation:** defer implementation until at least one repeated
-profile need justifies the lifecycle cost. Preserve immutable image versions and
-keep the runtime and restricted-egress version relationship explicit.
-
-**Open decisions:** image naming and trust, profile schema, installation and
+Open questions include image naming and trust, profile schema, installation and
 upgrade behavior, offline availability, doctor diagnostics, release ownership,
-and compatibility with snapshots and managed worktrees.
+and compatibility with snapshots and managed worktrees. The first increment, if
+user evidence appears, should document concrete use cases and compare a small set
+of immutable selection models without changing the profile schema.
 
-**Smallest likely first increment:** document concrete use cases and compare a
-small set of immutable selection models; no profile schema change.
+### Stronger planning-state visibility
 
-## Reliability and assurance improvements
+Planning already has a muted terminal widget, durable branch-local mode state,
+and restored system-prompt guidance. The recent user requirement concerned model
+access to the saved Plan and is addressed by `plan_read`; a stronger visual
+banner is therefore not an active priority.
 
-### 5. Managed-worktree missing-directory recovery
-
-Managed worktree listing can identify missing checkout state, but a dedicated
-end-to-end recovery acceptance remains outstanding. The first increment should
-be a disposable test that removes only its own managed checkout and verifies the
-existing refusal or recovery contract before proposing behavior changes. See
-[Workspaces and sessions](../docs/workspaces-and-sessions.md).
-
-### 6. Guardian and CAF live regression coverage
-
-Offline and deterministic tests cover reviewer protocols, lifecycle, budgets,
-and fail-closed behavior. Optional live-review tests remain useful after major Pi
-or provider changes, but they disclose fictional test actions and consume
-provider capacity. Run them only as a separately authorized assurance operation,
-with Guardian and CAF results reported independently. See
-[Guardian](../docs/guardian.md) and [Call a Friend](../docs/call-a-friend.md).
-
-### 7. Cache-policy runtime assurance
-
-Pi-Run preserves active-run-only cache warming when `cacheWarming` is unset and
-does not rewrite profile settings. Unit, extension-load, and real-runtime checks
-cover that policy boundary. A future deterministic timed test could prove that
-an idle refresh is stopped before provider execution while an active refresh is
-unchanged, without using a paid provider.
+Revisit presentation only with new user evidence. Any future reminder should
+remain terminal-native and avoid bells, desktop notifications, repeated chat
+messages, broad prompt changes, or competition with Guardian, CAF, Todo, title,
+and normal status presentation.
 
 ## Operational follow-up
 

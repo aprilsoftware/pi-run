@@ -83,7 +83,8 @@ expected_extension_layout="$(printf '%s\n' \
     guardian/guardian-reviewer.ts \
     plan/plan-agent.ts \
     snapshot/snapshot-agent.ts \
-    title/title-agent.ts | LC_ALL=C sort)"
+    title/title-agent.ts \
+    todo/todo-agent.ts | LC_ALL=C sort)"
 actual_extension_layout="$(find "${ROOT}/docker/extensions" -mindepth 1 \( -type f -o -type l \) \
     -printf '%P\n' | LC_ALL=C sort)"
 [[ "${actual_extension_layout}" == "${expected_extension_layout}" ]] \

@@ -92,6 +92,7 @@ independent services.
 | `docker/extensions/guardian/` | Guardian command/dispute controller, reviewer domain, review tracing, and log presentation |
 | `docker/extensions/caf/` | CAF friend/transmission controller, protocol helpers, and log presentation |
 | `docker/extensions/plan/`, `snapshot/` | Planning and Snapshot extension entrypoints |
+| `docker/extensions/todo/` | Session-scoped user prompt queue, private persistence, and editor handoff |
 | `docker/skills/` | Runtime-owned core skills |
 | `templates/profiles/default/` | Definitions copied when the data home is initialized |
 | `scripts/build-release` | Reproducible host-application archive and checksum builder |

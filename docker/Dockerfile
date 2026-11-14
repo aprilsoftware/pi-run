@@ -244,6 +244,7 @@ COPY extensions/caf/caf-log-viewer.ts /usr/local/lib/node_modules/pi-run-extensi
 COPY extensions/caf/caf-protocol.ts /usr/local/lib/node_modules/pi-run-extensions/caf/
 COPY extensions/caf/caf-agent.ts /usr/local/lib/node_modules/pi-run-extensions/caf/
 COPY extensions/snapshot/snapshot-agent.ts /usr/local/lib/node_modules/pi-run-extensions/snapshot/
+COPY extensions/todo/todo-agent.ts /usr/local/lib/node_modules/pi-run-extensions/todo/
 COPY extensions/title/title-agent.ts /usr/local/lib/node_modules/pi-run-extensions/title/
 COPY skills/ /usr/local/share/pi-run/skills/
 RUN test -f /usr/local/share/pi-run/skills/pi-run/SKILL.md \

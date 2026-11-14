@@ -261,18 +261,22 @@ export async function callCafFriendAgent(ctx:ExtensionContext,model:Model<Api>,m
 function combinedUsage(...values:(Usage|undefined)[]):Usage|undefined{
   const rows=values.filter((value):value is Usage=>!!value);if(!rows.length)return;
   const sum=(read:(value:Usage)=>number)=>rows.reduce((total,value)=>total+read(value),0),optional=(read:(value:Usage)=>number|undefined)=>rows.some(value=>read(value)!==undefined)?rows.reduce((total,value)=>total+(read(value)??0),0):undefined;
+  const totalFromProvider=rows.every(value=>value.cost.totalFromProvider===true);
   return {input:sum(value=>value.input),output:sum(value=>value.output),cacheRead:sum(value=>value.cacheRead),cacheWrite:sum(value=>value.cacheWrite),
     ...(optional(value=>value.cacheWrite1h)===undefined?{}:{cacheWrite1h:optional(value=>value.cacheWrite1h)}),
     ...(optional(value=>value.reasoning)===undefined?{}:{reasoning:optional(value=>value.reasoning)}),totalTokens:sum(value=>value.totalTokens),
-    cost:{input:sum(value=>value.cost.input),output:sum(value=>value.cost.output),cacheRead:sum(value=>value.cost.cacheRead),cacheWrite:sum(value=>value.cost.cacheWrite),total:sum(value=>value.cost.total)}};
+    cost:{input:sum(value=>value.cost.input),output:sum(value=>value.cost.output),cacheRead:sum(value=>value.cost.cacheRead),cacheWrite:sum(value=>value.cost.cacheWrite),total:sum(value=>value.cost.total),
+      ...(totalFromProvider?{totalFromProvider:true}:{})}};
 }
 function parseCafUsage(value:unknown):Usage|undefined{
   if(value===undefined)return;const row=object(value,"CAF reviewer usage"),allowed=new Set(["input","output","cacheRead","cacheWrite","cacheWrite1h","reasoning","totalTokens","cost"]);
   if(Object.keys(row).some(key=>!allowed.has(key)))throw new Error("Invalid CAF reviewer usage");
   const number=(input:unknown)=>typeof input==="number"&&Number.isFinite(input)&&input>=0?input:undefined;
   for(const key of ["input","output","cacheRead","cacheWrite","totalTokens"] as const)if(number(row[key])===undefined)throw new Error("Invalid CAF reviewer usage");
-  const cost=object(row.cost,"CAF reviewer cost");exact(cost,["input","output","cacheRead","cacheWrite","total"],"CAF reviewer cost");
+  const cost=object(row.cost,"CAF reviewer cost"),hasProviderTotal=Object.hasOwn(cost,"totalFromProvider");
+  exact(cost,["input","output","cacheRead","cacheWrite","total",...(hasProviderTotal?["totalFromProvider"]:[])],"CAF reviewer cost");
   for(const key of ["input","output","cacheRead","cacheWrite","total"] as const)if(number(cost[key])===undefined)throw new Error("Invalid CAF reviewer usage");
+  if(hasProviderTotal&&typeof cost.totalFromProvider!=="boolean")throw new Error("Invalid CAF reviewer usage");
   for(const key of ["cacheWrite1h","reasoning"] as const)if(row[key]!==undefined&&number(row[key])===undefined)throw new Error("Invalid CAF reviewer usage");
   return row as unknown as Usage;
 }

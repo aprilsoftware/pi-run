@@ -15,9 +15,10 @@ a model request. Use it to continue refining the same goal. Repeating
 `/plan <goal>`, even with similar text, starts a new goal rather than updating the
 saved draft.
 
-Planning changes the agent's objective, not its selected tools or operating-system
-permissions. Guardian review remains independent and keeps its current mode,
-reviewer, and thinking settings.
+Planning changes the agent's objective without removing or restricting its normal
+tools or operating-system permissions. It conditionally adds the planning-owned
+`plan_record` and `plan_read` tools described below. Guardian review remains
+independent and keeps its current mode, reviewer, and thinking settings.
 
 ## Draft recording and revision identity
 
@@ -35,6 +36,34 @@ Recording is neither approval nor a workspace file change.
 revision is approved. It does not start a model turn, change planning mode, or
 approve content. A missing, discarded, invalid, or unsupported draft cannot be
 shown, exported, or approved.
+
+## Read-only model access
+
+`plan_read` is a model-only tool with an empty argument object. It is available
+while planning mode is active and remains available outside planning mode while
+the branch retains a saved draft. Before the first successful `plan_record`, a
+call reports that no active Plan exists.
+
+A successful result contains the exact saved title, goal, and Markdown body plus:
+
+- the draft session-entry ID;
+- the SHA-256 identity calculated from the title, goal, and body;
+- `approved: true|false` for that exact identity; and
+- an explicit notice that reading grants no additional authority.
+
+The result does not append a session entry, send a custom or user message, start
+another model turn, change mode, or alter approval. `plan_read` cannot record,
+edit, approve, discard, export, or execute a Plan. Pi declares the tool to the
+model when available but does not call it automatically or inject the full Plan
+into every request.
+
+Approval leaves the saved draft in place, so `plan_read` remains available after
+planning exits. A newly recorded revision immediately has a new identity and is
+unapproved even if its text matches an older revision. `/plan-exit` appends the
+discard marker and removes the tool when no active draft remains.
+
+Malformed drafts return an explicit error. Missing, malformed, stale, or
+mismatching approval metadata never produces an approved result.
 
 ## Export rules
 
@@ -104,7 +133,9 @@ Switching to a historical branch can expose that branch's own draft and mode; it
 never transfers approval from another revision or branch.
 
 After resume or branch navigation, `/plan-show` is the authoritative user-facing
-check for the active saved revision and approval state.
+check for the active saved revision and approval state. The extension also
+restores `plan_read` for model access when that destination branch retains a
+draft, and removes it on a branch whose latest draft state is discarded.
 
 ## Unsupported operations and boundaries
 
@@ -113,9 +144,10 @@ whole-plan executor. It does not require a particular document structure and
 does not itself impose development increment fields, file lists, or diff
 estimates; applicable workflow instructions can require those later.
 
-The extension manages only its planning metadata tool and slash commands. Normal
-tool availability remains unchanged, so read-only or no-network planning depends
-on explicit user instructions and actual runtime permissions.
+The extension manages only its planning metadata tools and slash commands. Normal
+tool availability remains unchanged apart from conditional `plan_record` and
+`plan_read` exposure, so read-only or no-network planning depends on explicit
+user instructions and actual runtime permissions.
 
 [Planning task guide](../planning.md) · [Guardian](../guardian.md) ·
 [Workspaces and sessions](../workspaces-and-sessions.md)

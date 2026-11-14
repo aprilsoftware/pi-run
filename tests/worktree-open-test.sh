@@ -213,4 +213,27 @@ rmdir "${LOCK_DIR}"
 [[ "$(< "${COUNT_FILE}")" == "${count_before}" ]] \
     || fail "active-task refusal started Docker"
 
+metadata_before_missing="$(sha256sum "${MACHINE}" "${REGISTRY}")"
+session_before_missing="$(sha256sum "${SESSION_DIR}/session-a.jsonl")"
+branch_before_missing="$(git -C "${REPOSITORY}" rev-parse --verify "refs/heads/${BRANCH}")"
+admin_dir="${REPOSITORY}/.git/worktrees/${TASK_NAME}"
+rm -rf "${WORKTREE}"
+run_pi worktree list >"${TMP}/missing-list.out"
+missing_line="$(awk -v task="${TASK_NAME}" '$1 == task { print; exit }' "${TMP}/missing-list.out")"
+[[ "${missing_line}" == *active* && "${missing_line}" == *missing* ]] \
+    || fail "deleted managed checkout was not listed as missing"
+if run_pi worktree open "${TASK_NAME}" "${REPOSITORY}" \
+    >/dev/null 2>"${TMP}/missing-directory.err"; then
+    fail "managed task with a deleted checkout was opened"
+fi
+grep -F 'managed resume worktree is missing or unsafe' "${TMP}/missing-directory.err" >/dev/null \
+    || fail "deleted managed checkout diagnostic was unclear"
+[[ "$(< "${COUNT_FILE}")" == "${count_before}" ]] \
+    || fail "deleted-checkout refusal started Docker"
+[[ ! -e "${WORKTREE}" && -d "${admin_dir}" &&
+   "$(git -C "${REPOSITORY}" rev-parse --verify "refs/heads/${BRANCH}")" == "${branch_before_missing}" &&
+   "$(sha256sum "${MACHINE}" "${REGISTRY}")" == "${metadata_before_missing}" &&
+   "$(sha256sum "${SESSION_DIR}/session-a.jsonl")" == "${session_before_missing}" ]] \
+    || fail "deleted-checkout refusal changed recoverable task state"
+
 echo "Named worktree task open tests passed"
