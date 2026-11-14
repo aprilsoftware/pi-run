@@ -530,6 +530,7 @@ build_profile_runtime() {
             || fail "temporary core image reference does not match the selected core image"
 
         docker build --pull=false \
+            --build-arg "BUILDKIT_DOCKERFILE_CHECK=skip=InvalidDefaultArgInFrom" \
             --build-arg "PI_RUN_BASE_IMAGE=${frozen_core_tag}" \
             --label "${RUNTIME_LABEL_CONTRACT}=${RUNTIME_BUILD_CONTRACT}" \
             --label "${RUNTIME_LABEL_CORE_ID}=${core_id}" \

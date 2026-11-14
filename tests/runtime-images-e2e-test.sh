@@ -66,8 +66,15 @@ cmp "${ROOT}/templates/runtime/full-development.Dockerfile" \
     || fail "runtime add all did not produce the maintained full-development Dockerfile"
 
 printf 'Building disposable full-development profile image...\n'
-PI_RUN_HOME="${HOME_DIR}" PI_RUN_CORE_IMAGE="${CORE_TAG}" \
-    "${ROOT}/bin/pi-run" runtime build
+if ! runtime_build_output="$(PI_RUN_HOME="${HOME_DIR}" PI_RUN_CORE_IMAGE="${CORE_TAG}" \
+    "${ROOT}/bin/pi-run" runtime build 2>&1)"; then
+    printf '%s\n' "${runtime_build_output}" >&2
+    fail "full-development profile image build failed"
+fi
+printf '%s\n' "${runtime_build_output}"
+if grep -F 'InvalidDefaultArgInFrom' <<<"${runtime_build_output}" >/dev/null; then
+    fail "runtime build exposed the intentionally suppressed base-argument warning"
+fi
 status_output="$(PI_RUN_HOME="${HOME_DIR}" PI_RUN_CORE_IMAGE="${CORE_TAG}" \
     "${ROOT}/bin/pi-run" runtime status)"
 PREPARED_TAG="$(sed -n 's/^Prepared tag: //p' <<<"${status_output}")"

@@ -196,7 +196,10 @@ The selected local base must exist and match the normalized host architecture.
 The build holds the exclusive profile lock, freezes the selected base image ID
 under a private temporary tag, and builds the bounded runtime context under a
 second temporary tag with `--pull=false`. It supplies `PI_RUN_BASE_IMAGE` and all
-five prepared-image labels. Before activation it rehashes the context, rechecks
+five prepared-image labels. Because that base argument is intentionally required
+and has no fallback, Pi-Run suppresses only Docker's `InvalidDefaultArgInFrom`
+build check through `BUILDKIT_DOCKERFILE_CHECK`; other build warnings remain
+visible. Before activation it rehashes the context, rechecks
 the selected core identity, and validates the temporary image's architecture and
 labels. Only then does it replace the stable profile tag. Exit cleanup removes
 temporary tags; build, race, contract, validation, and activation failures leave

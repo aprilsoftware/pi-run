@@ -114,6 +114,7 @@ case "${1:-} ${2:-}" in
         ;;
     'build --pull=false')
         : > "$state/pending-labels"
+        : > "$state/build-args"
         stage=
         context=
         shift
@@ -121,7 +122,7 @@ case "${1:-} ${2:-}" in
             case "$1" in
                 --build-arg)
                     shift
-                    printf '%s\n' "$1" > "$state/build-arg"
+                    printf '%s\n' "$1" >> "$state/build-args"
                     ;;
                 --label)
                     shift
@@ -135,10 +136,11 @@ case "${1:-} ${2:-}" in
             esac
             shift
         done
-        case "$(cat "$state/build-arg")" in
-            PI_RUN_BASE_IMAGE=pi-run-core-stage:*) ;;
-            *) exit 8 ;;
-        esac
+        [ "$(wc -l < "$state/build-args")" -eq 2 ] || exit 8
+        grep -Fx 'BUILDKIT_DOCKERFILE_CHECK=skip=InvalidDefaultArgInFrom' \
+            "$state/build-args" >/dev/null || exit 8
+        grep -E '^PI_RUN_BASE_IMAGE=pi-run-core-stage:' \
+            "$state/build-args" >/dev/null || exit 8
         [ "$(wc -l < "$state/pending-labels")" -eq 5 ] || exit 9
         [ -n "$stage" ] && [ -d "$context" ] || exit 10
         [ "${DOCKER_MODE:-}" != build-fail ] || exit 11
@@ -189,6 +191,14 @@ if grep -E 'COMMAND <(pull|run)>' "${DOCKER_LOG}" >/dev/null; then
 fi
 grep -F 'COMMAND <build> <--pull=false>' "${DOCKER_LOG}" >/dev/null \
     || fail "runtime build did not disable pulling"
+grep -F '<BUILDKIT_DOCKERFILE_CHECK=skip=InvalidDefaultArgInFrom>' \
+    "${DOCKER_LOG}" >/dev/null \
+    || fail "runtime build did not suppress only the intentional base-argument check"
+if grep -E '^ARG PI_RUN_BASE_IMAGE=' \
+    "${ROOT}/templates/runtime/Dockerfile" \
+    "${ROOT}/templates/runtime/full-development.Dockerfile" >/dev/null; then
+    fail "runtime templates provide an unintended fallback base image"
+fi
 for label in contract core-id context-sha256 source-sha256 architecture; do
     grep -F "io.aprilsoftware.pi-run.runtime.${label}=" "${DOCKER_STATE}/prepared-labels" >/dev/null \
         || fail "runtime build omitted label: ${label}"
