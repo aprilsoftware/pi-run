@@ -289,11 +289,16 @@ passed:
   `sha256:13db8cc4aabd306151b4d98c4e68a387febfb35e151ac1717e56c4a0d1b97d0e`.
 
 The four remaining skips are optional live-provider Guardian/CAF evaluations,
-not runtime-image acceptance gaps. Docker's `InvalidDefaultArgInFrom` warning for
-the required base-image argument and Ansible's interpreter-discovery warning are
-non-failing observations.
+not runtime-image acceptance gaps. The v0.10.12 acceptance run observed Docker's
+`InvalidDefaultArgInFrom` warning for the intentionally required base argument.
+Commit `ae68bb1` suppresses only that check through Docker's built-in check
+control and passed the same real-Docker runtime acceptance without the warning;
+it is assigned to the v0.10.13 candidate and is not part of immutable v0.10.12.
+Ansible's interpreter-discovery warning remains a separate non-failing
+observation.
 
-One optional future design question remains: whether Git or Restic should later
-move from the core to dedicated helpers. No such change is implied by this
-record. Release metadata remains unchanged, and no commit, tag, image, or release
-has been published for this work.
+The runtime foundation, core image cutover, and profile build workflow were
+released as immutable v0.10.12. The v0.10.13 warning fix is prepared but not
+published. One optional future design question remains: whether Git or Restic
+should later move from the core to dedicated helpers. No such change or later
+publication is implied by this record.

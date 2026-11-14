@@ -213,10 +213,11 @@ incompatible state stops with the exact `runtime build` command; launch never
 builds, pulls, or falls back. `PI_RUN_IMAGE` remains available to host-side
 utility containers but is not a main-session image override.
 
-The current release still publishes the broad image at the default coordinate.
-Until the release workflow cuts that coordinate over to
-`docker/core/Dockerfile`, maintainers can use `PI_RUN_CORE_IMAGE` to select a
-locally built core candidate.
+Starting with v0.10.12, the versioned
+`ghcr.io/aprilsoftware/pi-run:X.Y.Z` coordinate contains the small core built
+from `docker/core/Dockerfile`. Older immutable release tags remain broad images
+and are not rebuilt or moved. Maintainers can use `PI_RUN_CORE_IMAGE` to select a
+locally built core candidate without changing the release coordinate.
 
 Pi 1.5's global `cacheWarming` setting accepts `"off"`, `"streaming"`, or
 `"idle"`; its upstream default is `"idle"`. The final built-in Pi-Run cache

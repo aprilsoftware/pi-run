@@ -20,12 +20,13 @@ immutable runtime identities, and avoid adding storage or image variants before
 their lifecycle is understood. New presentation should remain terminal-native
 and non-disruptive.
 
-## Current release-preparation state
+## Current release state
 
-The profile-owned runtime Dockerfile foundation is implemented and accepted in
-the current source tree. It no longer represents the next roadmap item. Release
-metadata, commit creation, publication, and selection of any subsequent product
-increment remain separate decisions requiring approval.
+The profile-owned runtime Dockerfile foundation was released as immutable
+v0.10.12 and no longer represents the next roadmap item. Commit `ae68bb1` is a
+later, real-Docker-validated warning-suppression fix assigned to the v0.10.13
+candidate. v0.10.13 has not been published; publication and any subsequent
+product increment remain separate decisions requiring approval.
 
 ## Delivered foundation
 
