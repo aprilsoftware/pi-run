@@ -22,11 +22,28 @@ and non-disruptive.
 
 ## Current release state
 
-The profile-owned runtime Dockerfile foundation was released as immutable
-v0.10.12 and no longer represents the next roadmap item. Commit `ae68bb1` is a
-later, real-Docker-validated warning-suppression fix assigned to the v0.10.13
-candidate. v0.10.13 has not been published; publication and any subsequent
-product increment remain separate decisions requiring approval.
+The profile-owned runtime Dockerfile foundation and the intentional Docker build
+warning suppression were released as immutable v0.10.13. The active development
+line is now local branch `experiment/v0.11`; branch publication, implementation,
+preview metadata, and release work remain separate decisions requiring approval.
+
+## Active product direction
+
+### Bounded software factory
+
+v0.11 develops a bounded, visible software factory that turns one exact
+human-approved task into a validated, reviewable local worktree and branch.
+`/loop` is one scheduling primitive inside the factory, not backlog authority or
+a substitute for task approval, deterministic verification, fresh-context
+review, or human publication decisions.
+
+The first architecture selects host-owned task/run state outside normal agent
+mounts, exact task-hash approval, one managed worktree and conversation per run,
+one human-created loop, paused restart behavior, and no automatic commit, push,
+PR, merge, release, deployment, or next-task selection. See the
+[bounded software factory design](software-factory-design.md) for the lifecycle,
+authority boundaries, selected initial output, open design decisions, and
+acceptance direction.
 
 ## Delivered foundation
 
