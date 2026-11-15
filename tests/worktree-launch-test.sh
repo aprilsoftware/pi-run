@@ -24,6 +24,7 @@ printf '\n' >> "${DOCKER_LOG}"
 case "${1:-}" in
     image)
         [[ "${2:-}" == inspect ]]
+        exec "${RUNTIME_IMAGE_FIXTURE:?}" --emit-image "${3:?}"
         ;;
     run)
         shift
@@ -88,6 +89,7 @@ case "${1:-}" in
 esac
 FAKE_DOCKER
 chmod 0755 "${TMP}/fake-bin/docker"
+export RUNTIME_IMAGE_FIXTURE="${ROOT}/tests/runtime-launch-selection-test.sh"
 
 PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" init >/dev/null
 git init -q -b main "${REPOSITORY}"

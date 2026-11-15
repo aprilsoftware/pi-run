@@ -1,9 +1,10 @@
 # Getting started with Pi-Run
 
-Pi-Run gives [Pi](https://pi.dev/), a terminal AI agent, a ready-to-use
+Pi-Run gives [Pi](https://pi.dev/), a terminal AI agent, a durable
 containerized environment for software development and system administration.
-You choose one workspace and profile; Pi-Run supplies the toolchain and keeps
-your configuration and conversations available between runs.
+You choose one workspace and profile; a versioned core supplies Pi while the
+profile owns its toolchain Dockerfile and keeps configuration and conversations
+available between runs.
 
 This guide takes you from an installed Pi-Run to one bounded task and a saved
 conversation. Run `pi-run` commands in your **host terminal** and slash commands
@@ -17,15 +18,24 @@ private data home and check the installation:
 ```bash
 pi-run version
 pi-run init
+# Optional: pi-run runtime add <bundle>
+# Optional: pi-run runtime add all
+pi-run runtime build
+pi-run runtime status
 pi-run doctor
 ```
 
-`version` identifies the launcher plus its runtime and egress images. `init`
-creates the initial profile and persistent data directories, normally under
-`~/Pi-Run`. `doctor` reports `OK`, `WARN`, and `FAIL` without repairing state or
-printing credential contents.
+`version` identifies the launcher plus its core, utility, and egress images.
+`init` creates the initial profile and persistent data directories, normally
+under `~/Pi-Run`. Before building, optionally add one maintained capability or
+the complete maintained set. `runtime build` is the explicit local Docker build
+for the selected profile; `runtime status` confirms that its prepared image
+matches the current Dockerfile and core. Run `doctor` after the build so its
+prepared-runtime check can pass; it reports `OK`, `WARN`, and `FAIL` without
+repairing state or printing credential contents.
 
-Required checks should pass before launch. If a command or check fails, use the
+Required checks and runtime status should pass before launch. If a command or
+check fails, use the
 [startup troubleshooting reference](reference/getting-started.md#troubleshoot-startup).
 
 ## 2. Understand what you are opening
@@ -84,8 +94,9 @@ Restricted mode reports model-derived and manual TCP exposure separately. The
 normal terminal mode keeps standard scrollback. See [Profiles](profiles.md) for
 configuration and [Security and isolation](security.md) for enforcement limits.
 
-The first launch also initializes a missing data home and registers this
-workspace. For profile selection and exact startup behavior, see the
+A launch can initialize a missing data home, but it will stop until that
+profile's runtime has been built explicitly. It registers the workspace only
+after resolving the selected home. For profile selection and exact startup behavior, see the
 [Getting Started reference](reference/getting-started.md#how-launch-selection-works).
 
 ### Optional: open an isolated Git worktree
@@ -165,6 +176,24 @@ controls the shared Guard review layer for covered commands and CAF disclosures.
 Fresh profiles and genuinely new sessions default Guard and CAF Off unless their
 profile-specific future-session defaults were deliberately changed. Neither is
 a sandbox. Continue to inspect commands, disclosures, and changed files yourself.
+
+### Queue your next prompts while Pi works
+
+When you think of a later request while the current response is still running,
+open the session's Todo menu:
+
+```text
+/todo
+```
+
+Create, edit, delete, or reorder multiline prompt drafts. Selecting **Use as next
+prompt** loads an item into Pi's normal editor without submitting or removing it.
+The queue follows this conversation when resumed and remains shared across its
+branches; new conversations, forks, and clones start empty.
+
+Todo is not planning or authorization. The extension does not automatically put
+queued items into model context, but its files remain part of the selected
+profile rather than a secret store. See the [Todo prompt queue guide](todo.md).
 
 ## 6. Name, leave, and continue your session
 

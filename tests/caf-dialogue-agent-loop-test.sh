@@ -82,17 +82,28 @@ const providerExtension = pi => {
         const readyMatch=finalGuidance?.match(/Decision-ready user source IDs: (\[[^\n]*\])/),readyIds=readyMatch?JSON.parse(readyMatch[1]):[];
         reviewerBytes.push({ key, round, bytes });reviewerRequests.push({ payload, tools, round, readyIds, finalGuidance });
         assert.ok(sourceId, 'reviewer must receive complete original user evidence');
-        const correction = key.startsWith('Assess a fictional migration'), exhausted = key.startsWith('Exercise the fictional reviewer budget');
-        if ((correction && round < 4) || (exhausted && round < 5)) {
+        const correction = key.startsWith('Assess a fictional migration'), recovery = key.startsWith('Recover from a fictional decision-only violation'),
+          exhausted = key.startsWith('Exercise the fictional reviewer budget');
+        if(correction&&round<4){
           assert.ok(tools.includes('caf_history_search'));
-          return assistant(selected, [{ type: 'toolCall', id: `review-search-${reviewerRequests.length}`, name: 'caf_history_search', arguments: {
-            query: 'fictional consultation authorization', limit: 2, question: 'Confirm the current fictional authorization before deciding.',
-          } }], 'toolUse');
+          return assistant(selected,[{type:'toolCall',id:`review-search-${reviewerRequests.length}`,name:'caf_history_search',arguments:{
+            query:'fictional consultation authorization',limit:2,question:'Confirm the current fictional authorization before deciding.',
+          }}],'toolUse');
+        }
+        if((recovery||exhausted)&&round<5){
+          assert.ok(tools.includes('caf_guide'));
+          return assistant(selected,[{type:'toolCall',id:`review-guide-${reviewerRequests.length}`,name:'caf_guide',arguments:{}}],'toolUse');
         }
         if(correction&&round===4)return assistant(selected,[{type:'toolCall',id:'review-invalid-source',name:'caf_guard_decide',arguments:{
           outcome:'ALLOW',reason:'Synthetic decision with an invalid source.',userMessageIds:['incomplete-source'],
         }}],'toolUse');
-        if(correction||exhausted)assert.deepEqual(tools, ['caf_guard_decide'], 'the fifth reviewer request must be decision-only');
+        if(recovery&&round===5){
+          assert.deepEqual(tools, ['caf_guard_decide'], 'the fifth reviewer request must be decision-only');
+          return assistant(selected,[{type:'toolCall',id:'review-stale-evidence',name:'caf_history_search',arguments:{
+            query:'fictional stale evidence request',limit:1,question:'This decision-only violation must receive one bounded correction.',
+          }}],'toolUse');
+        }
+        if(correction||recovery||exhausted)assert.deepEqual(tools, ['caf_guard_decide'], 'the final reviewer requests must be decision-only');
         return assistant(selected, [{ type: 'toolCall', id: `review-${reviewerRequests.length}`, name: 'caf_guard_decide', arguments: {
           outcome: 'ALLOW', reason: exhausted ? 'Synthetic invalid final decision.' : 'The fictional multi-round consultation is explicitly authorized.',
           userMessageIds: exhausted ? [] : [readyIds.at(-1) ?? sourceId],
@@ -107,17 +118,21 @@ const providerExtension = pi => {
             ({ question, whyNeeded: 'It materially affects the fictional migration advice.', canProceedWithoutAnswer: false }));
           return assistant(selected, [{ type: 'toolCall', id: 'friend-question', name: 'caf_ask_primary', arguments: { questions } }], 'toolUse');
         }
-        assert.equal(friendRequests.length, 2, 'consultation should use exactly two friend rounds');
-        assert.equal(payload.message, 'Downtime is prohibited in this fictional migration.');
-        assert.equal(payload.history.length, 1);
-        assert.equal(payload.history[0].response.kind, 'questions');
-        return assistant(selected, [{ type: 'text', text: 'Use a fictional expand-and-contract migration because downtime is prohibited.' }], 'stop');
+        if(friendRequests.length===2){
+          assert.equal(payload.message, 'Downtime is prohibited in this fictional migration.');
+          assert.equal(payload.history.length, 1);
+          assert.equal(payload.history[0].response.kind, 'questions');
+          return assistant(selected, [{ type: 'text', text: 'Use a fictional expand-and-contract migration because downtime is prohibited.' }], 'stop');
+        }
+        assert.equal(friendRequests.length,3,'only the recovered decision-only review may add a third friend request');
+        assert.equal(payload.message,'Recover from a fictional decision-only violation and contact the friend only after a valid correction.');
+        return assistant(selected,[{type:'text',text:'The fictional decision-only correction reached the friend safely.'}],'stop');
       }
       assert.equal(selected.id, 'primary');
       const toolResults = context.messages.filter(message => message.role === 'toolResult' && message.toolName === 'call_friend');
       const tools = activeToolNames(context.messages);
       primaryRequests.push({ tools, toolResults });
-      if (primaryRequests.length < 4) assert.deepEqual(tools, ['call_friend']);
+      if (primaryRequests.length < 5) assert.deepEqual(tools, ['call_friend']);
       else assert.deepEqual(tools, [], 'CAF failure settlement must hide tools');
       if (primaryRequests.length === 1) return assistant(selected, [{ type: 'toolCall', id: 'primary-caf-1', name: 'call_friend', arguments: {
         message: 'Assess a fictional migration that must avoid downtime.', purpose: 'Obtain independent fictional architecture advice',
@@ -131,13 +146,19 @@ const providerExtension = pi => {
       }
       if (primaryRequests.length === 3) {
         assert.equal(toolResults.length, 2);assert.equal(toolResults.at(-1).details?.status, 'answer');
+        return assistant(selected, [{ type: 'toolCall', id: 'primary-caf-recovery', name: 'call_friend', arguments: {
+          message: 'Recover from a fictional decision-only violation and contact the friend only after a valid correction.', purpose: 'Verify one reserved CAF reviewer correction',
+        } }], 'toolUse');
+      }
+      if(primaryRequests.length===4){
+        assert.equal(toolResults.length,3);assert.equal(toolResults.at(-1).details?.status,'answer');
         return assistant(selected, [{ type: 'toolCall', id: 'primary-caf-budget', name: 'call_friend', arguments: {
           message: 'Exercise the fictional reviewer budget without contacting the friend after an invalid decision.', purpose: 'Verify bounded CAF review finalization',
         } }], 'toolUse');
       }
-      assert.equal(primaryRequests.length, 4);assert.equal(toolResults.length, 3);assert.equal(toolResults.at(-1).isError, true);
+      assert.equal(primaryRequests.length, 5);assert.equal(toolResults.length, 4);assert.equal(toolResults.at(-1).isError, true);
       assert.match(toolResults.at(-1).content[0].text, /Reviewer response was invalid/);
-      return assistant(selected, [{ type: 'text', text: `CAF advised: ${toolResults[1].content[0].text} The bounded failure contacted no friend.` }], 'stop');
+      return assistant(selected, [{ type: 'text', text: `CAF advised: ${toolResults[1].content[0].text} ${toolResults[2].content[0].text} The bounded failure contacted no friend.` }], 'stop');
     },
   });
 };
@@ -158,19 +179,21 @@ await session.prompt('/guardian-mode on');
 await session.prompt('/caf-model synthetic/friend');
 await session.prompt('/caf-mode on');
 const events = [], unsubscribe = session.subscribe(event => events.push(event));
-const initialDirection = 'Consult the configured CAF agent about this fictional migration. If it asks, disclose that downtime is prohibited and continue the consultation automatically until it answers. Then run the explicitly fictional reviewer-budget check exactly as proposed.';
+const initialDirection = 'Consult the configured CAF agent about this fictional migration. If it asks, disclose that downtime is prohibited and continue the consultation automatically until it answers. Then run the explicitly fictional decision-only recovery and reviewer-budget checks exactly as proposed.';
 try {
   await session.prompt(initialDirection);
-  assert.equal(primaryRequests.length, 4, JSON.stringify({ primary: primaryRequests.length, reviewer: reviewerRequests.length, friend: friendRequests.length,
+  assert.equal(primaryRequests.length, 5, JSON.stringify({ primary: primaryRequests.length, reviewer: reviewerRequests.length, friend: friendRequests.length,
     reviewerRounds: [...reviewerRounds], reviewerReady: reviewerRequests.map(request => request.readyIds),
     finalGuidance: reviewerRequests.at(-1)?.finalGuidance, primaryTools: primaryRequests.map(request => request.tools),
     results: primaryRequests.map(request => request.toolResults.map(result => ({ status: result.details?.status, error: result.isError, text: result.content?.[0]?.text }))) }));
-  assert.equal(reviewerRequests.length, 11);assert.equal(friendRequests.length, 2);
-  assert.equal(events.filter(event => event.type === 'tool_execution_start' && event.toolName === 'call_friend').length, 3);
+  assert.equal(reviewerRequests.length, 18);assert.equal(friendRequests.length, 3);
+  assert.equal(events.filter(event => event.type === 'tool_execution_start' && event.toolName === 'call_friend').length, 4);
   const correctionKey = 'Assess a fictional migration that must avoid downtime.';
+  const recoveryKey='Recover from a fictional decision-only violation and contact the friend only after a valid correction.';
+  const exhaustedKey='Exercise the fictional reviewer budget without contacting the friend after an invalid decision.';
   assert.equal(reviewerRounds.get(correctionKey), 5);
-  assert.equal(reviewerRounds.get('Exercise the fictional reviewer budget without contacting the friend after an invalid decision.'), 5,
-    'a sixth reviewer provider request must remain blocked');
+  assert.equal(reviewerRounds.get(recoveryKey),6,'a sixth decision-only request must recover one invalid fifth response');
+  assert.equal(reviewerRounds.get(exhaustedKey),6,'a seventh reviewer provider request must remain blocked');
   assert.ok(reviewerRequests.slice(0, 3).every(request => request.tools.includes('caf_history_search') && request.tools.includes('caf_guard_decide')));
   assert.ok(reviewerRequests[3].tools.includes('caf_history_search'));
   assert.deepEqual(reviewerRequests[4].tools, ['caf_guard_decide']);
@@ -179,15 +202,17 @@ try {
     `unexpected correction context total: ${correctionBytes} (${reviewerBytes.filter(request => request.key === correctionKey).map(request => request.bytes).join(',')})`);
   assert.equal(reviewerRequests[5].payload.disclosure.history.length, 1);
   assert.equal(reviewerRequests[5].payload.disclosure.message, 'Downtime is prohibited in this fictional migration.');
-  assert.ok(reviewerRequests.slice(6, 10).every(request => request.tools.includes('caf_history_search') && request.tools.includes('caf_guard_decide')));
-  assert.deepEqual(reviewerRequests[10].tools, ['caf_guard_decide']);
+  assert.ok(reviewerRequests.slice(6,10).every(request=>request.tools.includes('caf_history_search')&&request.tools.includes('caf_guard_decide')));
+  assert.deepEqual(reviewerRequests[10].tools,['caf_guard_decide']);assert.deepEqual(reviewerRequests[11].tools,['caf_guard_decide']);
+  assert.ok(reviewerRequests.slice(12,16).every(request=>request.tools.includes('caf_history_search')&&request.tools.includes('caf_guard_decide')));
+  assert.deepEqual(reviewerRequests[16].tools,['caf_guard_decide']);assert.deepEqual(reviewerRequests[17].tools,['caf_guard_decide']);
   assert.ok(friendRequests.every(request => !request.serialized.includes(initialDirection)), 'CAF agent must not receive the primary user direction implicitly');
   const rounds = sessionManager.getBranch().filter(entry => entry.type === 'custom' && entry.customType === 'pi-run-caf-round');
-  assert.equal(rounds.length, 2);assert.equal(rounds[0].data.response.kind, 'questions');assert.equal(rounds[1].data.response.kind, 'answer');
+  assert.equal(rounds.length,3);assert.equal(rounds[0].data.response.kind,'questions');assert.equal(rounds[1].data.response.kind,'answer');assert.equal(rounds[2].data.response.kind,'answer');
   assert.equal(sessionManager.getBranch().filter(entry => entry.type === 'message' && entry.message.role === 'user').length, 1, 'no second user turn should be required');
   assert.match(session.getLastAssistantText(), /expand-and-contract/);
 } finally {
   unsubscribe();session.dispose();
 }
-console.log('native CAF dialogue uses a bounded fifth reviewer request and refuses a sixth provider request');
+console.log('native CAF dialogue reserves a sixth decision-only correction and refuses a seventh provider request');
 NODE

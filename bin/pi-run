@@ -17,6 +17,11 @@ Usage:
   pi-run [--home <path>] profile list
   pi-run [--home <path>] profile default [<name>]
   pi-run [--home <path>] profile create <name> [--from <profile>]
+  pi-run [--home <path>] [--profile <name>] runtime list
+  pi-run [--home <path>] [--profile <name>] runtime init
+  pi-run [--home <path>] [--profile <name>] runtime add <bundle|all>
+  pi-run [--home <path>] [--profile <name>] runtime status
+  pi-run [--home <path>] [--profile <name>] runtime build
   pi-run [--home <path>] [--profile <name>] network show
   pi-run [--home <path>] [--profile <name>] network mode <host|offline|restricted> [--discard-rules]
   pi-run [--home <path>] [--profile <name>] network allow list
@@ -108,9 +113,11 @@ PI_RUN_VERSION="$(tr -d '\r\n' < "${VERSION_FILE}")"
 [[ "${PI_RUN_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
     || fail "installation has an invalid VERSION: ${VERSION_FILE}"
 DEFAULT_IMAGE="ghcr.io/aprilsoftware/pi-run:${PI_RUN_VERSION}"
+DEFAULT_CORE_IMAGE="${DEFAULT_IMAGE}"
 DEFAULT_EGRESS_IMAGE="ghcr.io/aprilsoftware/pi-run-egress:${PI_RUN_VERSION}"
 CA_BUNDLE="/etc/ssl/certs/ca-certificates.crt"
 PROFILE_TEMPLATE_ROOT="${INSTALL_ROOT}/templates/profiles"
+RUNTIME_TEMPLATE_ROOT="${INSTALL_ROOT}/templates/runtime"
 PI_RUN_LIB_ROOT="${INSTALL_ROOT}/lib/pi-run"
 
 validate_component() {
@@ -128,6 +135,9 @@ source "${PI_RUN_LIB_ROOT}/skills.sh"
 validate_component "${PI_RUN_LIB_ROOT}/profiles.sh"
 # shellcheck source=lib/pi-run/profiles.sh
 source "${PI_RUN_LIB_ROOT}/profiles.sh"
+validate_component "${PI_RUN_LIB_ROOT}/runtimes.sh"
+# shellcheck source=lib/pi-run/runtimes.sh
+source "${PI_RUN_LIB_ROOT}/runtimes.sh"
 validate_component "${PI_RUN_LIB_ROOT}/workspaces.sh"
 # shellcheck source=lib/pi-run/workspaces.sh
 source "${PI_RUN_LIB_ROOT}/workspaces.sh"
@@ -298,15 +308,16 @@ initialize_home() {
         [[ -d "${default_template}" ]] \
             || fail "installed default profile is missing: ${default_template}"
         local staging="${profiles_dir}/.default.$$"
-        trap 'rm -rf "${staging:-}"' RETURN
+        trap 'rm -rf "${staging:-}"' EXIT
         mkdir "${staging}"
         install -m 0600 "${default_template}/profile.json" "${staging}/profile.json"
         install -m 0600 "${default_template}/AGENTS.md" "${staging}/AGENTS.md"
         mkdir -m 0700 "${staging}/caf" "${staging}/credentials" "${staging}/sessions" "${staging}/guardian" "${staging}/skills"
         install -m 0600 "${default_template}/caf/caf.md" "${staging}/caf/caf.md"
         install -m 0600 "${default_template}/guardian/guardian.md" "${staging}/guardian/guardian.md"
+        materialize_profile_runtime "${default_template}" "${staging}"
         mv "${staging}" "${default_profile}"
-        trap - RETURN
+        trap - EXIT
     fi
 }
 
@@ -378,8 +389,9 @@ fi
 case "${COMMAND}" in
     version)
         [[ $# -eq 1 ]] || usage
-        printf 'pi-run v%s\nruntime %s\negress %s\n' \
+        printf 'pi-run v%s\ncore %s\nutility %s\negress %s\n' \
             "${PI_RUN_VERSION}" \
+            "${PI_RUN_CORE_IMAGE:-${DEFAULT_CORE_IMAGE}}" \
             "${PI_RUN_IMAGE:-${DEFAULT_IMAGE}}" \
             "${PI_RUN_EGRESS_IMAGE:-${DEFAULT_EGRESS_IMAGE}}"
         exit 0
@@ -450,6 +462,42 @@ case "${COMMAND}" in
             *)
                 usage
                 ;;
+        esac
+        exit 0
+        ;;
+    runtime)
+        case "${2:-}" in
+            list)
+                [[ $# -eq 2 ]] || usage
+                list_runtime_catalog
+                ;;
+            init)
+                [[ $# -eq 2 ]] || usage
+                initialize_home
+                require_jq
+                resolve_configured_profile true
+                initialize_profile_runtime
+                ;;
+            add)
+                [[ $# -eq 3 ]] || usage
+                initialize_home
+                require_jq
+                resolve_configured_profile true
+                add_profile_runtime_bundle "$3"
+                ;;
+            status)
+                [[ $# -eq 2 ]] || usage
+                require_jq
+                resolve_configured_profile true
+                show_profile_runtime_status
+                ;;
+            build)
+                [[ $# -eq 2 ]] || usage
+                require_jq
+                resolve_configured_profile true
+                build_profile_runtime
+                ;;
+            *) usage ;;
         esac
         exit 0
         ;;
@@ -811,7 +859,8 @@ validate_profile_definition_files "${PROFILE_DIR}"
 
 HOST_UID="$(id -u)"
 HOST_GID="$(id -g)"
-IMAGE="${PI_RUN_IMAGE:-${DEFAULT_IMAGE}}"
+UTILITY_IMAGE="${PI_RUN_IMAGE:-${DEFAULT_IMAGE}}"
+IMAGE="$(select_profile_runtime_image)"
 EGRESS_IMAGE="${PI_RUN_EGRESS_IMAGE:-${DEFAULT_EGRESS_IMAGE}}"
 NETWORK_MODE="$(jq -r '.network.mode // "host"' "${PROFILE_CONFIG}")"
 NETWORK_BACKEND="docker-${NETWORK_MODE}"
@@ -827,10 +876,14 @@ if [[ "${NETWORK_MODE}" == restricted ]]; then
         fail "restricted runtime policy staging would overlap workspace: ${WORKSPACE}"
     fi
     if ! RESOLVER_OUTPUT="$(docker run --rm --pull never \
-        --network none --cap-drop=ALL --security-opt=no-new-privileges \
-        --user "${HOST_UID}:${HOST_GID}" \
+        --network none --cap-drop=ALL \
+        --cap-add=CHOWN --cap-add=SETUID --cap-add=SETGID --cap-add=DAC_READ_SEARCH \
+        --security-opt=no-new-privileges \
         --mount "type=bind,src=${PROFILE_DIR},dst=/profile,readonly" \
-        --entrypoint /usr/local/bin/pi-run-network-policy-resolver "${IMAGE}")"; then
+        --env "HOST_UID=${HOST_UID}" --env "HOST_GID=${HOST_GID}" \
+        --env PI_RUN_SKIP_SSH_CONFIG=1 \
+        --entrypoint /usr/local/bin/entrypoint.sh "${UTILITY_IMAGE}" \
+        /usr/local/bin/pi-run-network-policy-resolver)"; then
         fail "restricted network policy resolution failed"
     fi
     if ! RESOLVED_POLICY="$(jq -cse '
@@ -1033,6 +1086,8 @@ PI_ARGS=(
     --extension /usr/local/lib/node_modules/pi-run-extensions/guardian/guardian-agent.ts
     --extension /usr/local/lib/node_modules/pi-run-extensions/caf/caf-agent.ts
     --extension /usr/local/lib/node_modules/pi-run-extensions/snapshot/snapshot-agent.ts
+    --extension /usr/local/lib/node_modules/pi-run-extensions/todo/todo-agent.ts
+    --extension /usr/local/lib/node_modules/pi-run-extensions/cache/cache-policy-agent.ts
     --extension /usr/local/lib/node_modules/pi-run-extensions/title/title-agent.ts
     --no-prompt-templates
     --skill /usr/local/share/pi-run/skills/pi-run
@@ -1080,6 +1135,7 @@ if [[ "${MANAGED_WORKTREE}" == true ]]; then
 else
     echo "pi-run: profile=${PROFILE} workspace=${WORKSPACE}" >&2
 fi
+echo "pi-run: runtime=${IMAGE}" >&2
 echo "pi-run: network=${NETWORK_BACKEND}" >&2
 if [[ "${NETWORK_BACKEND}" == docker-restricted ]]; then
     echo "pi-run: model-tcp=${MODEL_RULES_DISPLAY}" >&2

@@ -65,8 +65,9 @@ ssh server.example.test
 ```
 
 The same configuration applies to `scp`, `sftp`, Git SSH remotes, and tools that
-use OpenSSH. Ansible is not bundled; when supplied separately with its OpenSSH
-connection plugin, it can use the configured hostname.
+use OpenSSH. Ansible is available after adding the `operations` runtime bundle
+and rebuilding the profile image. When installed, its OpenSSH connection plugin
+can use the configured hostname without repeating the profile key path.
 
 ### Remove local key files
 
@@ -108,7 +109,7 @@ identity.
   and server policy; inspect `ssh -G` before opening a connection.
 - **Host key changed:** stop and verify server identity independently. Do not
   disable host-key checking to silence the warning.
-- **Helper unavailable:** check `pi-run version` and the selected runtime image.
+- **Helper unavailable:** check `pi-run version`, `pi-run runtime status`, and the prepared profile image.
 
 For storage layouts, validation states, target limitations, startup behavior,
 and detailed failure semantics, see the

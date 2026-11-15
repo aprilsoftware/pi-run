@@ -1,8 +1,9 @@
 # Pi-Run documentation
 
 Pi-Run turns [Pi](https://pi.dev/) into a durable local work environment for
-software development and system administration. One launcher provides a broad,
-versioned toolchain, keeps agent state in visible user-owned profiles, and limits
+software development and system administration. One launcher combines a small
+versioned core with profile-owned toolchains, keeps agent state in visible
+user-owned profiles, and limits
 host filesystem exposure to the selected workspace, profile, and narrowly
 defined runtime resources.
 
@@ -75,11 +76,12 @@ essays.
 
 | Component | Benefit |
 | --- | --- |
-| [Runtime and installation](installation.md) | Pi, Node.js, language toolchains, diagnostics, service clients, and baseline extensions arrive in a versioned runtime image, paired with the restricted-egress image. Application upgrades leave user data untouched. |
+| [Runtime and installation](installation.md) | Pi, Node.js, baseline extensions, and launch contracts arrive in a versioned core image. Profiles build their own toolchains from ordinary Dockerfiles; the restricted-egress image remains separately versioned. |
 | [Security boundaries](security.md) | A disposable container receives the selected workspace and profile—not the complete host home, every profile, or the Docker socket. Choose host, offline, or restricted TCP session networking explicitly. |
 | [Profiles](profiles.md) | Select a purpose-specific identity, credentials, instructions, skills, preferences, and conversations. Only that profile is mounted, and all of it is available to the run. |
 | [Skills](skills.md) and [shared files](security.md#treat-mounted-data-as-exposed) | Reuse reviewed expertise and supporting material across tasks without copying it into every request or every profile. |
 | [Workspaces and sessions](workspaces-and-sessions.md) | Continue named conversations by stable workspace identity, find them across profiles, reconnect them after recovery, and use persistent managed Git worktrees for parallel repository sessions. |
+| [Todo prompt queue](todo.md) | Capture, order, and prepare future prompts for the current conversation while an agent is still working, without automatically submitting them. |
 | [Planning](planning.md) | Investigate alternatives, refine a saved plan, and approve an exact revision before handing work back to the normal execution workflow. |
 | [Guardian](guardian.md) | Control the shared Guard review layer, review acting-agent `bash` and `run` calls, and focus human attention where judgment is needed. |
 | [Call a Friend](call-a-friend.md) | Ask a separately configured model for bounded advice through constrained dialogue and optional public search, with destination-specific review whenever Guard is On. |
@@ -112,6 +114,8 @@ guides to understand each boundary.
 
 ## Plan, continue, and protect your work
 
+- [Todo prompt queue](todo.md): capture and reorder future requests for the
+  current conversation, then load one into the editor without submitting it.
 - [Planning inside Pi](planning.md): discuss, save, inspect, export, and approve
   a plan without bypassing execution checkpoints.
 - [Guardian and shared Guard review](guardian.md): configure review, arbitrate

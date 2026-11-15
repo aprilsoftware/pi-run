@@ -24,10 +24,14 @@ mkdir -p "${TMP}/fake-bin"
 cat > "${TMP}/fake-bin/docker" <<'EOF'
 #!/bin/sh
 set -eu
+if [ "${1:-}" = image ] && [ "${2:-}" = inspect ]; then
+    exec "${RUNTIME_IMAGE_FIXTURE:?}" --emit-image "${3:?}"
+fi
 printf '%s\n' '---' >> "${DOCKER_LOG:?}"
 printf '%s\n' "$@" >> "${DOCKER_LOG}"
 EOF
 chmod 0755 "${TMP}/fake-bin/docker"
+export RUNTIME_IMAGE_FIXTURE="${ROOT}/tests/runtime-launch-selection-test.sh"
 
 run_tty() {
     local input="$1" command="" argument

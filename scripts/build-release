@@ -30,7 +30,7 @@ PACKAGE_ROOT="pi-run-${VERSION}"
 STAGING="$(mktemp -d)"
 trap 'rm -rf "${STAGING}"' EXIT
 
-for required in bin/pi-run lib/pi-run/doctor.sh lib/pi-run/profiles.sh lib/pi-run/restore.sh lib/pi-run/sessions.sh lib/pi-run/skills.sh lib/pi-run/snapshots.sh lib/pi-run/upgrade.sh lib/pi-run/workspaces.sh install.sh LICENSE VERSION; do
+for required in bin/pi-run lib/pi-run/doctor.sh lib/pi-run/profiles.sh lib/pi-run/restore.sh lib/pi-run/runtimes.sh lib/pi-run/sessions.sh lib/pi-run/skills.sh lib/pi-run/snapshots.sh lib/pi-run/upgrade.sh lib/pi-run/workspaces.sh install.sh LICENSE VERSION; do
     [[ -f "${ROOT}/${required}" && ! -L "${ROOT}/${required}" ]] \
         || fail "release input must be a regular non-symlink file: ${required}"
 done

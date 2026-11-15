@@ -60,6 +60,7 @@ jobs:
           )
           docker build \
             "${labels[@]}" \
+            --file docker/core/Dockerfile \
             --tag "${RUNTIME_IMAGE_NAME}:${PI_RUN_VERSION}" \
             docker
           docker build \

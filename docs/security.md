@@ -32,6 +32,21 @@ workspace mappings, snapshot repositories and recovery secrets, or the Docker
 socket. Technical mounts and operation-specific management containers are
 listed in the [security reference](reference/security.md#normal-session-mounts).
 
+## Use host-managed CA trust
+
+Pi-Run mounts the host's generated CA bundle read-only. Configure organization
+certificate authorities on the host and run its normal CA update command before
+launching Pi-Run. At startup, the runtime combines that mounted bundle with the
+image's default Java authorities in the container's ephemeral, root-owned Java
+truststore, so Java and PEM-based clients use the same host-managed authority.
+Host CA changes apply only to newly launched sessions.
+
+Pi-Run does not mount `/usr/local/share/ca-certificates`, fetch authorities, or
+persist the container-generated truststore. Verify private CA material through an
+independent trusted channel before installing it. Trusting an authority permits
+it to authenticate every certificate within its scope; it does not authorize a
+network destination that restricted mode otherwise blocks.
+
 ## Choose profile networking
 
 Networking is selected by the profile, not by normal launch arguments:
@@ -64,9 +79,14 @@ Each rule has exactly one selector. `host` is an exact lowercase DNS hostname;
 `domain` covers the named apex and all subdomains; `cidr` is a normalized IPv4
 or IPv6 subnet; `internet: true` permits public destinations while excluding
 private and special-purpose ranges. `tcpPorts` contains unique ports from 1
-through 65535. Omitting it permits all TCP ports for that rule. External UDP,
-loopback TCP other than the local proxy, link-local, multicast, unspecified, and
-other reserved destinations remain blocked.
+through 65535. Omitting it permits all TCP ports for that rule. External UDP
+other than DNS, link-local, multicast, unspecified, and other reserved
+destinations remain blocked. TCP and UDP loopback remain available inside the
+shared Pi/sidecar network namespace, including to services started by the
+workload and through proxy CONNECT; container loopback is not Docker-host
+loopback. Restricted workloads use Docker's host-derived `/etc/resolv.conf` and
+may issue DNS over UDP or TCP port 53; resolving a name does not authorize the
+resulting external connection.
 
 Before the sidecar starts, an offline resolver reads provider identities and
 HTTPS endpoints from the selected profile and adds exact TCP/443 model rules.
@@ -90,7 +110,8 @@ use the same proxy for SSH, SCP, SFTP, Git-over-SSH, and Ansible. A restricted
 launch also sets `ssrf.trustEnvProxy` to `true` in the selected profile's
 `web-search.json`, creating the file when needed and preserving its other
 settings. This lets the bundled web tools ask the controlled proxy to resolve
-remote hostnames instead of requiring unrestricted DNS from the workload.
+remote hostnames while ordinary workload DNS continues to use Docker's host-derived
+configuration.
 Host and offline launches do not change that file; the setting is inert when
 Pi-Run has not supplied a proxy. Other hostname-based clients must support
 CONNECT. CIDR and public-internet rules are also enforced by the firewall and

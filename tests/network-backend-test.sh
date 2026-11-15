@@ -57,6 +57,9 @@ chmod 0600 "${SSH_CREDENTIAL_DIR}/user@ssh.example.test"
 cat > "${TMP}/fake-bin/docker" <<'EOF'
 #!/bin/sh
 set -eu
+if [ "${1:-}" = image ] && [ "${2:-}" = inspect ]; then
+    exec "${RUNTIME_IMAGE_FIXTURE:?}" --emit-image "${3:?}"
+fi
 printf '%s\n' '---' "$@" >> "${DOCKER_LOG:?}"
 case "${1:-}" in
     run)
@@ -113,6 +116,7 @@ exit 0
 EOF
 chmod 0755 "${TMP}/fake-bin/docker" "${TMP}/fake-bin/sleep"
 export DOCKER_LOG="${TMP}/docker.log"
+export RUNTIME_IMAGE_FIXTURE="${ROOT}/tests/runtime-launch-selection-test.sh"
 export POLICY_CAPTURE="${TMP}/rules.json"
 export POLICY_DIR_CAPTURE="${TMP}/policy-dir"
 
@@ -203,6 +207,20 @@ grep -Fx -- '--pull' "${DOCKER_LOG}" >/dev/null \
     || fail "resolver did not prohibit implicit image pulls"
 grep -F 'dst=/profile,readonly' "${DOCKER_LOG}" >/dev/null \
     || fail "resolver did not receive a read-only profile"
+grep -Fx '/usr/local/bin/entrypoint.sh' "${DOCKER_LOG}" >/dev/null \
+    || fail "resolver did not use the mapped-user entrypoint"
+grep -Fx 'PI_RUN_SKIP_SSH_CONFIG=1' "${DOCKER_LOG}" >/dev/null \
+    || fail "resolver identity bootstrap did not skip runtime SSH configuration"
+[[ "$(grep -Ec '^HOST_UID=[0-9]+$' "${DOCKER_LOG}")" -eq 2 &&
+   "$(grep -Ec '^HOST_GID=[0-9]+$' "${DOCKER_LOG}")" -eq 2 ]] \
+    || fail "resolver and runtime did not receive the mapped host identity"
+if grep -Fx -- '--user' "${DOCKER_LOG}" >/dev/null; then
+    fail "resolver still used an unmapped numeric Docker user"
+fi
+for capability in CHOWN SETUID SETGID DAC_READ_SEARCH; do
+    [[ "$(grep -Fxc -- "--cap-add=${capability}" "${DOCKER_LOG}")" -eq 2 ]] \
+        || fail "resolver and runtime did not receive bootstrap capability: ${capability}"
+done
 grep -F 'dst=/profile/profile.json,readonly' "${DOCKER_LOG}" >/dev/null \
     || fail "Pi did not receive a read-only profile configuration"
 grep -F "src=${SSH_CREDENTIAL_DIR},dst=/profile/credentials/ssh,readonly" "${DOCKER_LOG}" >/dev/null \

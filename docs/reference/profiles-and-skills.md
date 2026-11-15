@@ -72,15 +72,17 @@ special ranges fail before the profile is locked or changed.
 
 `profile create <name>` always derives from the profile literally named
 `default`. The configured launch default is irrelevant. `--from <profile>`
-selects another explicit source. The source configuration, definition files, and
-local skills must validate before creation.
+selects another explicit source. The source configuration, definition files,
+local skills, and optional runtime context must validate before creation.
 
 Creation stages a private directory and publishes it only after materializing:
 
 - `profile.json`, with `.name` changed and `.skills` reset to `null`;
 - `AGENTS.md`;
 - `guardian/guardian.md` and optional `caf/caf.md`;
-- validated profile-local skill packages; and
+- validated profile-local skill packages;
+- a validated copy of `runtime/`, or the base runtime definition when the source
+  is a legacy profile without one; and
 - empty `credentials/` and `sessions/` directories, with no copied Guard, CAF,
   or Guardian preferences or logs.
 
@@ -109,6 +111,10 @@ profiles/<name>/
 ├── models.json
 ├── settings.json
 ├── gitconfig
+├── runtime/
+│   ├── Dockerfile
+│   ├── .dockerignore
+│   └── optional build assets
 ├── skills/
 ├── credentials/
 ├── caf/
@@ -134,6 +140,96 @@ non-symlink, singly linked files contained by the profile. The Guardian and skil
 directories must also be ordinary contained directories. When `caf/` is
 present, it receives the same directory checks; an optional `caf/caf.md`
 receives the same containment and link checks as other definition files.
+
+## Runtime definition commands
+
+`runtime list` reads only the release-owned catalog. It does not initialize a
+home, resolve a profile, or invoke Docker. `runtime init` creates the fixed base
+layout only when `runtime/` is absent.
+
+`runtime add <bundle>` and `runtime add all` require an existing validated
+runtime context. The context allows directories, singly linked regular files,
+and un-followed symlinks, with at most 4,096 entries and 512 MiB of regular-file
+content. The Dockerfile must be a regular non-symlink file with one hard link.
+
+Bundle text comes from the installed
+`templates/runtime/full-development.Dockerfile`. Reserved markers must be known,
+unique, properly nested, and paired. Existing valid blocks are never replaced.
+`all` appends only missing blocks in catalog order, so repeating a satisfied
+selection does not rewrite the Dockerfile.
+
+Mutation holds the profile lock, stages a private sibling of the profile runtime,
+checks that the source Dockerfile's hash and inode are unchanged, and atomically
+replaces it. Unknown bundles, malformed markers, unsafe installed templates,
+concurrent changes, and staging failures leave the original file intact. These
+commands do not build an image or contact Docker.
+
+`runtime status` is read-only and does not initialize an absent Pi-Run home. Its
+context SHA-256 covers each relative path, type, permission mode, regular-file
+size and content, and symlink target text without following links. It calculates
+the context twice and refuses a changing or invalid context.
+
+Build-contract version 1 combines the context hash, normalized architecture, and
+exact local core image ID into the source identity. The default core reference is
+`ghcr.io/aprilsoftware/pi-run:<version>`; `PI_RUN_CORE_IMAGE` is an explicit
+development override. Status performs only Docker daemon and image-inspection
+operations. It never pulls, builds, runs, tags, or removes an image.
+
+The stable prepared tag is `pi-run-profile:<profile-path-sha256-prefix>`. A
+prepared image is `matching` only when its architecture and these labels equal
+the current values:
+
+- `io.aprilsoftware.pi-run.runtime.contract`;
+- `io.aprilsoftware.pi-run.runtime.core-id`;
+- `io.aprilsoftware.pi-run.runtime.context-sha256`;
+- `io.aprilsoftware.pi-run.runtime.source-sha256`; and
+- `io.aprilsoftware.pi-run.runtime.architecture`.
+
+A present tag with different or missing labels is `stale`. Missing Docker, an
+unavailable daemon, a missing core image, or an architecture mismatch prevents a
+source/prepared match without mutating state.
+
+`runtime build` is the explicit Docker-build authority and has no secondary
+confirmation or `--yes` option. It does not initialize a home or pull images.
+The selected local base must exist and match the normalized host architecture.
+
+The build holds the exclusive profile lock, freezes the selected base image ID
+under a private temporary tag, and builds the bounded runtime context under a
+second temporary tag with `--pull=false`. It supplies `PI_RUN_BASE_IMAGE` and all
+five prepared-image labels. Because that base argument is intentionally required
+and has no fallback, Pi-Run suppresses only Docker's `InvalidDefaultArgInFrom`
+build check through `BUILDKIT_DOCKERFILE_CHECK`; other build warnings remain
+visible. Before activation it rehashes the context, rechecks
+the selected core identity, and validates the temporary image's architecture and
+labels. Only then does it replace the stable profile tag. Exit cleanup removes
+temporary tags; build, race, contract, validation, and activation failures leave
+an existing stable profile tag untouched.
+
+Before creating profile session state or starting the restricted egress sidecar,
+every direct, resumed, and managed-worktree launch repeats the context, selected
+base, architecture, source-identity, and prepared-label checks under the profile
+lock. It runs only the matching stable profile tag. Missing, stale, malformed, or
+incompatible state stops with the exact `runtime build` command; launch never
+builds, pulls, or falls back. `PI_RUN_IMAGE` remains available to host-side
+utility containers but is not a main-session image override.
+
+Starting with v0.10.12, the versioned
+`ghcr.io/aprilsoftware/pi-run:X.Y.Z` coordinate contains the small core built
+from `docker/core/Dockerfile`. Older immutable release tags remain broad images
+and are not rebuilt or moved. Maintainers can use `PI_RUN_CORE_IMAGE` to select a
+locally built core candidate without changing the release coordinate.
+
+Pi 1.5's global `cacheWarming` setting accepts `"off"`, `"streaming"`, or
+`"idle"`; its upstream default is `"idle"`. The final built-in Pi-Run cache
+policy reads the profile's current `settings.json` before each proposed refresh.
+When a valid explicit `"idle"` is absent, the policy returns `"stop"` for idle
+refreshes while leaving active-run decisions unchanged. Missing, unreadable,
+malformed, or invalid settings therefore fail conservatively without modifying
+the file. Explicit `"idle"` leaves Pi's decision unchanged; explicit `"off"`
+and `"streaming"` retain their normal Pi behavior. A later user-supplied
+extension can deliberately override this because Pi uses the last returned
+cache-warming action. `/session` may show Pi's upstream `idle` mode for an unset
+setting while also reporting the Pi-Run extension override.
 
 See [Call a Friend](../call-a-friend.md) for the focused configuration,
 dialogue, public-search, diagnostic, and boundary guide.

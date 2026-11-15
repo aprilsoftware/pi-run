@@ -307,6 +307,7 @@ const guardianReviewDomain:AgenticReviewDomain<ReviewRequest,EvidenceService,Dec
   },
   requestDetails:evidence=>({instructionSources:[...evidence.instructions.values()].map(instruction=>instruction.id)}),
   maxModelRequests:request=>request.dispute?6:4,
+  maxCumulativeBytes:request=>request.dispute?512*1024:320*1024,
   normalizeDecision,
   decisionDetails:decision=>({outcome:decision.outcome,basis:decision.basis,userMessageIds:decision.userMessageIds,instructionRefs:decision.instructionRefs}),
   isEvidenceBudgetError:error=>error instanceof EvidenceBudgetError,

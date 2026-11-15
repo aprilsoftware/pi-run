@@ -292,6 +292,23 @@ try {
   assert.equal(disputeRequests[5].details?.finalDecisionOnly, true);
   console.log('PASS guardian-reviewer: disputes receive two additional bounded investigation rounds');
 
+  const contextHeavyDispute = await assess(round => round < 6
+    ? streamed(assistant([{ type: 'toolCall', id: `large-dispute-search-${round}`, name: 'guardian_history_search', arguments: {
+      query: 'bounded synthetic reviewer test', question: 'Continue the context-heavy dispute investigation.',
+    } }]))
+    : streamed(assistant([{ type: 'toolCall', id: 'large-dispute-decision', name: 'guardian_decide', arguments: {
+      outcome: 'ASK', basis: 'uncertainty', reason: 'The bounded context-heavy reassessment remains inconclusive.',
+      userMessageIds: [], instructionRefs: [],
+    } }])), 180_000, { ...disputeRequest, instructions: [{ id: 'I-LARGE', path: '/profile/AGENTS.md', scope: workspace,
+      text: 'Standing synthetic dispute instruction. '.repeat(1500) }] });
+  assert.equal(contextHeavyDispute.result.status, 'completed', JSON.stringify(contextHeavyDispute, null, 2));
+  assert.equal(contextHeavyDispute.requests, 6);
+  assert.ok(contextHeavyDispute.result.metrics.inputBytes > 320 * 1024);
+  assert.ok(contextHeavyDispute.result.metrics.inputBytes <= 512 * 1024);
+  assert.ok(contextHeavyDispute.events.filter(event => event.event === 'model_request')
+    .every(event => event.details?.requestBytes <= 96 * 1024));
+  console.log('PASS guardian-reviewer: disputes have bounded cumulative context for all six requests');
+
   const correctedMalformedDispute = await assess(round => {
     if (round < 4) return streamed(assistant([{ type: 'toolCall', id: `malformed-search-${round}`, name: 'guardian_history_search', arguments: {
       query: 'bounded synthetic reviewer test', question: 'Continue the bounded dispute investigation.',

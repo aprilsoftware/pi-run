@@ -112,10 +112,14 @@ whose IPv4 and IPv6 output policies default to deny. Squid permits CONNECT when
 a requested exact host, domain suffix, CIDR, or public-internet destination and
 TCP port match a rule. CIDR and internet rules also allow matching direct TCP
 from Pi's mapped UID. Internet rules exclude private and special-purpose ranges;
-explicit CIDRs can separately grant selected private networks. External UDP,
-alternate DNS, unlisted destinations, gateway access, direct TCP loopback other
-than the local proxy, link-local, multicast, unspecified, and configured
-adjacent ports remain blocked.
+explicit CIDRs can separately grant selected private networks. External UDP
+other than DNS, unlisted destinations, gateway access, link-local, multicast,
+unspecified, and configured adjacent ports remain blocked. TCP and UDP loopback
+remain available inside the shared Pi/sidecar network namespace, including to
+services started by the workload and through proxy CONNECT; container loopback
+is not Docker-host loopback. Restricted workloads use Docker's host-derived
+`/etc/resolv.conf` and may issue DNS over UDP or TCP port 53; resolving a name
+does not authorize the resulting external connection.
 
 The launcher supplies HTTP proxy variables and enables Node's environment proxy
 support. Before Docker starts, a restricted launch also configures the bundled
@@ -131,8 +135,8 @@ unsafe, structurally incompatible, or colliding staging path prevents launch
 before Docker starts rather than being overwritten. Host and offline launches
 do not change this file. The setting may remain after a later mode change and is
 inert when Pi-Run has not supplied a proxy. In restricted mode it lets the
-controlled proxy resolve remote hostnames without exposing unrestricted DNS to
-the workload.
+controlled proxy resolve remote hostnames while ordinary workload DNS continues
+to use Docker's host-derived configuration.
 
 Restricted mode also generates an OpenSSH `ProxyCommand` using `nc -X connect`,
 so SSH, SCP, SFTP, Git-over-SSH, and OpenSSH-based Ansible use the sidecar. Other
@@ -183,9 +187,19 @@ within the session's other permissions.
 ## CA trust
 
 The host CA bundle is mounted read-only and selected tools can use it for TLS.
-This permits organization certificate authorities configured on the host to be
-trusted inside Pi-Run. Read-only access prevents container modification of the
-host bundle; it does not limit which peers those authorities can authenticate.
+At each normal startup, the runtime loads the image's default Java authorities,
+adds certificates from that mounted bundle, and replaces the container's
+ephemeral Java JKS. The JKS is root-owned and read-only to the mapped workload
+user, while Java's standard truststore path continues to select it. Generation
+failure prevents the workload from starting.
+
+This permits organization certificate authorities configured in the host's
+generated bundle to be trusted by Java and PEM-based clients inside Pi-Run. The
+host's source certificate directory is not mounted, and host changes require a
+fresh session. Read-only access prevents container modification of the host
+bundle or generated JKS; it does not limit which peers those authorities can
+authenticate. Pi-Run does not fetch certificate authorities or independently
+verify authorities installed by the host operator.
 
 ## Managed discovery and executable trust
 
@@ -217,21 +231,30 @@ scope restrictions. See [Pi's security guidance](https://pi.dev/docs/latest/secu
 
 ## Runtime-image trust
 
-Released launchers derive their default image from the installed Pi-Run version.
-`PI_RUN_IMAGE` overrides that selection for development or alternate runtimes.
-An image controls the entrypoint and bundled executables and receives the
-selected workspace, profile, startup capabilities, network, and optional mounts.
-Use the override only with an image trusted for that exposure.
+Released launchers derive their default core, utility, and egress references
+from the installed Pi-Run version. `PI_RUN_CORE_IMAGE` selects the exact local
+base used for profile source identity and explicit profile builds.
+`PI_RUN_IMAGE` selects host-side utility containers only; it cannot replace the
+main session image or bypass prepared-profile checks.
 
-Inspect the selected launcher and image with:
+The prepared profile image inherits the selected core and the profile's trusted
+Dockerfile instructions. It controls the main entrypoint and bundled executables
+and receives the selected workspace, profile, startup capabilities, network, and
+optional mounts. Review profile runtime changes and use only core and prepared
+images trusted for that exposure. A successful build and matching identity
+labels provide consistency checks, not proof that Dockerfile instructions or
+locally tagged images are safe.
+
+Inspect the release-image roles and prepared profile state with:
 
 ```bash
 pi-run version
+pi-run runtime status
 ```
 
-A matching tag and successful checksum verification do not create independent
-security certification. Registry access, image provenance, host Docker security,
-and surrounding network controls remain external concerns.
+Matching tags, labels, and checksum verification do not create independent
+security certification. Registry access, image provenance, local Docker state,
+host Docker security, and surrounding network controls remain external concerns.
 
 ## Workflow-control boundaries
 

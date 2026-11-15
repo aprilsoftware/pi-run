@@ -220,6 +220,7 @@ export interface AgenticReviewDomain<Request, Evidence, Decision> {
   decisionDetails(decision: Decision): AgenticJson;
   isEvidenceBudgetError(error: unknown): boolean;
   maxModelRequests?(request: Request): number;
+  decisionOnlyAtRequest?(request: Request): number;
   maxCumulativeBytes?(request: Request): number;
 }
 export interface AgenticReviewServices<Evidence> {
@@ -308,6 +309,10 @@ export class AgenticGuardReviewer<Request, Evidence, Decision> {
     if (!Number.isSafeInteger(maxModelRequests) || maxModelRequests < 1 || maxModelRequests > MAX_CONFIGURED_MODEL_REQUESTS) {
       return { status: "incomplete", error: "Invalid reviewer model request limit", metrics };
     }
+    const decisionOnlyAtRequest = domain.decisionOnlyAtRequest?.(request) ?? maxModelRequests;
+    if (!Number.isSafeInteger(decisionOnlyAtRequest) || decisionOnlyAtRequest < 1 || decisionOnlyAtRequest > maxModelRequests) {
+      return { status: "incomplete", error: "Invalid reviewer decision-only request threshold", metrics };
+    }
     const maxCumulativeBytes = domain.maxCumulativeBytes?.(request) ?? MAX_CUMULATIVE_BYTES;
     if (!Number.isSafeInteger(maxCumulativeBytes) || maxCumulativeBytes < MAX_CONTEXT_BYTES || maxCumulativeBytes > MAX_CONFIGURED_CUMULATIVE_BYTES) {
       return { status: "incomplete", error: "Invalid reviewer cumulative context limit", metrics };
@@ -374,7 +379,7 @@ export class AgenticGuardReviewer<Request, Evidence, Decision> {
             if (metrics.requests >= maxModelRequests) throw new Error(decisionValidationError
               ? `Reviewer response was invalid: ${decisionValidationError}` : "Reviewer request budget exhausted");
             const round = ++metrics.requests, remaining = services.deadlineAt - Date.now();
-            const final = phase === "decision-only" || round === maxModelRequests || metrics.evidenceCalls >= MAX_EVIDENCE_CALLS || remaining < 75_000;
+            const final = phase === "decision-only" || round >= decisionOnlyAtRequest || metrics.evidenceCalls >= MAX_EVIDENCE_CALLS || remaining < 75_000;
             if (final) phase = "decision-only";
             const send = JSON.parse(JSON.stringify(context));
             if (final) {

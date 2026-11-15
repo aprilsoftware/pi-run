@@ -8,35 +8,36 @@ installation and configuration belong in the [user documentation](../index.md).
 
 Development and release builds currently target Linux/amd64. The host needs
 Bash, Docker, `jq`, and standard GNU command-line tools. Image builds also need
-network access to the upstream package and binary sources declared in
-`docker/Dockerfile`.
+network access to the upstream package and binary sources declared by
+`docker/core/Dockerfile` and the selected profile runtime Dockerfile.
 
 Tests may require additional commands for the behavior they cover. They create
 temporary homes and use fake Docker, Restic, SSH, and network fixtures where
 appropriate; they must not use real profiles, credentials, repositories, or
 remote systems.
 
-## Build and run the development image
+## Build and run a development profile runtime
 
-From the repository root:
+From the repository root, build the same small core used by releases, initialize
+a disposable home, and explicitly prepare its profile image:
 
 ```bash
-docker build -t pi-run:dev docker
-PI_RUN_IMAGE=pi-run:dev ./bin/pi-run .
+docker build -t pi-run:dev-core -f docker/core/Dockerfile docker
+PI_RUN_HOME="$(mktemp -d)"
+export PI_RUN_HOME
+./bin/pi-run init
+PI_RUN_CORE_IMAGE=pi-run:dev-core \
+  PI_RUN_IMAGE=pi-run:dev-core ./bin/pi-run runtime build
+PI_RUN_CORE_IMAGE=pi-run:dev-core \
+  PI_RUN_IMAGE=pi-run:dev-core ./bin/pi-run .
 ```
 
-The first command builds the runtime image. The second runs the source-checkout
-launcher against the current directory while selecting that image instead of
-the version-derived release image. It uses the normal Pi-Run data home unless
-you provide a temporary `PI_RUN_HOME` or `--home` value.
-
-The image contains Pi, baseline extensions, core skills, Restic, and a broad
-development and operations toolchain. Rust comes from the version-pinned
-official `rust:${RUST_VERSION}-trixie` build stage; the current image includes
-Rust 1.99.1 with Cargo, Rustup, Rustfmt, and Clippy for the mapped non-root user.
-Credentials, workspaces, selected skills, and optional host resources remain
-separate runtime inputs; an installed tool does not grant authority to use a
-service.
+The core contains Pi-Run launch-contract components, Pi, baseline extensions,
+core skills, Git/SSH utilities, and Restic. Profile-owned Dockerfiles add only
+the capabilities needed by that profile. Run `runtime add all` before the build
+when testing the maintained broad development set. Credentials, workspaces,
+selected skills, and optional host resources remain separate runtime inputs; an
+installed tool does not grant authority to use a service.
 
 Build the versioned egress sidecar separately from the same Docker context:
 
@@ -49,22 +50,25 @@ the Pi-Run license. It contains no hostname policy; a restricted launch mounts
 already-resolved host-owned policy at runtime. Building this image does not
 select restricted mode; the active profile does. The production Dockerfile was
 build-validated on Debian Trixie with Docker Engine 26.1.5 during v0.7
-validation. On the same baseline, Doctor successfully
-inspected locally built runtime and egress image overrides.
+validation. That historical result predates profile-owned runtimes; use the
+current candidate checks below for release evidence.
 
-Check which launcher and images are selected without starting Pi:
+Check which launcher and release-image roles are selected without starting Pi:
 
 ```bash
-PI_RUN_IMAGE=pi-run:dev \
+PI_RUN_CORE_IMAGE=pi-run:dev-core \
+PI_RUN_IMAGE=pi-run:dev-core \
 PI_RUN_EGRESS_IMAGE=pi-run-egress:dev \
 ./bin/pi-run version
 ```
 
-`PI_RUN_IMAGE` and `PI_RUN_EGRESS_IMAGE` are development overrides; normal
-release coordinates come from `VERSION`. Do not use untrusted images. The
-runtime image receives the workspace, profile, startup privileges, and optional
-mounts chosen for a run. The egress image is intended to receive network-policy
-enforcement authority when restricted launcher integration is enabled.
+`PI_RUN_CORE_IMAGE` selects the profile build/identity base. `PI_RUN_IMAGE`
+selects utility containers and cannot bypass prepared profile selection.
+`PI_RUN_EGRESS_IMAGE` selects the restricted sidecar. Normal release coordinates
+come from `VERSION`. Do not use untrusted images. The prepared profile image
+receives the workspace, profile, startup privileges, and optional mounts chosen
+for a run. The egress image receives network-policy enforcement authority in
+restricted mode.
 
 ## Source architecture
 
@@ -85,15 +89,18 @@ independent services.
 | `lib/pi-run/snapshots.sh` | Snapshot repository configuration, backup, inspection, and deletion |
 | `lib/pi-run/restore.sh` | Recovery, staged restore, transactions, rollback, and crash recovery |
 | `lib/pi-run/upgrade.sh` | Release discovery and atomic application upgrade |
-| `docker/Dockerfile` | Versioned runtime toolchain and bundled components |
+| `docker/core/Dockerfile` | Release-authoritative small core built from the `docker/` context |
+| `docker/Dockerfile` | Retained broad-image reference used for inventory and migration validation, not release publication |
 | `docker/entrypoint.sh` | Runtime UID/GID mapping, setup, and privilege drop |
 | `docker/egress/` | Versioned restricted-egress sidecar image and firewall/proxy entrypoint |
 | `docker/extensions/guard/` | Runtime contracts, reviewer routing, evidence, journals, activity/status, and shared viewer mechanics |
 | `docker/extensions/guardian/` | Guardian command/dispute controller, reviewer domain, review tracing, and log presentation |
 | `docker/extensions/caf/` | CAF friend/transmission controller, protocol helpers, and log presentation |
 | `docker/extensions/plan/`, `snapshot/` | Planning and Snapshot extension entrypoints |
+| `docker/extensions/todo/` | Session-scoped user prompt queue, private persistence, and editor handoff |
 | `docker/skills/` | Runtime-owned core skills |
 | `templates/profiles/default/` | Definitions copied when the data home is initialized |
+| `templates/runtime/` | Base and full-development profile Dockerfile definitions |
 | `scripts/build-release` | Reproducible host-application archive and checksum builder |
 
 The selected profile is the authoritative Pi configuration and session
@@ -135,14 +142,47 @@ For launcher argument changes, place a fake `docker` executable first on
 environment, privilege, network, extension, and image arguments. Do not start a
 container merely to inspect command construction.
 
+Validate both the release core and maintained broad profile definition on a
+Docker-capable host:
+
+```bash
+docker build --file docker/core/Dockerfile --tag pi-run-core:candidate docker
+docker build \
+  --file templates/runtime/full-development.Dockerfile \
+  --build-arg PI_RUN_BASE_IMAGE=pi-run-core:candidate \
+  --tag pi-run-full:candidate \
+  templates/runtime
+```
+
+The full-development definition records the deterministic `runtime add all`
+result. These commands do not authorize publication.
+
+Run the canonical image and launch acceptance on a Docker-capable Linux/amd64
+host:
+
+```bash
+PI_RUN_TEST_REAL_DOCKER=1 tests/runtime-images-e2e-test.sh
+```
+
+This opt-in test builds the production core, creates a disposable profile,
+applies `runtime add all`, builds through `runtime build`, checks matching status,
+exercises UID/GID and Java CA startup, smoke-tests every maintained capability,
+and launches Pi through the real launcher. It removes its unique image tags and
+filesystem state but does not prune shared Docker cache. It requires network
+access for image/package downloads and must use no meaningful profiles,
+credentials, or workspaces.
+
+When Docker is unavailable, the test prints `SKIP`. Report that as skipped rather
+than inferring build success from Dockerfile, fake-Docker, or static checks.
+
 The managed-worktree end-to-end test is deliberately opt-in because it starts
 real containers and creates disposable linked worktrees. Build a local candidate
 runtime image and select it explicitly:
 
 ```bash
-docker build -t pi-run:worktree-e2e docker
+docker build -t pi-run:worktree-e2e-core -f docker/core/Dockerfile docker
 PI_RUN_TEST_REAL_DOCKER=1 \
-PI_RUN_TEST_IMAGE=pi-run:worktree-e2e \
+PI_RUN_TEST_CORE_IMAGE=pi-run:worktree-e2e-core \
 tests/worktree-e2e-test.sh
 ```
 
@@ -152,7 +192,7 @@ local integration, preservation of unrelated target-local content, managed
 checkout and branch cleanup, finished-task restart from the current target,
 workspace/session identity reuse with `-c`, sibling isolation, historical and
 reactivated listing, and lock cleanup. Without
-`PI_RUN_TEST_IMAGE`, it expects the version-matched release runtime image to
+`PI_RUN_TEST_CORE_IMAGE`, it expects the version-matched release core image to
 exist locally. A skipped invocation is not a successful real-Docker validation
 and must be reported as skipped.
 
@@ -168,18 +208,18 @@ version="$(cat VERSION)"
 (cd "$output_dir" && sha256sum -c "pi-run-${version}.tar.gz.sha256")
 ```
 
-The archive contains the launcher, Bash components, installer, profile template,
-license, and version metadata. The runtime image is built and distributed
-separately. `scripts/build-release` rejects missing, linked, or special-file
-inputs; the component-layout test verifies that the launcher, installer, source
-tree, and archive use the same component set.
+The archive contains the launcher, Bash components, installer, profile and
+runtime templates, license, and version metadata. The core and egress images are
+built and distributed separately. `scripts/build-release` rejects missing,
+linked, or special-file inputs; the component-layout test verifies that the
+launcher, installer, source tree, and archive use the same component set.
 
 Keep these release coordinates aligned:
 
 - `VERSION` contains `X.Y.Z` without a `v` prefix.
 - `PI_RUN_DEFAULT_VERSION` in `install.sh` matches `VERSION`.
 - The GitHub Release tag is exactly `vX.Y.Z`.
-- The runtime image tag is exactly `ghcr.io/aprilsoftware/pi-run:X.Y.Z`.
+- The core image tag is exactly `ghcr.io/aprilsoftware/pi-run:X.Y.Z`.
 - The egress image tag is exactly `ghcr.io/aprilsoftware/pi-run-egress:X.Y.Z`.
 
 Changing a version or publishing artifacts requires its own reviewed release
@@ -190,7 +230,7 @@ scope; a successful local archive build is not publication approval.
 Publishing a GitHub Release, including a prerelease, triggers
 `.github/workflows/release.yml`. The workflow verifies that its tag matches
 `VERSION`, builds the application archive, builds and pushes matching
-Linux/amd64 runtime and egress images, and uploads `LICENSE`, `install.sh`, the
+Linux/amd64 core and egress images, and uploads `LICENSE`, `install.sh`, the
 archive, and its checksum to that release. Both images use the exact release
 version; the workflow does not publish mutable `latest` images.
 
@@ -200,18 +240,20 @@ published release:
 
 ```bash
 version="$(cat VERSION)"
-docker build -t "pi-run:${version}-candidate" docker
+docker build -f docker/core/Dockerfile -t "pi-run-core:${version}-candidate" docker
 docker build -f docker/egress/Dockerfile -t "pi-run-egress:${version}-candidate" docker
 ```
 
 Validate the application archive and complete isolated suite, then run the
 feature-specific checks that exercise the candidate's actual boundaries. These
-may include the real-Docker worktree test, fake-provider Guardian/CAF lifecycle
-and hostile-primary tests, controlled live-provider interoperability, or a
-restricted-network fetch through the local runtime and egress images. A skipped
-optional check remains a reported skip, not a pass. Use the source launcher with
-explicit `PI_RUN_IMAGE` and `PI_RUN_EGRESS_IMAGE` overrides for local smoke tests;
-do not push local candidate tags as canonical images.
+may include the real-Docker runtime-image and worktree tests, fake-provider
+Guardian/CAF lifecycle and hostile-primary tests, controlled live-provider
+interoperability, or the production restricted-egress test. A skipped optional
+check remains a reported skip, not a pass. For manual source-launcher smoke
+tests, use a disposable profile, select the candidate with `PI_RUN_CORE_IMAGE`,
+select utility containers with `PI_RUN_IMAGE`, select the sidecar with
+`PI_RUN_EGRESS_IMAGE`, and explicitly run `runtime build` before launch. Do not
+push local candidate tags as canonical images.
 
 Only after local validation should the intended canonical tag be published as a
 prerelease when exact workflow-built assets require testing. Install it by exact

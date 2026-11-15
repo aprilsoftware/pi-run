@@ -40,9 +40,11 @@ doctor_wsl_home_filesystem() {
 }
 
 run_doctor() {
-    local command_name runtime_image egress_image profile_dir mode configured_default default_dir kernel
-    local wsl=false
-    runtime_image="${PI_RUN_IMAGE:-${DEFAULT_IMAGE}}"
+    local command_name core_image utility_image egress_image profile_dir mode configured_default default_dir kernel
+    local prepared_output
+    local wsl=false selected_profile_files_valid=false selected_profile_config_valid=false
+    core_image="${PI_RUN_CORE_IMAGE:-${DEFAULT_CORE_IMAGE}}"
+    utility_image="${PI_RUN_IMAGE:-${DEFAULT_IMAGE}}"
     egress_image="${PI_RUN_EGRESS_IMAGE:-${DEFAULT_EGRESS_IMAGE}}"
 
     if [[ "$(uname -s)" == Linux && "$(uname -m)" =~ ^(x86_64|amd64)$ ]]; then
@@ -101,10 +103,17 @@ run_doctor() {
     if command -v docker >/dev/null 2>&1; then
         if docker info >/dev/null 2>&1; then
             doctor_ok "Docker daemon is reachable"
-            if docker image inspect "${runtime_image}" >/dev/null 2>&1; then
-                doctor_ok "runtime image available: ${runtime_image}"
+            if docker image inspect "${core_image}" >/dev/null 2>&1; then
+                doctor_ok "core image available: ${core_image}"
             else
-                doctor_fail "runtime image unavailable locally: ${runtime_image}; run: docker pull ${runtime_image}"
+                doctor_fail "core image unavailable locally: ${core_image}; run: docker pull ${core_image}"
+            fi
+            if [[ "${utility_image}" == "${core_image}" ]]; then
+                doctor_ok "utility image uses core image: ${utility_image}"
+            elif docker image inspect "${utility_image}" >/dev/null 2>&1; then
+                doctor_ok "utility image available: ${utility_image}"
+            else
+                doctor_fail "utility image unavailable locally: ${utility_image}; run: docker pull ${utility_image}"
             fi
             if docker image inspect "${egress_image}" >/dev/null 2>&1; then
                 doctor_ok "egress image available: ${egress_image}"
@@ -179,14 +188,25 @@ run_doctor() {
                   -d "${profile_dir}/guardian" && ! -L "${profile_dir}/guardian" &&
                   -f "${profile_dir}/guardian/guardian.md" && ! -L "${profile_dir}/guardian/guardian.md" ]]; then
                 doctor_ok "selected profile instructions are present: ${PROFILE}"
+                selected_profile_files_valid=true
             else
                 doctor_fail "selected profile instructions are missing or unsafe: ${PROFILE}"
             fi
             if command -v jq >/dev/null 2>&1 &&
                 (validate_profile_config "${profile_dir}" "${PROFILE}" >/dev/null 2>&1); then
                 doctor_ok "selected profile configuration is valid: ${PROFILE}"
+                selected_profile_config_valid=true
             else
                 doctor_fail "selected profile configuration is invalid: ${PROFILE}"
+            fi
+            if [[ "${selected_profile_files_valid}" == true &&
+                  "${selected_profile_config_valid}" == true ]]; then
+                if prepared_output="$(select_profile_runtime_image 2>&1)"; then
+                    doctor_ok "prepared profile runtime is matching: ${prepared_output}"
+                else
+                    prepared_output="$(sanitize_display "${prepared_output}")"
+                    doctor_fail "prepared profile runtime is not launchable: ${prepared_output}"
+                fi
             fi
         fi
     fi

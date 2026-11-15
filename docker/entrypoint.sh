@@ -61,6 +61,15 @@ export HOME=/home/node
 export USER=node
 export LOGNAME=node
 
+# Java is optional in profile-derived runtimes. When present, bridge the mounted
+# authoritative host PEM bundle into Java's ephemeral trust store. Missing or
+# invalid Java trust inputs remain a startup failure for Java-capable runtimes.
+/usr/local/bin/pi-run-java-trust-store \
+    /etc/ssl/certs/java/cacerts \
+    /etc/ssl/certs/ca-certificates.crt \
+    /run/pi-run-java-cacerts.tmp \
+    /usr/local/lib/pi-run
+
 # Prepare ephemeral OpenSSH configuration as the mapped runtime user. Internal
 # credential-management commands skip this so they can diagnose invalid keys.
 if [[ "${PI_RUN_SKIP_SSH_CONFIG:-0}" != 1 ]]; then

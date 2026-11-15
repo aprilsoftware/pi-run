@@ -61,7 +61,9 @@ http_port 127.0.0.1:3128
 max_filedescriptors 4096
 pinger_enable off
 acl CONNECT method CONNECT
+acl local_loopback dst 127.0.0.0/8 ::1/128
 http_access deny !CONNECT
+http_access allow CONNECT local_loopback
 EOF
 
 while IFS=$'\t' read -r index kind destination ports; do
@@ -122,9 +124,11 @@ configure_firewall() {
     "${command}" -w -P OUTPUT DROP
     "${command}" -w -A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
     "${command}" -w -A OUTPUT -o lo -p udp -j ACCEPT
-    "${command}" -w -A OUTPUT -o lo -p tcp --dport 3128 -j ACCEPT
+    "${command}" -w -A OUTPUT -o lo -p tcp -j ACCEPT
     "${command}" -w -A OUTPUT -m owner --uid-owner "${PROXY_UID}" -p udp --dport 53 -j ACCEPT
     "${command}" -w -A OUTPUT -m owner --uid-owner "${PROXY_UID}" -p tcp --dport 53 -j ACCEPT
+    "${command}" -w -A OUTPUT -m owner --uid-owner "${WORKLOAD_UID}" -p udp --dport 53 -j ACCEPT
+    "${command}" -w -A OUTPUT -m owner --uid-owner "${WORKLOAD_UID}" -p tcp --dport 53 -j ACCEPT
 
     if [[ "${family}" == 4 ]]; then
         core_blocked=("${CORE_BLOCKED_V4[@]}")

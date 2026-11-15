@@ -10,8 +10,8 @@ RUN rustup component add --toolchain "${RUST_VERSION}" rustfmt clippy \
 FROM node:24-trixie
 
 ARG RUST_VERSION
-ARG PI_VERSION=1.1.0
-ARG PI_WEB_ACCESS_VERSION=0.37.0
+ARG PI_VERSION=1.5.2
+ARG PI_WEB_ACCESS_VERSION=0.47.0
 ARG PI_OKF_VERSION=0.4.0
 ARG RESTIC_VERSION=0.19.1
 ARG RESTIC_LINUX_AMD64_SHA256=f415415624dcc452f2a02b8c33641791a8c6d6d3b65bbb3543fcf9a25151585c
@@ -227,6 +227,7 @@ RUN npm install -g \
         "pi-okf@${PI_OKF_VERSION}"
 
 # Copy the Pi-Run extension bundle with shared Guard infrastructure and sibling clients.
+COPY extensions/cache/cache-policy-agent.ts /usr/local/lib/node_modules/pi-run-extensions/cache/
 COPY extensions/plan/plan-agent.ts /usr/local/lib/node_modules/pi-run-extensions/plan/
 COPY extensions/guard/guard-runtime-contract.ts /usr/local/lib/node_modules/pi-run-extensions/guard/
 COPY extensions/guard/guard-runtime.ts /usr/local/lib/node_modules/pi-run-extensions/guard/
@@ -243,6 +244,7 @@ COPY extensions/caf/caf-log-viewer.ts /usr/local/lib/node_modules/pi-run-extensi
 COPY extensions/caf/caf-protocol.ts /usr/local/lib/node_modules/pi-run-extensions/caf/
 COPY extensions/caf/caf-agent.ts /usr/local/lib/node_modules/pi-run-extensions/caf/
 COPY extensions/snapshot/snapshot-agent.ts /usr/local/lib/node_modules/pi-run-extensions/snapshot/
+COPY extensions/todo/todo-agent.ts /usr/local/lib/node_modules/pi-run-extensions/todo/
 COPY extensions/title/title-agent.ts /usr/local/lib/node_modules/pi-run-extensions/title/
 COPY skills/ /usr/local/share/pi-run/skills/
 RUN test -f /usr/local/share/pi-run/skills/pi-run/SKILL.md \
@@ -265,11 +267,16 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends gosu && \
     rm -rf /var/lib/apt/lists/*
 
-# Install the dynamic UID/GID entrypoint and profile SSH configuration helper.
+# Install the dynamic UID/GID entrypoint, capability-aware Java CA bridge, and
+# profile SSH helper. Java-capable runtimes execute the helper in source-file
+# mode; core-only runtimes do not need a JDK merely to prepare the image.
 COPY entrypoint.sh ssh-credentials /usr/local/bin/
+COPY java-trust-store.sh /usr/local/bin/pi-run-java-trust-store
+COPY PiRunJavaTrustStore.java /usr/local/lib/pi-run/PiRunJavaTrustStore.java
 COPY network-policy-resolver.mjs /usr/local/bin/pi-run-network-policy-resolver
 RUN chmod 0755 \
         /usr/local/bin/entrypoint.sh \
+        /usr/local/bin/pi-run-java-trust-store \
         /usr/local/bin/ssh-credentials \
         /usr/local/bin/pi-run-network-policy-resolver
 

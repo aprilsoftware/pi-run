@@ -32,13 +32,18 @@ assert.ok(loaded.extensions[0].commands.has('plan-exit'));
 assert.ok(loaded.extensions[0].commands.has('plan-show'));
 assert.ok(loaded.extensions[0].commands.has('plan-export'));
 assert.ok(loaded.extensions[0].commands.has('plan-approve'));
-assert.equal(loaded.extensions[0].tools.size, 1);
+assert.equal(loaded.extensions[0].tools.size, 2);
 const recordTool = loaded.extensions[0].tools.get('plan_record').definition;
 assert.equal(recordTool.defaultActive, false);
 assert.equal(recordTool.exposure, 'model-only');
 assert.equal(recordTool.executionMode, 'sequential');
+const readTool = loaded.extensions[0].tools.get('plan_read').definition;
+assert.equal(readTool.defaultActive, false);
+assert.equal(readTool.exposure, 'model-only');
+assert.equal(readTool.executionMode, undefined);
 const original = ['read', 'bash', 'edit', 'write', 'web_search', 'custom'];
-const planning = [...original, 'plan_record'];
+const planning = [...original, 'plan_record', 'plan_read'];
+const approved = [...original, 'plan_read'];
 const themeFg = (color, text) => `<${color}>${text}</${color}>`;
 function harness(branch = [], initialTools = original, mode = 'tui', cwd = root) {
     branch = structuredClone(branch);
@@ -74,6 +79,7 @@ function harness(branch = [], initialTools = original, mode = 'tui', cwd = root)
         confirmWith: callback => { confirmation = callback; },
         changeSession: () => { sessionId = randomUUID(); },
         record: (draft, signal) => registered.get('plan_record').execute('record', draft, signal, undefined, ctx),
+        readPlan: signal => registered.get('plan_read').execute('read', {}, signal, undefined, ctx),
         tools: () => tools, selectTools: names => { tools = [...names]; }, waits: () => idleWaits,
         emit: (name, event = {}) => handlers.get(name)(event, ctx),
         command: args => commands.get('plan').handler(args, ctx),
@@ -92,6 +98,8 @@ assert.deepEqual(h.tools(), original);
 assert.equal(h.emit('tool_call', { toolName: 'write' }), undefined);
 await h.command('  Add planning support  ');
 assert.deepEqual(h.tools(), planning);
+await assert.rejects(h.readPlan(), /No active plan/);
+await assert.rejects(h.readPlan(AbortSignal.abort()), /reading cancelled/);
 assert.deepEqual(h.prompts, ['Plan only: Add planning support']);
 assert.equal(h.waits(), 1);
 assert.deepEqual(h.renderIndicator(), ['<muted>planning</muted>']);
@@ -157,21 +165,21 @@ await selections.command('');
 const chosen = ['run', 'late_tool', 'write'];
 selections.selectTools(chosen);
 selections.emit('before_agent_start', { systemPromptOptions: { sections: {} } });
-assert.deepEqual(selections.tools(), [...chosen, 'plan_record'], 'Do not force the original tool loadout');
+assert.deepEqual(selections.tools(), [...chosen, 'plan_record', 'plan_read'], 'Do not force the original tool loadout');
 await selections.command('');
-assert.deepEqual(selections.tools(), [...chosen, 'plan_record']);
-const resumed = harness(saved, [...chosen, 'plan_record'], 'print');
+assert.deepEqual(selections.tools(), [...chosen, 'plan_record', 'plan_read']);
+const resumed = harness(saved, [...chosen, 'plan_record', 'plan_read'], 'print');
 await resumed.emit('session_start');
-assert.deepEqual(resumed.tools(), [...chosen, 'plan_record']);
+assert.deepEqual(resumed.tools(), [...chosen, 'plan_record', 'plan_read']);
 await resumed.exit();
-assert.deepEqual(resumed.tools(), chosen, 'Off removes only the recorder, including after resume');
+assert.deepEqual(resumed.tools(), chosen, 'Off removes planning tools when no saved draft exists');
 assert.equal(resumed.statuses.length, 0, 'Print mode does not access TUI status or theme');
 await selections.exit();
 assert.deepEqual(selections.tools(), chosen);
 await selections.navigate(saved, chosen);
-assert.deepEqual(selections.tools(), [...chosen, 'plan_record']);
-await selections.navigate(h.branch, [...chosen, 'plan_record']);
-assert.deepEqual(selections.tools(), chosen, 'An off branch removes stale recorder declarations');
+assert.deepEqual(selections.tools(), [...chosen, 'plan_record', 'plan_read']);
+await selections.navigate(h.branch, [...chosen, 'plan_record', 'plan_read']);
+assert.deepEqual(selections.tools(), chosen, 'An off branch without a draft removes stale Plan tools');
 const branched = harness(saved, planning);
 await branched.emit('session_start');
 assert.deepEqual(branched.renderIndicator(), ['<muted>planning</muted>'], 'Resume restores themed indicator');
@@ -187,6 +195,7 @@ assert.deepEqual(branched.tools(), original);
 const invalid = harness([{ type: 'custom', customType: 'pi-run-plan', data: { enabled: false } }]);
 await invalid.emit('session_start');
 assert.deepEqual(invalid.tools(), planning, 'Malformed state retains guidance without restricting normal tools');
+await assert.rejects(invalid.readPlan(), /No active plan/);
 assert.equal(invalid.notices.at(-1)[1], 'warning');
 await invalid.emit('session_shutdown');
 assert.equal(invalid.widgets.has('pi-run-plan'), false);
@@ -194,7 +203,7 @@ assert.equal(invalid.emit('tool_call', { toolName: 'write' }), undefined);
 const retained = { systemPromptOptions: { sections: {} } };
 invalid.emit('before_agent_start', retained);
 assert.ok(retained.systemPromptOptions.sections.pi_run_plan.includes('Develop the overall plan'));
-console.log('PASS tools: unrestricted calls, live selections, recorder-only toggling, and resume/branches');
+console.log('PASS tools: unrestricted calls, live selections, Plan-tool toggling, and resume/branches');
 const draft = { title: 'Session planning', goal: 'Keep a reviewable plan',
     body: '## Approach\nSave branch-aware plans.\n\n## Alternatives\nExplicit export or session storage.\n\n## Open questions\nWhich export path?\n\n## Work\nDiscuss, save, and export the whole plan.\n\n## Validation\nExercise the complete workflow.',
 };
@@ -215,6 +224,19 @@ const recorded = await drafts.record(draft);
 assert.ok(recorded.content[0].text.includes('Not approved'));
 assert.equal(drafts.branch.length, 2);
 assert.deepEqual(drafts.branch.at(-1).data, { schemaVersion: 2, draft });
+const beforeRead = { branch: drafts.branch.length, prompts: drafts.prompts.length, messages: drafts.messages.length };
+const unapprovedRead = await drafts.readPlan();
+assert.equal(drafts.branch.length, beforeRead.branch, 'Reading a Plan must not mutate session state');
+assert.equal(drafts.prompts.length, beforeRead.prompts, 'Reading a Plan must not start a model turn');
+assert.equal(drafts.messages.length, beforeRead.messages, 'Reading a Plan must not append a custom message');
+assert.equal(unapprovedRead.details.schemaVersion, 1);
+assert.equal(unapprovedRead.details.draftEntryId, drafts.branch.at(-1).id);
+assert.match(unapprovedRead.details.planHash, /^[a-f0-9]{64}$/);
+assert.equal(unapprovedRead.details.approved, false);
+for (const text of [draft.title, draft.goal, draft.body, drafts.branch.at(-1).id,
+    unapprovedRead.details.planHash, 'does not grant additional authority', 'Not approved']) {
+    assert.ok(unapprovedRead.content[0].text.includes(text), text);
+}
 const firstRevision = JSON.parse(JSON.stringify(drafts.branch));
 const invalidDrafts = [null, {}, { ...draft, title: '   ' }, { ...draft, approved: true },
     { ...draft, body: '   ' }, { ...draft, body: null }, { ...draft, nextIncrement: {} },
@@ -241,6 +263,7 @@ await drafts.exit();
 await drafts.show();
 assert.ok(drafts.messages.at(-1).message.content.includes('No active plan'));
 assert.deepEqual(drafts.tools(), original);
+await assert.rejects(drafts.readPlan(), /No active plan/);
 assert.equal(drafts.prompts.length, 0, 'Recording, viewing, and exit must never launch a model turn');
 const discardedBranch = structuredClone(drafts.branch);
 const exited = harness(discardedBranch, planning, 'print');
@@ -339,7 +362,7 @@ for (const branch of [[], [...firstRevision, { type: 'custom', customType: 'pi-r
     await assert.rejects(stat(join(workspace, 'invalid.md')), { code: 'ENOENT' });
 }
 assert.equal(exports.prompts.length, 0);
-assert.equal(loaded.extensions[0].tools.size, 1, 'Export must not be model-callable');
+assert.equal(loaded.extensions[0].tools.size, 2, 'Export must not add a model-callable tool');
 console.log('PASS export: contents, paths, symlinks, create-only publication, cleanup, branches, no-UI, and unchanged mode');
 const abandoned = harness(latestRevision, planning, 'print', workspace);
 await abandoned.emit('session_start');
@@ -377,7 +400,13 @@ assert.equal(approvals.approvalEntry().data.draftEntryId, firstRevision.at(-1).i
 assert.equal(approvals.approvalEntry().data.schemaVersion, 2);
 assert.match(approvals.approvalEntry().data.planHash, /^[a-f0-9]{64}$/);
 assert.equal(approvals.messages.at(-1).options.triggerTurn, false);
-assert.deepEqual(approvals.tools(), original);
+assert.deepEqual(approvals.tools(), approved);
+const approvedRead = await approvals.readPlan();
+assert.equal(approvedRead.details.approved, true);
+assert.equal(approvedRead.details.draftEntryId, approvals.approvalEntry().data.draftEntryId);
+assert.equal(approvedRead.details.planHash, approvals.approvalEntry().data.planHash);
+assert.ok(approvedRead.content[0].text.includes('Approval state: approved'));
+assert.ok(approvedRead.content[0].text.includes('Plan approved for this saved revision'));
 assert.equal(approvals.statuses.at(-1)[1], undefined);
 assert.equal(approvals.emit('tool_call', { toolName: 'write' }), undefined);
 assert.equal(approvals.prompts.length, 1);
@@ -397,7 +426,8 @@ const approvalResume = harness(approvedBranch, planning, 'print', workspace);
 await approvalResume.emit('session_start');
 await approvalResume.show();
 assert.ok(approvalResume.messages.at(-1).message.content.includes('Plan approved for this saved revision'));
-assert.deepEqual(approvalResume.tools(), original);
+assert.deepEqual(approvalResume.tools(), approved);
+assert.equal((await approvalResume.readPlan()).details.approved, true);
 await approvalResume.approve();
 assert.ok(approvalResume.messages.at(-1).message.content.includes('confirmation UI is required'));
 assert.equal(approvalResume.branch.length, approvedBranch.length);
@@ -407,13 +437,16 @@ assert.ok(!(await readFile(join(workspace, 'tracking-only.md'), 'utf8')).include
 await approvalResume.navigate(firstRevision, planning);
 await approvalResume.show();
 assert.ok(approvalResume.messages.at(-1).message.content.includes('Not approved'), 'Approval must not leak to an earlier branch');
+assert.equal((await approvalResume.readPlan()).details.approved, false);
 await approvalResume.navigate(approvedBranch, planning);
 await approvalResume.show();
 assert.ok(approvalResume.messages.at(-1).message.content.includes('Plan approved for this saved revision'));
+assert.equal((await approvalResume.readPlan()).details.approved, true);
 await approvals.command('');
 await approvals.record(draft); // Identical contents, but a new saved revision.
 await approvals.show();
 assert.ok(approvals.messages.at(-1).message.content.includes('Not approved'));
+assert.equal((await approvals.readPlan()).details.approved, false);
 await approvals.approve();
 assert.equal(approvals.confirmations.length, 2);
 assert.equal(approvals.prompts.length, 2);
@@ -424,6 +457,8 @@ assert.equal(approvedResume.prompts.length, 0, 'Resume must not replay a previou
 await approvedResume.exit();
 await approvedResume.show();
 assert.ok(approvedResume.messages.at(-1).message.content.includes('No active plan'));
+assert.deepEqual(approvedResume.tools(), original);
+await assert.rejects(approvedResume.readPlan(), /No active plan/);
 for (const answer of [false, undefined]) {
     const cancelled = harness(firstRevision, planning);
     await cancelled.emit('session_start');
@@ -434,6 +469,10 @@ for (const answer of [false, undefined]) {
     assert.deepEqual(cancelled.tools(), planning);
     assert.equal(cancelled.prompts.length, 0);
 }
+const malformedDraft = harness([{ id: 'invalid', type: 'custom', customType: 'pi-run-plan-draft', data: {} }]);
+await malformedDraft.emit('session_start');
+assert.deepEqual(malformedDraft.tools(), approved);
+await assert.rejects(malformedDraft.readPlan(), /invalid or unsupported/);
 for (const branch of [[], [{ id: 'invalid', type: 'custom', customType: 'pi-run-plan-draft', data: {} }],
     [{ type: 'custom', customType: 'pi-run-plan-draft', data: { schemaVersion: 2, draft } }]]) {
     const missing = harness(branch);
@@ -461,13 +500,14 @@ for (const data of [null, {}, { ...approvedData, draftEntryId: 'wrong-revision' 
     await malformed.emit('session_start');
     await malformed.show();
     assert.ok(malformed.messages.at(-1).message.content.includes('Not approved'), 'Malformed/latest mismatching approval fails closed');
+    assert.equal((await malformed.readPlan()).details.approved, false);
 }
 const rpcApproval = harness(firstRevision, planning, 'rpc');
 await rpcApproval.emit('session_start');
 await rpcApproval.approve();
 assert.equal(rpcApproval.confirmations.length, 1);
 assert.equal(rpcApproval.approvalEntry().customType, 'pi-run-plan-approval');
-assert.deepEqual(rpcApproval.tools(), original);
+assert.deepEqual(rpcApproval.tools(), approved);
 assert.equal(rpcApproval.prompts.length, 1);
 assert.equal(rpcApproval.statuses.length, 0, 'RPC mode does not display TUI status');
 const exitedPending = harness(firstRevision, planning);
@@ -494,7 +534,7 @@ runner.bindCore({ getActiveTools: () => runtimeTools, setActiveTools: names => {
 await runner.emit({ type: 'session_start', reason: 'startup' });
 await loaded.extensions[0].commands.get('plan').handler('', runner.createCommandContext());
 const runtimeBase = { cwd: root };
-const runtimePrompt = await runner.emitBeforeAgentStart('inspect', undefined, runtimeBase);
+const runtimePrompt = await runner.emitBeforeAgentStart({ messageType: 'user', prompt: 'inspect', images: undefined }, runtimeBase);
 assert.ok(runtimePrompt.systemPromptOptions.sections.pi_run_plan.includes('Develop the overall plan'));
 assert.deepEqual(runtimeTools, planning);
 for (const toolName of ['write', 'bash', 'run']) {
@@ -510,12 +550,12 @@ assert.equal(laterCalls, 8);
 await recordTool.execute('record', draft, undefined, undefined, runner.createToolContext('record'));
 assert.deepEqual(runtimeBranch.at(-1).data, { schemaVersion: 2, draft });
 await loaded.extensions[0].commands.get('plan-exit').handler('', runner.createCommandContext());
-const disabledPrompt = await runner.emitBeforeAgentStart('ordinary work', undefined, runtimeBase);
+const disabledPrompt = await runner.emitBeforeAgentStart({ messageType: 'user', prompt: 'ordinary work', images: undefined }, runtimeBase);
 assert.equal(disabledPrompt.systemPromptOptions.sections.pi_run_plan, undefined);
 assert.deepEqual(runtimeTools, original);
 assert.equal((await runner.emitToolCall({ type: 'tool_call', toolName: 'plan_record', toolCallId: 'record', input: draft })).block, true);
 assert.equal(laterCalls, 8);
-console.log('PASS planning: real Pi tools reach later reviewers; recorder-only restrictions still short-circuit');
+console.log('PASS planning: real Pi tools reach later reviewers; plan_record restrictions still short-circuit');
 const { SessionManager } = await import(pathToFileURL(join(piDir, 'dist/core/session-manager.js')).href);
 const nativeSession = SessionManager.inMemory(root), nativeMessages = [], nativePrompts = [];
 const nativeLoaded = await loadExtensions([file], root);
@@ -534,7 +574,9 @@ const nativeDraftId = nativeSession.getLeafId();
 await nativeCommands.get('plan-approve').handler('', nativeRunner.createCommandContext());
 const nativeApprovalId = nativeSession.getLeafId();
 assert.equal(nativeSession.getBranch().find(entry => entry.customType === 'pi-run-plan-approval').data.draftEntryId, nativeDraftId);
-assert.deepEqual(runtimeTools, original);
+assert.deepEqual(runtimeTools, approved);
+const nativeReadTool = nativeLoaded.extensions[0].tools.get('plan_read').definition;
+assert.equal((await nativeReadTool.execute('read', {}, undefined, undefined, nativeRunner.createToolContext('read'))).details.approved, true);
 assert.equal(nativePrompts.length, 1);
 await nativeCommands.get('plan-show').handler('', nativeRunner.createCommandContext());
 assert.ok(nativeMessages.at(-1).content.includes('Plan approved for this saved revision'));
@@ -542,6 +584,7 @@ nativeSession.branch(nativeDraftId);
 await nativeRunner.emit({ type: 'session_tree' });
 await nativeCommands.get('plan-show').handler('', nativeRunner.createCommandContext());
 assert.ok(nativeMessages.at(-1).content.includes('Not approved'));
+assert.equal((await nativeReadTool.execute('read', {}, undefined, undefined, nativeRunner.createToolContext('read'))).details.approved, false);
 nativeSession.branch(nativeApprovalId);
 await nativeRunner.emit({ type: 'session_tree' });
 await nativeCommands.get('plan-show').handler('', nativeRunner.createCommandContext());
@@ -550,6 +593,8 @@ await nativeCommands.get('plan-exit').handler('', nativeRunner.createCommandCont
 const nativeExitId = nativeSession.getLeafId();
 await nativeCommands.get('plan-show').handler('', nativeRunner.createCommandContext());
 assert.ok(nativeMessages.at(-1).content.includes('No active plan'));
+assert.deepEqual(runtimeTools, original);
+await assert.rejects(nativeReadTool.execute('read', {}, undefined, undefined, nativeRunner.createToolContext('read')), /No active plan/);
 nativeSession.branch(nativeApprovalId);
 await nativeRunner.emit({ type: 'session_tree' });
 await nativeCommands.get('plan-show').handler('', nativeRunner.createCommandContext());
@@ -635,10 +680,17 @@ console.log('PASS planning: loading, commands, prompt, direct/nested hooks, rest
 NODE
 
 mkdir -p "${TMP}/fake-bin" "${TMP}/workspace"
-# shellcheck disable=SC2016 # Expand these variables in the fake Docker process.
-printf '%s\n' '#!/bin/sh' 'printf "%s\n" "$@" > "${DOCKER_LOG:?}"' > "${TMP}/fake-bin/docker"
+cat > "${TMP}/fake-bin/docker" <<'EOF'
+#!/bin/sh
+set -eu
+if [ "${1:-}" = image ] && [ "${2:-}" = inspect ]; then
+    exec "${RUNTIME_IMAGE_FIXTURE:?}" --emit-image "${3:?}"
+fi
+printf '%s\n' "$@" > "${DOCKER_LOG:?}"
+EOF
 chmod 0755 "${TMP}/fake-bin/docker"
 PATH="${TMP}/fake-bin:${PATH}" PI_RUN_HOME="${TMP}/Pi-Run" DOCKER_LOG="${TMP}/docker.log" \
+    RUNTIME_IMAGE_FIXTURE="${ROOT}/tests/runtime-launch-selection-test.sh" \
     "${ROOT}/bin/pi-run" "${TMP}/workspace" >/dev/null
 grep -Fx -- /usr/local/lib/node_modules/pi-run-extensions/plan/plan-agent.ts "${TMP}/docker.log" >/dev/null
 grep -Fx -- /usr/local/lib/node_modules/pi-run-extensions/guard/guard-runtime.ts "${TMP}/docker.log" >/dev/null

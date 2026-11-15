@@ -1,9 +1,9 @@
 # Install, upgrade, and uninstall Pi-Run
 
-Pi-Run installs a small host launcher and matching versioned runtime and egress
-container images. Pi, Node.js, and the bundled toolchain stay in the runtime
-image, while profiles, credentials, and sessions remain in a separate private
-data directory.
+Pi-Run installs a small host launcher and matching versioned core and egress
+container images. The core supplies Pi and launch-contract components; each
+profile builds its own toolchain image from its private runtime Dockerfile.
+Profiles, credentials, and sessions remain in a separate private data directory.
 
 Run these commands in your **host terminal** as your normal user with Docker
 access.
@@ -15,7 +15,7 @@ access.
 - Bash and a working Docker daemon accessible to your user.
 - `curl`, `jq`, `tar`, `flock`, and standard GNU command-line tools.
 - The host CA bundle at `/etc/ssl/certs/ca-certificates.crt`.
-- Access to the selected GitHub release and its runtime and egress images.
+- Access to the selected GitHub release and its core and egress images.
 
 Docker access is highly privileged on the host. Pi-Run does not mount the Docker
 socket into normal Pi sessions; see [Security and isolation](security.md).
@@ -132,8 +132,13 @@ release you trust. If release assets or images require authentication, use the
 [restricted-release instructions](maintainers/private-release-access.md).
 
 On success, the installer reports the application location and executable path.
-If that executable directory is not on `PATH`, follow the printed instruction
-before continuing.
+If that directory is not on `PATH`, an interactive installation detects Bash,
+Zsh, or a POSIX-compatible login shell and asks before adding a managed entry to
+its configuration file. The installer never silently changes shell files and
+cannot change the environment of the shell that launched it. Follow the printed
+`export PATH=...` instruction to use `pi-run` immediately; newly started shells
+load an accepted persistent entry automatically. Non-interactive or unsupported
+shells receive the manual instruction without modifying configuration.
 
 For an exact older/newer tag, custom locations, and installer refusal behavior,
 see the [Installation reference](reference/installation.md#select-a-release).
@@ -154,14 +159,19 @@ The first two locations are installed application files. `~/Pi-Run` is your
 persistent data home for profiles, credentials, sessions, skills, shared data,
 and snapshots.
 
-Installation does not create the data home. Initialize it explicitly:
+Installation does not create the data home or build a profile image. Initialize
+and prepare the initial profile explicitly:
 
 ```bash
 pi-run init
+pi-run runtime build
+pi-run runtime status
 ```
 
-A first workspace launch can also initialize it. Upgrade and uninstall preserve
-the data home. Keep it private and back it up separately with
+Optionally run `pi-run runtime add <bundle>` or `pi-run runtime add all` before
+the build. A first workspace launch can initialize the home, but it will stop
+until the selected profile image is built. Upgrade and uninstall preserve the
+data home. Keep it private and back it up separately with
 [encrypted snapshots](snapshots.md); snapshots do not include workspace source.
 
 Custom application and data paths have different settings and do not move
@@ -175,10 +185,11 @@ pi-run home
 pi-run doctor
 ```
 
-`version` prints the installed launcher version and selected runtime and egress
-images. `home` prints the resolved data location. `doctor` checks host
-requirements, Docker access, both local images, application resources, and the
-selected profile.
+`version` prints the installed launcher version and selected core, utility, and
+egress images. `home` prints the resolved data location. `doctor` checks host
+requirements, Docker access, the release images, any distinct utility override,
+application resources, the selected profile, and its prepared runtime image.
+`runtime status` provides the detailed source identity and image state.
 
 Doctor reports `OK`, `WARN`, and `FAIL` and exits nonzero for failed requirements.
 It does not initialize or repair state, pull images, contact registries, or
@@ -200,11 +211,15 @@ Apply the newest eligible release:
 pi-run upgrade
 ```
 
-Upgrade verifies the new archive, pulls its matching runtime and egress images,
+Upgrade verifies the new archive, pulls its matching core and egress images,
 installs it beside older application releases, and activates it. If either image
 pull fails, the previous release remains active; any layers already downloaded
 may remain in Docker's cache. Upgrade preserves profiles, credentials, sessions,
-skills, and other data-home contents.
+skills, runtime Dockerfiles, and other data-home contents.
+
+After an upgrade, explicitly run `runtime init` for any legacy profile without a
+runtime directory, then run `runtime build` for each profile before its next
+launch. Pi-Run does not migrate or build profile images automatically.
 
 There is no background upgrade, automatic rollback, or automatic removal of old
 application releases. Upgrade requires an active installed release; it does not
