@@ -2,44 +2,51 @@
 
 ## Status and authority
 
-This document records the initial v0.11 architecture for a bounded Pi-Run
-software factory. It selects the first product boundaries and identifies design
-questions that must be resolved before implementation. It is not authority to
-create tasks, run agents, modify repositories, invoke providers, push branches,
+This document records the v0.11 architecture for a bounded Pi-Run software
+factory. It selects product boundaries and identifies design questions that must
+be resolved before implementation. It is not authority to create tasks, start
+runs, modify repositories, install dependencies, invoke providers, push branches,
 open pull requests, merge, deploy, or publish a release.
 
-The factory coordinates existing Pi-Run capabilities. It does not make Guardian,
-CAF, Planning, managed worktrees, runtime identity, or network policy into a
-sandbox or correctness guarantee.
+It incorporates the comparative [software-factory research](software-factory-research.md)
+and [detachable-run research](detachable-and-daemon-runs-research.md). The factory
+does not make Herdr, RPC, Guardian, CAF, Planning, managed worktrees, runtime
+identity, or network policy into a sandbox or correctness guarantee.
 
 ## Product outcome
 
-The factory turns one human-selected and explicitly approved task into a
-validated, reviewable local worktree and branch:
+The Level 1 factory turns one human-selected and explicitly approved task into a
+validated, freshly reviewed local worktree and branch:
 
 ```text
 human task selection
     → exact task approval
     → managed worktree and dedicated conversation
-    → bounded implementation and verification
+    → live Pi-Run execution, optionally held by Herdr
+    → bounded implementation and wake-ups
+    → deterministic checks
     → fresh-context review
-    → visible terminal state and completion report
+    → evidence manifest and completion report
     → human decision about commit, push, PR, merge, or publication
 ```
 
-The initial terminal output is deliberately local. Success does not automatically
-commit, finish the managed worktree, push, create a pull request, merge, tag,
-release, deploy, or select another task.
+The worktree may remain dirty. Success does not automatically commit, finish the
+managed worktree, push, create a pull request, merge, tag, release, deploy,
+repair production, or select another task. Later asynchronous, event-driven, and
+parallel maturity levels remain architectural directions, not v0.11 promises.
 
 ## Terminology
 
-- **Factory task:** approved intent: repository, base revision, goal, scope,
-  acceptance checks, limits, exclusions, and desired local outcome.
-- **Factory run:** one execution attempt for one exact approved task revision.
-- **Factory phase:** a visible state such as preparing, implementing, verifying,
-  reviewing, paused, blocked, failed, completed, or cancelled.
-- **Loop:** a bounded scheduler belonging to one run. It may request another
-  normal agent turn but does not own task authority.
+- **Pi session:** persisted conversation and branch history.
+- **Live execution:** one ordinary Pi-Run launcher process, optionally hosted in
+  an external persistent terminal such as Herdr.
+- **Factory task:** approved repository, base revision, goal, scope, acceptance,
+  checks, limits, exclusions, and desired local outcome.
+- **Factory attempt:** one execution attempt for one exact task revision.
+- **Factory phase:** preparing, implementing, waiting, verifying, reviewing,
+  remediating, paused, blocked, failed, exhausted, cancelled, or completed.
+- **Wake-up:** a bounded reason an approved attempt may continue; never authority.
+- **Evidence manifest:** immutable validation, review, usage, and outcome evidence.
 - **Review run:** a fresh bounded context that inspects implementation and
   evidence without inheriting the implementation conversation's reasoning.
 - **Factory-ready repository:** a repository with legible instructions,
@@ -60,22 +67,27 @@ confirmation, commit, integration, and cleanup contract.
 
 ### Authoritative state location
 
-Factory task approvals and run-control state belong to host-owned private state
-under a future `<PI_RUN_HOME>/factory/` namespace. It must not be mounted into
+Factory task approval, attempt control, and evidence belong to host-owned private
+state under a future `<PI_RUN_HOME>/factory/` namespace. It is not mounted into
 normal Pi sessions or writable by acting or review agents.
 
-The exact layout and schema remain open, but the boundary is fixed:
+External terminal-runtime state does not belong to Pi-Run factory authority.
+Herdr may retain panes, labels, terminal history, and live-process presentation,
+but Pi-Run does not mirror those into a `<PI_RUN_HOME>/runs/` registry or restore
+them as factory state.
 
+The exact factory layout remains open, but the boundary is fixed:
+
+- a live execution or Herdr pane may reference an attempt without approving it;
 - profiles may be referenced but do not own factory authority;
 - session entries may mirror presentation and evidence but are not the sole host
   orchestration record;
-- repository files and GitHub issues may provide provenance but cannot approve
-  themselves;
+- repository files, issues, events, and CI logs provide provenance only;
 - Todo remains a private human prompt queue and never becomes factory intake;
 - logs and transcripts are evidence, not authority.
 
 Factory state becomes snapshot-eligible only after restore, machine association,
-stale-run, and secret-handling semantics are designed.
+stale-attempt, archival, and secret-handling semantics are designed.
 
 ### Approval identity
 
@@ -96,14 +108,32 @@ movement, profile/runtime changes, or validation changes do not silently update
 an approved task. Approval of one task does not approve another task, queue item,
 roadmap, release train, or unrestricted discovered remediation.
 
-### Loop ownership
+### Loop and wake-up ownership
 
-A loop belongs to one factory run, not to a repository, profile, Todo queue, or
-unbounded conversation. The initial contract permits one active loop per run.
+A loop is one timer-based wake-up source belonging to one factory attempt, not
+to a repository, profile, Todo queue, or unbounded conversation. The initial
+contract permits one active loop per attempt.
 
 Creation, resumption, extension, and limit increases are human actions. A model
 may only stop its current loop; it cannot create another, broaden the prompt,
-extend duration, increase iterations, or transfer the loop to another task.
+extend duration, increase iterations, transfer it, or create another wake-up.
+Human input and fixed timers are the first wake-up types. Process, CI, review,
+and webhook events remain later possibilities and never create authority.
+
+### Optional Herdr terminal hosting
+
+The selected direction runs the unchanged foreground Pi-Run launcher inside a
+user-operated Herdr pane when detachable interaction is needed. Herdr owns the
+persistent terminal, attachment, workspace/pane inventory, and live status.
+Pi-Run owns the launcher, locks, restricted networking, Pi state, snapshot
+bridging, cleanup, and every factory authority decision.
+
+Pi-Run initially adds no background, attach, run-registry, stop, or remove
+commands. It does not mount the Herdr socket into the container, invoke plain
+`pi` through Herdr's agent launcher, or use Herdr's plain-`pi` native restore.
+Ordinary launches remain independent of Herdr. The exact compatibility and
+security boundary is recorded in the
+[detachable-runs design](detachable-runs-design.md).
 
 ## Factory task sources
 
@@ -119,7 +149,7 @@ extend duration, increase iterations, or transfer the loop to another task.
 The first implementation should use a host-created local task contract. External
 links are provenance only. Automatic backlog or issue consumption is excluded.
 
-## Run lifecycle
+## Factory attempt lifecycle
 
 ```text
 draft → approved → preparing → running
@@ -133,46 +163,50 @@ draft → approved → preparing → running
 An active phase may become `paused` because of shutdown, session replacement,
 human action, provider unavailability, or another recoverable interruption.
 Resume revalidates task, repository, worktree, base relationship, profile,
-runtime, network configuration, approval, and remaining limits.
+runtime, network configuration, approval, live-execution identity, and remaining
+limits.
 
-A terminal state is immutable run history. Retrying creates a new run ID linked
-to the same or a newly approved task revision; it does not erase the prior result
-or invisibly reset counters.
+A terminal state is immutable attempt history. Retrying creates a new attempt ID
+rather than erasing results or resetting counters. Herdr attachment state remains
+external presentation; reattachment does not resume paused effectful work or
+change factory phase.
 
 ## Bounded `/loop` contract
 
-The first `/loop` is narrower than Claude Code's full scheduled-task feature:
+The first `/loop` is narrower than a durable scheduled-task service:
 
 - a human supplies an explicit fixed interval and prompt;
 - interval, iterations, and wall-clock duration are bounded;
 - there is no bare maintenance prompt or project-controlled `loop.md`;
 - dynamic model-selected cadence is deferred;
-- only one active loop exists for a run;
-- wake-ups never overlap turns;
+- only one active loop exists for an attempt;
+- timer wake-ups never overlap turns;
 - missed wake-ups coalesce to at most one pending iteration;
 - there is no catch-up replay;
 - status, next wake-up, iteration, limits, and stop reason are visible;
 - process or session shutdown pauses the loop;
-- restart never resumes effectful work silently;
+- restart, resume, or reattachment never resumes effectful work silently;
 - each iteration is an ordinary user-message turn subject to normal instructions,
   Guardian review, network policy, and prepared-runtime selection.
 
-Polling is primarily for external waiting such as CI, review, or builds. Factory
-continuation should be event/state driven when work is already available.
+Polling is a fallback for unavailable events, primarily external waiting such as
+CI, review, or builds. `/loop` is not the controller or approval source.
 
 ## Worktree and runtime integration
 
-One run uses one managed worktree and one dedicated conversation. It reuses
+One attempt uses one managed worktree, one dedicated conversation, and one
+controlled Pi-Run execution. That execution may be displayed through Herdr, but
+Herdr pane identity is not the durable attempt controller. The factory reuses
 existing validation for repository relationships, portable workspace identity,
-machine association, dedicated branch/path, ownership and links, Git
-administration, launch locking, and stale-lock recovery.
+machine association, branch/path, links, Git administration, launch locking, and
+stale-lock recovery.
 
 The selected prepared profile image and network mode come from normal Pi-Run
-launch behavior. A factory task cannot request an implicit runtime build, profile
+launch behavior. A task cannot request an implicit runtime build, profile
 migration, credential addition, network expansion, mount, or alternate image.
-Changes affecting bound identity pause or invalidate the run.
+Changes affecting bound identity pause or invalidate the attempt.
 
-## Implementation and verification
+## Implementation, verification, and evidence
 
 The implementation context receives the exact approved task and current phase.
 It iterates only within that scope. Discovering another useful task produces a
@@ -187,6 +221,13 @@ Verification is deterministic where possible:
 - skipped checks remain skips;
 - provider, production, shared-infrastructure, or meaningful external checks
   require their own authority.
+
+Each terminal attempt produces an immutable evidence manifest containing task
+and approval identity, repository/base/worktree and changed-content identity,
+runtime/network identity, timing and budgets, pass/fail/skip results, review and
+remediation findings, usage, terminal state, and limitations. It must remain
+inspectable without exposing credentials, unrelated private host paths, or
+unbounded transcripts.
 
 ## Fresh-context review
 
@@ -205,11 +246,12 @@ replace deterministic acceptance checks.
 
 ## Visibility and durable evidence
 
-Terminal presentation shows task/run IDs, repository and branch, phase, loop
-limits and next wake-up, latest validation/review result, elapsed time, and exact
-stop or pause reason. The model receives only phase-relevant context; private host
-paths, workspace UUIDs, credentials, unrelated profile state, and other tasks are
-not exposed merely for presentation.
+Factory presentation distinguishes task and attempt IDs and shows
+repository/branch, phase, wake-up limits, next timer, latest validation/review
+result, elapsed time, and exact stop or pause reason. Herdr may separately show
+pane and live-agent attachment state. The model receives only phase-relevant
+context; private host paths, Herdr identity, workspace UUIDs, credentials,
+unrelated profile state, and other tasks are not exposed merely for presentation.
 
 ## Failure and recovery
 
@@ -217,7 +259,7 @@ The factory fails closed on malformed, linked, permission-unsafe, conflicting,
 ambiguous, oversized, or incompatible state. It does not reset invalid state to
 make progress.
 
-A run pauses or stops for exhausted limits, repeated validation failure,
+An attempt pauses or stops for exhausted limits, repeated validation failure,
 deterministic no progress, changed bound identity, unavailable required provider,
 Guardian refusal, unresolved review, access outside scope, shutdown/session
 replacement, or human stop/cancel. Exact no-progress rules and default limits
@@ -240,37 +282,52 @@ rollback is separately authorized.
 
 ## Repository readiness
 
-Readiness requires clear instructions, deterministic bounded checks, managed
-worktree compatibility, reviewable diffs, explicit external/secret boundaries,
-no agent Docker socket requirement, and recovery. It informs but does not approve.
+A read-only assessment reports `ready`, `ready-with-warnings`, or `not-ready`
+with evidence about instructions, deterministic bounded checks, managed-worktree
+and generated-file behavior, reviewable diffs, external/secret/production
+boundaries, absence of an agent Docker-socket requirement, and recovery. It does
+not modify, approve, or authorize the repository.
+
+## Future RPC workers and safe outputs
+
+Pi RPC is the preferred later asynchronous-worker substrate; initial v0.11 does
+not promise a production daemon. Factory state must therefore remain independent
+of Herdr and terminal scraping. Later external writes should use narrow typed
+host operations after validating task, attempt, approval, and output, never
+unrestricted publication credentials.
 
 ## Open design decisions
 
-Before implementing the task controller, settle:
+Before implementing each affected phase, settle:
 
-1. host schemas, bounds, permissions, locking, atomic writes, snapshots, and archival;
-2. task revision, approval, revocation, creation, listing, and command contracts;
-3. interval, iteration, duration, failure, no-progress, token, and cost limits;
-4. validation evidence, fresh review, findings, and remediation contracts;
-5. provider/model freezing, usage accounting, events, polling, and resume recovery;
-6. later commit/PR authority, status, transcript entries, journals, and diagnostics.
+1. disposable Herdr compatibility evidence and supported wrapper invocation;
+2. `factory/` schemas, permissions, locking, snapshots, and archival;
+3. task revision, approval, revocation, creation, listing, and identity invalidation;
+4. interval, duration, failure, no-progress, provider, token, and cost limits;
+5. validation evidence, manifests, fresh review, findings, and remediation;
+6. wake-up idempotency, RPC compatibility, safe outputs, status, and diagnostics.
 
 ## Initial acceptance direction
 
-Later implementation must demonstrate exact human approval, agent-inaccessible
-host state, one task/worktree/conversation/runtime/loop per run, no overlapping
-or replayed turns, paused restart and explicit resume, branch/fork safety,
-deterministic pass/fail/skip evidence, fresh bounded review, fail-closed invalid
-state, preserved worktree/evidence on failure, and no automatic commit, finish,
-push, PR, merge, tag, release, deploy, or next task. Complete source regression
-and disposable real-Docker factory acceptance remain required.
+Later implementation must demonstrate exact human approval; separation of
+external terminal presentation from agent-inaccessible authority; Herdr
+compatibility without exposing its socket or bypassing the Pi-Run launcher; and
+correct sidecar, lock, session, snapshot, and cleanup behavior while detached.
+It must also demonstrate one task/worktree/conversation/runtime/attempt and at
+most one loop; no overlapping or replayed wake-ups; paused restart and explicit
+resume; deterministic pass/fail/skip evidence; fresh bounded review; fail-closed
+invalid state; preserved source/evidence on failure; and no automatic commit,
+finish, push, PR, merge, tag, release, deploy, production repair, or next task.
+Complete source regression and disposable real-Docker acceptance remain required.
 
 ## Deliberate exclusions
 
-The initial design excludes background operation after Pi exits, a host daemon,
-cloud scheduling, concurrent factory tasks, automatic issue/backlog consumption,
-Todo submission, multi-repository orchestration, automatic commits or PRs,
-merge/release/deployment/production access, automatic profile/credential/runtime/
-mount/network changes, a model-callable capability to create or enlarge loops, a
-fifth embedded agent role, and any implicit implementation, migration, dependency,
-branch publication, or version change.
+The initial design excludes a Pi-Run multiplexer, run registry, retained-exit
+system, or Herdr control-socket bridge; a persistent daemon that restarts after
+Pi exit, logout, host reboot, or WSL shutdown; cloud scheduling; concurrent
+factory tasks; automatic issue/backlog/Plan/Todo/event consumption; multi-repository
+orchestration; automatic commits, PRs, merges, releases, deployments, or
+production access; automatic profile/credential/runtime/mount/network changes;
+model-callable task approval, loop or wake-up creation/enlargement, or
+publication; a fifth embedded agent role; and any implicit implementation,
+dependency, migration, branch publication, version, or release change.
