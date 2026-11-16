@@ -288,6 +288,15 @@ done
 if grep -E 'docker (system|builder) prune' "${ROOT}/tests/runtime-images-e2e-test.sh" >/dev/null; then
     fail "runtime image acceptance prunes shared Docker state"
 fi
+for herdr_test in \
+    herdr-wrapper-compatibility-test.sh \
+    herdr-pi-run-launcher-test.sh \
+    herdr-real-docker-test.sh; do
+    [[ -x "${ROOT}/tests/${herdr_test}" && ! -L "${ROOT}/tests/${herdr_test}" ]] \
+        || fail "Herdr acceptance test is missing or unsafe: ${herdr_test}"
+    [[ "$(sed -n '2p' "${ROOT}/tests/${herdr_test}")" == "${SPDX}" ]] \
+        || fail "Herdr acceptance test has no SPDX identifier: ${herdr_test}"
+done
 [[ -x "${ROOT}/tests/docker-egress-rules-e2e-test.sh" &&
    ! -L "${ROOT}/tests/docker-egress-rules-e2e-test.sh" ]] \
     || fail "production egress real-Docker test is missing or unsafe"

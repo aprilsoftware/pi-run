@@ -196,6 +196,43 @@ reactivated listing, and lock cleanup. Without
 exist locally. A skipped invocation is not a successful real-Docker validation
 and must be reported as skipped.
 
+### Validate optional Herdr hosting
+
+Herdr compatibility acceptance uses a caller-supplied verified binary. The tests
+never install or update Herdr. The maintained compatibility target is the
+official Linux/amd64 Herdr 0.9.5 binary with SHA-256:
+
+```text
+14d9e8bc8b4a9e0118d77c32266f76d461f09b40342eb23752960bd89f59929d
+```
+
+Set `HERDR_BIN` to that verified binary and run the wrapper and fake-Docker
+layers without granting real-Docker authority:
+
+```bash
+PI_RUN_TEST_HERDR=1 HERDR_BIN=/path/to/herdr \
+  tests/herdr-wrapper-compatibility-test.sh
+PI_RUN_TEST_HERDR=1 HERDR_BIN=/path/to/herdr \
+  tests/herdr-pi-run-launcher-test.sh
+```
+
+The real-Docker layer is a separate explicit opt-in. It requires Linux/amd64,
+non-root Docker access, and the version-matched core and egress images already
+available locally:
+
+```bash
+PI_RUN_TEST_HERDR=1 PI_RUN_TEST_REAL_DOCKER=1 \
+HERDR_BIN=/path/to/herdr \
+  tests/herdr-real-docker-test.sh
+```
+
+These tests create disposable Herdr sessions, profiles, repositories,
+workspaces, containers, networks, and snapshot state. They do not install the
+Herdr Pi integration, expose the Herdr socket or CLI inside Pi-Run containers,
+or authorize publication. An absent binary, disabled opt-in, unavailable
+Docker daemon, or unsupported host must be reported as `SKIP` or failure rather
+than inferred success.
+
 ## Build application release artifacts
 
 Create the deterministic host-application archive and checksum in a disposable
