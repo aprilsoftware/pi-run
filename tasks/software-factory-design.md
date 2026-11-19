@@ -108,6 +108,37 @@ movement, profile/runtime changes, or validation changes do not silently update
 an approved task. Approval of one task does not approve another task, queue item,
 roadmap, release train, or unrestricted discovered remediation.
 
+### Factory Task Contract v1
+
+The initial host-created task revision conforms to the release-owned
+`lib/pi-run/factory-task-v1.schema.json` JSON Schema. The contract binds a task
+UUID and revision; creation time; canonical repository path and exact 40-character
+base commit; managed-task name; profile and network mode; bounded goal,
+acceptance, exclusions, and provenance; deterministic validation argument arrays
+and timeouts; iteration, duration, failure, and no-progress limits; and the fixed
+`validated-local-worktree` outcome.
+
+Version 1 permits exactly two effects, in their canonical order:
+`modify-managed-worktree` and `run-declared-validation`. It contains no commit,
+worktree finish, push, pull-request, merge, release, deployment, production,
+credential, runtime-build, profile-change, mount, or network-expansion authority.
+Validation declarations are argument arrays rather than shell command strings;
+later execution must not reinterpret them through a shell.
+
+The task identity hash is SHA-256 over the exact UTF-8 bytes emitted by
+`jq -S -c .`, including its terminating line feed, after strict schema validation.
+Object keys are sorted by that operation; array order remains identity-significant.
+Changing any field creates a different hash and invalidates approval. The schema
+version identifies the canonicalization contract; the schema file itself is not
+embedded in the hash.
+
+Schema validity, a task ID, a revision, or a hash is not approval. Approval,
+revocation, attempt state, evidence, and archival remain separate host-owned
+records. Runtime validation must additionally prove canonical paths, repository
+and commit identity, selected-profile existence, configured network-mode match,
+safe ownership and permissions, and task-revision uniqueness before approval or
+execution can exist.
+
 ### Loop and wake-up ownership
 
 A loop is one timer-based wake-up source belonging to one factory attempt, not
