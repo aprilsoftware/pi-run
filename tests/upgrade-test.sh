@@ -325,24 +325,77 @@ run_path_install() {
     "${TMP}/source-${version}/install.sh"
 }
 
-# Explicit consent adds one safe, effective, and idempotent managed shell block.
+# Explicit consent configures Bash login and non-login shells safely and idempotently.
 PATH_HOME="${TMP}/path home"
 PATH_ROOT="${TMP}/path application"
 PATH_BIN="${TMP}/path bin's"
 mkdir -p "${PATH_HOME}"
 path_output="$(run_path_install 0.5.3 "${PATH_HOME}" "${PATH_ROOT}" "${PATH_BIN}" yes /bin/bash)"
-assert_contains "${path_output}" "Added Pi-Run PATH configuration to ${PATH_HOME}/.bashrc"
+assert_contains "${path_output}" "Added Pi-Run PATH configuration to ${PATH_HOME}/.bashrc."
+assert_contains "${path_output}" "Added Pi-Run PATH configuration to ${PATH_HOME}/.profile."
 assert_contains "${path_output}" "To use Pi-Run in this terminal now, run:"
-grep -Fqx '# >>> pi-run PATH >>>' "${PATH_HOME}/.bashrc" \
-    || fail "installer did not add the managed PATH block"
-grep -Fqx '# <<< pi-run PATH <<<' "${PATH_HOME}/.bashrc" \
-    || fail "installer did not close the managed PATH block"
+for path_file in "${PATH_HOME}/.bashrc" "${PATH_HOME}/.profile"; do
+    grep -Fqx '# >>> pi-run PATH >>>' "${path_file}" \
+        || fail "installer did not add the managed PATH block to ${path_file}"
+    grep -Fqx '# <<< pi-run PATH <<<' "${path_file}" \
+        || fail "installer did not close the managed PATH block in ${path_file}"
+done
 EXPECTED_BIN="${PATH_BIN}/pi-run" PATH=/usr/bin:/bin HOME="${PATH_HOME}" \
     bash --noprofile --norc -c '. "$HOME/.bashrc"; [[ "$(command -v pi-run)" == "$EXPECTED_BIN" ]]' \
-    || fail "managed Bash PATH block did not expose pi-run"
-run_path_install 0.5.4 "${PATH_HOME}" "${PATH_ROOT}" "${PATH_BIN}" yes /bin/bash >/dev/null
+    || fail "managed Bash PATH block did not expose pi-run in a non-login shell"
+EXPECTED_BIN="${PATH_BIN}/pi-run" PATH=/usr/bin:/bin HOME="${PATH_HOME}" \
+    bash --login -ic '[[ "$(command -v pi-run)" == "$EXPECTED_BIN" ]]' >/dev/null 2>&1 \
+    || fail "managed Bash login PATH block did not expose pi-run"
+rm "${PATH_HOME}/.profile"
+repair_output="$(run_path_install 0.5.4 "${PATH_HOME}" "${PATH_ROOT}" "${PATH_BIN}" yes /bin/bash)"
+assert_contains "${repair_output}" "Added Pi-Run PATH configuration to ${PATH_HOME}/.profile."
 [[ "$(grep -Fc '# >>> pi-run PATH >>>' "${PATH_HOME}/.bashrc")" == 1 ]] \
-    || fail "installer duplicated the managed PATH block"
+    || fail "installer duplicated the existing .bashrc PATH block while repairing login setup"
+[[ "$(grep -Fc '# >>> pi-run PATH >>>' "${PATH_HOME}/.profile")" == 1 ]] \
+    || fail "installer did not repair the missing Bash login PATH block"
+run_path_install 0.5.5 "${PATH_HOME}" "${PATH_ROOT}" "${PATH_BIN}" yes /bin/bash >/dev/null
+for path_file in "${PATH_HOME}/.bashrc" "${PATH_HOME}/.profile"; do
+    [[ "$(grep -Fc '# >>> pi-run PATH >>>' "${path_file}")" == 1 ]] \
+        || fail "installer duplicated the managed PATH block in ${path_file}"
+done
+
+# Bash follows login-file precedence while retaining .bashrc for non-login shells.
+for login_case in '.bash_profile' '.bash_login'; do
+    login_home="${TMP}/path-${login_case#.}-home"
+    login_root="${TMP}/path-${login_case#.}-app"
+    login_bin="${TMP}/path-${login_case#.}-bin"
+    mkdir -p "${login_home}"
+    printf '%s\n' '# existing login configuration' > "${login_home}/${login_case}"
+    case "${login_case}" in
+        .bash_profile)
+            printf '%s\n' '# lower-precedence login configuration' > "${login_home}/.bash_login"
+            printf '%s\n' '# lower-precedence login configuration' > "${login_home}/.profile"
+            ;;
+        .bash_login)
+            printf '%s\n' '# lower-precedence login configuration' > "${login_home}/.profile"
+            ;;
+    esac
+    run_path_install 0.5.3 "${login_home}" "${login_root}" "${login_bin}" yes /bin/bash >/dev/null
+    grep -Fqx '# >>> pi-run PATH >>>' "${login_home}/.bashrc" \
+        || fail "installer did not configure .bashrc for ${login_case}"
+    grep -Fqx '# >>> pi-run PATH >>>' "${login_home}/${login_case}" \
+        || fail "installer did not configure the effective ${login_case}"
+    case "${login_case}" in
+        .bash_profile)
+            ! grep -Fqx '# >>> pi-run PATH >>>' "${login_home}/.bash_login" \
+                || fail "installer modified lower-precedence .bash_login"
+            ! grep -Fqx '# >>> pi-run PATH >>>' "${login_home}/.profile" \
+                || fail "installer modified lower-precedence .profile"
+            ;;
+        .bash_login)
+            ! grep -Fqx '# >>> pi-run PATH >>>' "${login_home}/.profile" \
+                || fail "installer modified lower-precedence .profile"
+            ;;
+    esac
+    EXPECTED_BIN="${login_bin}/pi-run" PATH=/usr/bin:/bin HOME="${login_home}" \
+        bash --login -ic '[[ "$(command -v pi-run)" == "$EXPECTED_BIN" ]]' >/dev/null 2>&1 \
+        || fail "${login_case} did not expose pi-run in a login shell"
+done
 
 for shell_case in 'zsh .zshrc' 'dash .profile'; do
     read -r shell_name config_name <<< "${shell_case}"
@@ -373,6 +426,7 @@ printf '%s\n' 'preserve me' > "${UNSAFE_HOME}/target"
 ln -s "${UNSAFE_HOME}/target" "${UNSAFE_HOME}/.bashrc"
 unsafe_output="$(run_path_install 0.5.3 "${UNSAFE_HOME}" "${TMP}/path-unsafe-app" "${TMP}/path-unsafe-bin" yes /bin/bash)"
 [[ "$(cat "${UNSAFE_HOME}/target")" == 'preserve me' ]] || fail "unsafe shell target was modified"
+[[ ! -e "${UNSAFE_HOME}/.profile" ]] || fail "unsafe Bash setup partially configured the login file"
 assert_contains "${unsafe_output}" "refusing unsafe shell configuration target"
 
 ASK_HOME="${TMP}/path-ask-home"
@@ -383,6 +437,7 @@ ask_output="$(setsid -w env \
     PI_RUN_INSTALL_ROOT="${TMP}/path-ask-app" PI_RUN_BIN_DIR="${TMP}/path-ask-bin" \
     "${TMP}/source-0.5.3/install.sh" </dev/null)"
 [[ ! -e "${ASK_HOME}/.bashrc" ]] || fail "non-interactive ask mode modified .bashrc"
+[[ ! -e "${ASK_HOME}/.profile" ]] || fail "non-interactive ask mode modified .profile"
 assert_contains "${ask_output}" "No interactive terminal is available"
 
 PATH="${TMP}/fake-bin:${PATH}" \

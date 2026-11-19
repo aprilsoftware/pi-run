@@ -141,11 +141,17 @@ directory is absent from `PATH`:
 - `yes` writes the supported shell's managed entry without prompting;
 - `no` never changes shell configuration.
 
-Bash uses `~/.bashrc`, Zsh uses `~/.zshrc`, and `sh`, Dash, Ash, Ksh, and Mksh use
-`~/.profile`. Unknown shells and non-interactive `ask` installations fall back
-to printed instructions. The installer refuses linked, non-regular, unwritable,
-or partially marked configuration targets. Fish has distinct PATH syntax and is
-not modified automatically.
+Bash uses two targets: `~/.bashrc` for interactive non-login shells and the
+effective login file for fresh login and SSH sessions. Login-file selection
+follows Bash precedence: the first existing path among `~/.bash_profile`,
+`~/.bash_login`, and `~/.profile`; when none exists, the installer creates
+`~/.profile`. The prompt and completion output name every file selected. Zsh
+uses `~/.zshrc`, while `sh`, Dash, Ash, Ksh, and Mksh use `~/.profile`. Unknown
+shells and non-interactive `ask` installations fall back to printed
+instructions. Before changing either Bash target, the installer validates both
+and refuses the complete automatic configuration if either is linked,
+non-regular, unwritable, incomplete, or bound to another Pi-Run executable
+directory. Fish has distinct PATH syntax and is not modified automatically.
 
 The launcher data home is independent:
 
@@ -183,9 +189,12 @@ pi-run version
 An installer-approved managed entry applies to newly started shells, not the
 already-running parent shell. The entry is bounded by `# >>> pi-run PATH >>>`
 and `# <<< pi-run PATH <<<` markers and checks for an existing PATH element
-before prepending it. Reinstalling or upgrading does not duplicate the block.
-When automatic configuration is skipped, persist the printed command manually
-in the appropriate shell configuration after confirming the path.
+before prepending it. Bash receives the same guarded block in both selected
+startup files, so either startup mode is effective without sourcing arbitrary
+content from the other file. Reinstalling or upgrading does not duplicate either
+block. When automatic configuration is skipped, persist the printed command
+manually in the shell files appropriate to the required startup modes after
+confirming the path.
 
 `pi-run version` reports the launcher version and selected core, utility, and
 egress images without checking Docker. `pi-run home` resolves the data path

@@ -133,12 +133,15 @@ release you trust. If release assets or images require authentication, use the
 
 On success, the installer reports the application location and executable path.
 If that directory is not on `PATH`, an interactive installation detects Bash,
-Zsh, or a POSIX-compatible login shell and asks before adding a managed entry to
-its configuration file. The installer never silently changes shell files and
-cannot change the environment of the shell that launched it. Follow the printed
-`export PATH=...` instruction to use `pi-run` immediately; newly started shells
-load an accepted persistent entry automatically. Non-interactive or unsupported
-shells receive the manual instruction without modifying configuration.
+Zsh, or a POSIX-compatible login shell and names the exact configuration files
+before asking to add managed entries. For Bash it configures `~/.bashrc` and the
+first existing login file in Bash precedence order: `~/.bash_profile`,
+`~/.bash_login`, then `~/.profile`; if none exists, it creates `~/.profile`.
+This covers ordinary interactive shells and fresh SSH/login shells. The
+installer never silently changes shell files and cannot change the environment
+of the shell that launched it. Follow the printed `export PATH=...` instruction
+to use `pi-run` immediately. Non-interactive or unsupported shells receive the
+manual instruction without modifying configuration.
 
 For an exact older/newer tag, custom locations, and installer refusal behavior,
 see the [Installation reference](reference/installation.md#select-a-release).

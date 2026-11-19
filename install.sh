@@ -63,6 +63,69 @@ path_config_target() {
     esac
 }
 
+bash_login_config_target() {
+    configured_shell=${SHELL:-}
+    [ "${configured_shell##*/}" = bash ] || return 1
+    for candidate in "${HOME}/.bash_profile" "${HOME}/.bash_login" "${HOME}/.profile"; do
+        if [ -e "${candidate}" ] || [ -L "${candidate}" ]; then
+            printf '%s\n' "${candidate}"
+            return
+        fi
+    done
+    printf '%s\n' "${HOME}/.profile"
+}
+
+path_config_state() {
+    path_target=$1
+    if [ -L "${path_target}" ] || { [ -e "${path_target}" ] && [ ! -f "${path_target}" ]; }; then
+        echo "Executable directory is not on PATH; refusing unsafe shell configuration target: ${path_target}"
+        return 2
+    fi
+    if [ -e "${path_target}" ] && [ ! -w "${path_target}" ]; then
+        echo "Executable directory is not on PATH; shell configuration is not writable: ${path_target}"
+        return 2
+    fi
+    quoted_bin_dir=$(shell_quote "${BIN_DIR}")
+    if grep -Fqx '# >>> pi-run PATH >>>' "${path_target}" 2>/dev/null; then
+        if ! grep -Fqx '# <<< pi-run PATH <<<' "${path_target}"; then
+            echo "Executable directory is not on PATH; refusing incomplete Pi-Run block in ${path_target}."
+            return 2
+        fi
+        if grep -Fqx "_pi_run_bin_dir=${quoted_bin_dir}" "${path_target}"; then
+            return 0
+        fi
+        echo "Executable directory is not on PATH; refusing a Pi-Run block for a different directory in ${path_target}."
+        return 2
+    fi
+    if grep -Fqx '# <<< pi-run PATH <<<' "${path_target}" 2>/dev/null; then
+        echo "Executable directory is not on PATH; refusing incomplete Pi-Run block in ${path_target}."
+        return 2
+    fi
+    return 1
+}
+
+append_path_config() {
+    path_target=$1
+    quoted_bin_dir=$(shell_quote "${BIN_DIR}")
+    if {
+        printf '\n# >>> pi-run PATH >>>\n'
+        printf '_pi_run_bin_dir=%s\n' "${quoted_bin_dir}"
+        cat <<'EOF'
+case ":${PATH:-}:" in
+    *":${_pi_run_bin_dir}:"*) ;;
+    *) PATH="${_pi_run_bin_dir}:${PATH:-}"; export PATH ;;
+esac
+unset _pi_run_bin_dir
+# <<< pi-run PATH <<<
+EOF
+    } >> "${path_target}"; then
+        echo "Added Pi-Run PATH configuration to ${path_target}."
+        return 0
+    fi
+    echo "Could not update shell configuration: ${path_target}"
+    return 1
+}
+
 configure_shell_path() {
     case ":${PATH:-}:" in
         *":${BIN_DIR}:"*) return ;;
@@ -73,32 +136,54 @@ configure_shell_path() {
         print_path_instruction
         return
     }
-    if [ -L "${config_target}" ] || { [ -e "${config_target}" ] && [ ! -f "${config_target}" ]; }; then
-        echo "Executable directory is not on PATH; refusing unsafe shell configuration target: ${config_target}"
-        print_path_instruction
-        return
+    login_target=$(bash_login_config_target 2>/dev/null || true)
+    if [ "${login_target}" = "${config_target}" ]; then
+        login_target=
     fi
-    if [ -e "${config_target}" ] && [ ! -w "${config_target}" ]; then
-        echo "Executable directory is not on PATH; shell configuration is not writable: ${config_target}"
-        print_path_instruction
-        return
-    fi
-    quoted_bin_dir=$(shell_quote "${BIN_DIR}")
-    if grep -Fqx '# >>> pi-run PATH >>>' "${config_target}" 2>/dev/null; then
-        if ! grep -Fqx '# <<< pi-run PATH <<<' "${config_target}"; then
-            echo "Executable directory is not on PATH; refusing incomplete Pi-Run block in ${config_target}."
-        elif grep -Fqx "_pi_run_bin_dir=${quoted_bin_dir}" "${config_target}"; then
-            echo "Pi-Run PATH configuration already exists in ${config_target}."
+
+    config_needs_update=false
+    if path_config_state "${config_target}"; then
+        :
+    else
+        state=$?
+        if [ "${state}" -eq 1 ]; then
+            config_needs_update=true
         else
-            echo "Executable directory is not on PATH; refusing a Pi-Run block for a different directory in ${config_target}."
+            print_path_instruction
+            return
+        fi
+    fi
+
+    login_needs_update=false
+    if [ -n "${login_target}" ]; then
+        if path_config_state "${login_target}"; then
+            :
+        else
+            state=$?
+            if [ "${state}" -eq 1 ]; then
+                login_needs_update=true
+            else
+                print_path_instruction
+                return
+            fi
+        fi
+    fi
+
+    if [ "${config_needs_update}" = false ] && [ "${login_needs_update}" = false ]; then
+        echo "Pi-Run PATH configuration already exists in ${config_target}."
+        if [ -n "${login_target}" ]; then
+            echo "Pi-Run PATH configuration already exists in ${login_target}."
         fi
         print_path_instruction
         return
     fi
-    if grep -Fqx '# <<< pi-run PATH <<<' "${config_target}" 2>/dev/null; then
-        echo "Executable directory is not on PATH; refusing incomplete Pi-Run block in ${config_target}."
-        print_path_instruction
-        return
+
+    if [ "${config_needs_update}" = true ] && [ "${login_needs_update}" = true ]; then
+        config_prompt="Add managed Pi-Run PATH entries to ${config_target} and ${login_target}? [Y/n] "
+    elif [ "${config_needs_update}" = true ]; then
+        config_prompt="Add a managed Pi-Run PATH entry to ${config_target}? [Y/n] "
+    else
+        config_prompt="Add a managed Pi-Run PATH entry to ${login_target}? [Y/n] "
     fi
 
     configure_path=false
@@ -107,7 +192,7 @@ configure_shell_path() {
         no) ;;
         ask)
             if ( : </dev/tty ) 2>/dev/null; then
-                printf '%s' "Add a managed Pi-Run PATH entry to ${config_target}? [Y/n] " >/dev/tty
+                printf '%s' "${config_prompt}" >/dev/tty
                 answer=
                 IFS= read -r answer </dev/tty || answer=n
                 case "${answer}" in
@@ -120,21 +205,11 @@ configure_shell_path() {
     esac
 
     if [ "${configure_path}" = true ]; then
-        if {
-            printf '\n# >>> pi-run PATH >>>\n'
-            printf '_pi_run_bin_dir=%s\n' "${quoted_bin_dir}"
-            cat <<'EOF'
-case ":${PATH:-}:" in
-    *":${_pi_run_bin_dir}:"*) ;;
-    *) PATH="${_pi_run_bin_dir}:${PATH:-}"; export PATH ;;
-esac
-unset _pi_run_bin_dir
-# <<< pi-run PATH <<<
-EOF
-        } >> "${config_target}"; then
-            echo "Added Pi-Run PATH configuration to ${config_target}; new shells will load it."
-        else
-            echo "Could not update shell configuration: ${config_target}"
+        if [ "${config_needs_update}" = true ]; then
+            append_path_config "${config_target}" || true
+        fi
+        if [ "${login_needs_update}" = true ]; then
+            append_path_config "${login_target}" || true
         fi
     else
         echo "Shell PATH configuration was not changed."
