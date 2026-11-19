@@ -164,13 +164,22 @@ workspace paths, or automatic-snapshot preference.
 Stop all Pi sessions using that home first. Pi-Run requires exclusive access,
 stages and validates the snapshot, asks for the complete snapshot ID, and creates
 a verified `pre-restore` snapshot before applying changes transactionally. When
-possible it rolls back an application failure. Successful restore exits; launch
-Pi-Run again to use the restored state.
+possible it rolls back an application failure.
+
+Before reporting success, interactive restore offers safe unique matches between
+existing local directories and restored workspaces with sessions. Matching uses
+the directory's current checkout state and can fall back to a unique workspace
+name when pre-restore metadata is stale. Accepted matches are reconnected after
+the portable state commits. Obsolete ordinary mappings that no longer exist in
+the restored registry are removed so they cannot block the next launch; managed
+worktree associations remain protected. Declined or ambiguous restored sessions
+remain available through the guided
+[workspace reconnection](workspaces-and-sessions.md#reconnect-restored-sessions)
+flow. Successful restore exits with the local mapping state ready for the next
+launch.
 
 Recover a separate copy first when you are unsure whether live replacement is
-appropriate. Restored sessions may need
-[workspace reconnection](workspaces-and-sessions.md#reconnect-restored-sessions)
-on the new machine.
+appropriate.
 
 ## Delete a snapshot deliberately
 

@@ -431,7 +431,7 @@ count_workspace_sessions_in_profiles() {
 
 plan_restore_workspace_reconnections() {
     local pending="$1" machine live_registry staged_registry staged_profiles mapping
-    local current_id path metadata name kind target_id session_count candidate_count
+    local current_id path name actual_kind target_id session_count candidate_count
     local target_path mapped_target_path target_has_valid_path seen_index index
     local -a mappings targets raw_targets=() raw_current=() raw_paths=() raw_names=() raw_counts=()
     declare -A target_seen=()
@@ -457,14 +457,22 @@ plan_restore_workspace_reconnections() {
            -d "${path}" && ! -L "${path}" && "$(realpath "${path}")" == "${path}" ]] || continue
         workspace_has_session_state "${current_id}" && continue
         [[ "$(count_workspace_sessions_in_profiles "${staged_profiles}" "${current_id}")" == 0 ]] || continue
-        metadata="$(jq -er --arg id "${current_id}" '
+        name="$(jq -er --arg id "${current_id}" '
             [.workspaces[] | select(.id == $id)] |
-            select(length == 1) | .[0] | [.name, .kind] | @tsv
+            select(length == 1) | .[0].name
         ' "${live_registry}" 2>/dev/null)" || continue
-        IFS=$'\t' read -r name kind <<< "${metadata}"
-        mapfile -t targets < <(jq -r --arg name "${name}" --arg kind "${kind}" --arg current "${current_id}" '
+        actual_kind=directory
+        if git -C "${path}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+            actual_kind=git
+        fi
+        mapfile -t targets < <(jq -r --arg name "${name}" --arg kind "${actual_kind}" --arg current "${current_id}" '
             .workspaces[] | select(.name == $name and .kind == $kind and .id != $current) | .id
         ' "${staged_registry}")
+        if (( ${#targets[@]} == 0 )); then
+            mapfile -t targets < <(jq -r --arg name "${name}" --arg current "${current_id}" '
+                .workspaces[] | select(.name == $name and .id != $current) | .id
+            ' "${staged_registry}")
+        fi
         candidate_count=0
         target_id=""
         session_count=0
@@ -548,6 +556,40 @@ apply_restore_workspace_reconnections() {
     done
     printf 'Reconnected %s local checkout(s) to restored sessions.\n' \
         "${#RESTORE_RECONNECT_TARGETS[@]}"
+}
+
+prune_obsolete_restore_workspace_mappings() {
+    local machine registry obsolete_count
+    machine="$(machine_file)"
+    registry="${PI_RUN_HOME_RESOLVED}/workspaces/registry.json"
+    acquire_workspace_lock
+    initialize_machine_file "${machine}"
+    validate_workspace_metadata "${machine}"
+    obsolete_count="$(jq -r --slurpfile registry "${registry}" '
+        ($registry[0].workspaces | map(.id)) as $known |
+        ([.repositories[]?.tasks[]? | select(.state != "finished") | .workspaceId]) as $managed |
+        [.workspacePaths[] as $mapping |
+            select(($known | index($mapping.workspaceId)) == null and
+                   ($managed | index($mapping.workspaceId)) == null) |
+            $mapping] | length
+    ' "${machine}")"
+    if (( obsolete_count > 0 )); then
+        # shellcheck disable=SC2016 # Dollar-prefixed names are jq variables.
+        update_json "${machine}" --slurpfile registry "${registry}" '
+            ($registry[0].workspaces | map(.id)) as $known |
+            ([.repositories[]?.tasks[]? | select(.state != "finished") | .workspaceId]) as $managed |
+            .workspacePaths = [.workspacePaths[] as $mapping |
+                select(($known | index($mapping.workspaceId)) != null or
+                       ($managed | index($mapping.workspaceId)) != null) |
+                $mapping]
+        '
+        validate_workspace_metadata "${machine}"
+    fi
+    release_workspace_lock
+    if (( obsolete_count > 0 )); then
+        printf 'Removed %s obsolete local workspace mapping(s) replaced by restored metadata.\n' \
+            "${obsolete_count}"
+    fi
 }
 
 RESTORE_ONE_SHOT_ACTIVE=false
@@ -697,6 +739,7 @@ apply_staged_restore() {
     trap - EXIT
     printf 'Restore applied: %s\nPre-restore snapshot: %s\n' "${snapshot_id}" "${pre_snapshot_id}"
     apply_restore_workspace_reconnections
+    prune_obsolete_restore_workspace_mappings
     if restore_reconnection_was_deferred; then
         printf 'Workspace reconnection was deferred; run pi-run resume to reconnect restored sessions.\n'
     fi

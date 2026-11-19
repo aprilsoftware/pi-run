@@ -191,7 +191,7 @@ prepare_reconnect_case() {
     registry="${home}/workspaces/registry.json"
     staged_registry="${home}/snapshots/restore-fixture/input/workspaces/registry.json"
     jq --arg id "${CURRENT_WORKSPACE_ID}" \
-        '.workspaces += [{id:$id,name:"pi-run",kind:"git",createdAt:"2026-10-10T10:00:00Z"}]' \
+        '.workspaces += [{id:$id,name:"pi-run",kind:"directory",createdAt:"2026-10-10T10:00:00Z"}]' \
         "${registry}" > "${registry}.tmp"
     mv "${registry}.tmp" "${registry}"
     chmod 0600 "${registry}"
@@ -284,8 +284,10 @@ output="$(run_pi_tty "${DECLINED_HOME}" "${RESTORE_ID}\nn\n" snapshot restore "$
     || fail "declined restore reconnection was not deferred"
 machine="$(find "${DECLINED_HOME}/machines" -maxdepth 1 -type f -name '*.json' -print -quit)"
 jq -e --arg id "${CURRENT_WORKSPACE_ID}" --arg path "${declined_checkout}" '
-    [.workspacePaths[] | select(.workspaceId == $id and .path == $path)] | length == 1
-' "${machine}" >/dev/null || fail "declined restore reconnection changed the mapping"
+    [.workspacePaths[] | select(.workspaceId == $id or .path == $path)] | length == 0
+' "${machine}" >/dev/null || fail "declined restore retained an obsolete local mapping"
+[[ "${output}" == *'Removed 1 obsolete local workspace mapping(s)'* ]] \
+    || fail "declined restore did not report obsolete mapping cleanup"
 
 AMBIGUOUS_HOME="${TMP}/ambiguous-reconnect"
 prepare_reconnect_case "${AMBIGUOUS_HOME}"
@@ -305,8 +307,8 @@ output="$(run_pi_tty "${AMBIGUOUS_HOME}" "${RESTORE_ID}\n" snapshot restore "${R
     || fail "ambiguous restored workspaces were offered for automatic reconnection"
 machine="$(find "${AMBIGUOUS_HOME}/machines" -maxdepth 1 -type f -name '*.json' -print -quit)"
 jq -e --arg id "${CURRENT_WORKSPACE_ID}" --arg path "${ambiguous_checkout}" '
-    [.workspacePaths[] | select(.workspaceId == $id and .path == $path)] | length == 1
-' "${machine}" >/dev/null || fail "ambiguous restore changed the mapping"
+    [.workspacePaths[] | select(.workspaceId == $id or .path == $path)] | length == 0
+' "${machine}" >/dev/null || fail "ambiguous restore retained an obsolete local mapping"
 
 CONFLICT_HOME="${TMP}/session-conflict-reconnect"
 prepare_reconnect_case "${CONFLICT_HOME}"
@@ -320,8 +322,8 @@ output="$(run_pi_tty "${CONFLICT_HOME}" "${RESTORE_ID}\n" snapshot restore "${RE
     || fail "checkout with local session state was offered for reconnection"
 machine="$(find "${CONFLICT_HOME}/machines" -maxdepth 1 -type f -name '*.json' -print -quit)"
 jq -e --arg id "${CURRENT_WORKSPACE_ID}" --arg path "${conflict_checkout}" '
-    [.workspacePaths[] | select(.workspaceId == $id and .path == $path)] | length == 1
-' "${machine}" >/dev/null || fail "session conflict changed the mapping"
+    [.workspacePaths[] | select(.workspaceId == $id or .path == $path)] | length == 0
+' "${machine}" >/dev/null || fail "session-conflict restore retained an obsolete local mapping"
 
 MISSING_HOME="${TMP}/missing-checkout-reconnect"
 prepare_reconnect_case "${MISSING_HOME}"
@@ -332,8 +334,8 @@ output="$(run_pi_tty "${MISSING_HOME}" "${RESTORE_ID}\n" snapshot restore "${RES
     || fail "missing checkout was offered for reconnection"
 machine="$(find "${MISSING_HOME}/machines" -maxdepth 1 -type f -name '*.json' -print -quit)"
 jq -e --arg id "${CURRENT_WORKSPACE_ID}" --arg path "${missing_checkout}" '
-    [.workspacePaths[] | select(.workspaceId == $id and .path == $path)] | length == 1
-' "${machine}" >/dev/null || fail "missing checkout changed the mapping"
+    [.workspacePaths[] | select(.workspaceId == $id or .path == $path)] | length == 0
+' "${machine}" >/dev/null || fail "missing-checkout restore retained an obsolete local mapping"
 
 LOCK_HOME="${TMP}/lock-home"
 cp -a "${LOCAL_BASE}" "${LOCK_HOME}"

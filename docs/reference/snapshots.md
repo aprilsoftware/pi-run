@@ -178,12 +178,21 @@ shared data, and the workspace registry. It does not replace repository data,
 repository access secrets, snapshot history, or machine-local state. Live and
 staged paths must reside on the Pi-Run home filesystem.
 
-Before application, Pi-Run can find safe, unique matches between local checkout
-paths and restored workspaces with sessions. It offers one grouped confirmation
-and applies accepted mappings after portable restore commits. Ambiguous,
-missing, conflicting, or declined mappings remain for guided `pi-run resume`.
-A successful restore exits so the next launch is the first to use restored
-state.
+Before application, Pi-Run finds safe, unique matches between local checkout
+paths and restored workspaces with sessions. It derives the local path's current
+Git/directory kind instead of trusting stale registry metadata, preferring the
+same kind and falling back to a unique same-name restored workspace. It offers
+one grouped confirmation and applies accepted mappings after portable restore
+commits.
+
+After accepted reconnections, restore removes ordinary current-machine mappings
+whose workspace IDs are absent from the restored registry. Active managed-task
+mappings remain protected by their machine association. This cleanup prevents a
+successful restore from leaving a path that fails with an unknown-workspace
+error. Declined, ambiguous, missing, or conflicting session groups remain
+available for guided `pi-run resume`, while their obsolete pre-restore ordinary
+mapping no longer blocks fresh registration or direct `-r` reconnection. A
+successful restore exits with machine mapping state ready for the next launch.
 
 ## Deletion, pruning, and locking
 
