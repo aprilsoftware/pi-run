@@ -38,7 +38,7 @@ grep -Fx 'FROM debian:trixie-slim AS restic-downloader' "${CORE_DOCKERFILE}" >/d
 grep -F "echo \"\${RESTIC_LINUX_AMD64_SHA256}  /tmp/restic.bz2\" | sha256sum -c -" \
     "${CORE_DOCKERFILE}" >/dev/null \
     || fail "core Dockerfile does not verify the Restic download"
-for package in bash ca-certificates curl git gosu jq netcat-openbsd openssh-client openssl passwd ripgrep; do
+for package in bash ca-certificates curl fd-find git gosu jq netcat-openbsd openssh-client openssl passwd ripgrep; do
     grep -Fx "        ${package} \\" "${CORE_DOCKERFILE}" >/dev/null \
         || fail "core Dockerfile does not install required package: ${package}"
 done
@@ -251,6 +251,14 @@ grep -Fx 'COPY PiRunJavaTrustStore.java /usr/local/lib/pi-run/PiRunJavaTrustStor
     "${ROOT}/docker/Dockerfile" >/dev/null \
     || fail "runtime image does not install the Java host-CA source helper"
 for runtime_dockerfile in "${ROOT}/docker/Dockerfile" "${CORE_DOCKERFILE}"; do
+    grep -Fx "        fd-find \\" "${runtime_dockerfile}" >/dev/null \
+        || fail "runtime image does not install Pi's fd dependency"
+    grep -Fx "    && ln -s /usr/bin/fdfind /usr/local/bin/fd \\" "${runtime_dockerfile}" >/dev/null \
+        || fail "runtime image does not expose fd under its canonical command name"
+    grep -Fx "    fd --version; \\" "${runtime_dockerfile}" >/dev/null \
+        || fail "runtime image does not validate the canonical fd command"
+    grep -Fx "    fdfind --version; \\" "${runtime_dockerfile}" >/dev/null \
+        || fail "runtime image does not validate Debian's fd command"
     grep -Fx 'COPY entrypoint.sh ssh-credentials /usr/local/bin/' \
         "${runtime_dockerfile}" >/dev/null \
         || fail "runtime image does not install its startup scripts"

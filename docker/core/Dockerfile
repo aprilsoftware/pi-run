@@ -33,6 +33,7 @@ RUN apt-get update \
         bash \
         ca-certificates \
         curl \
+        fd-find \
         git \
         gosu \
         jq \
@@ -41,6 +42,7 @@ RUN apt-get update \
         openssl \
         passwd \
         ripgrep \
+    && ln -s /usr/bin/fdfind /usr/local/bin/fd \
     && rm -rf /var/lib/apt/lists/*
 
 RUN corepack enable
@@ -103,6 +105,8 @@ RUN set -eux; \
     command -v nc; \
     openssl version; \
     jq --version; \
+    fd --version; \
+    fdfind --version; \
     rg --version; \
     restic version; \
     pi --version; \

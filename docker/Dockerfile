@@ -43,6 +43,7 @@ RUN apt-get update \
         bash-completion \
         ca-certificates \
         curl \
+        fd-find \
         wget \
         git \
         jq \
@@ -118,6 +119,7 @@ RUN apt-get update \
         redis-tools \
         default-mysql-client \
         sqlite3 \
+    && ln -s /usr/bin/fdfind /usr/local/bin/fd \
     && rm -rf /var/lib/apt/lists/*
 
 #
@@ -338,6 +340,8 @@ RUN set -eux; \
     yq --version; \
     flutter --version; \
     dart --version; \
+    fd --version; \
+    fdfind --version; \
     restic version; \
     pi --version
 

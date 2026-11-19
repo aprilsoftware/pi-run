@@ -105,6 +105,8 @@ docker run --rm --pull never --network none \
         node --version
         git --version
         ssh -V
+        fd --version
+        fdfind --version
         restic version
         shellcheck --version
         python3 -c "print(\"python-ok\")"
