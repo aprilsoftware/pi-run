@@ -29,7 +29,8 @@ finish that editor. Empty items are rejected.
 
 Select an existing item to open its actions:
 
-- **Use as next prompt** loads it into Pi's normal prompt editor.
+- **Use as next prompt** removes it from Todo and loads it into Pi's normal
+  prompt editor.
 - **Edit** opens the complete item in a multiline editor.
 - **Delete** asks for confirmation before removing it.
 - **Move up** and **Move down** change its queue position.
@@ -38,9 +39,10 @@ Select an existing item to open its actions:
 The menu displays each item's stable ID and first non-empty line. Items with the
 same visible summary remain separate and independently selectable.
 
-A small `Todo: N` status appears while the current conversation has queued
-items. It clears when the last item is deleted. `Todo: unavailable` means the
-private state could not be read or safely updated.
+A muted gray `todo · N` row appears above the Guardian and CAF rows while the
+current conversation has queued items. Planning, when active, remains above
+Todo. The row clears when the last item is consumed or deleted.
+`todo · unavailable` means the private state could not be read or safely updated.
 
 ## Load the next prompt deliberately
 
@@ -54,8 +56,11 @@ If the editor already contains text, choose one of these actions:
 - **Cancel** leaves the editor unchanged and returns to the Todo menu.
 
 Loading text never submits it. Review and edit the resulting prompt, then submit
-it through Pi normally when you are ready. Loading also does not remove or mark
-the Todo item; deletion remains explicit.
+it through Pi normally when you are ready. A successfully loaded item is removed
+from Todo immediately because it is no longer queued. Choosing **Cancel** during
+a Replace/Append decision keeps both the editor and Todo item unchanged. If Todo
+cannot durably save the removal, the editor is left unchanged and Todo becomes
+unavailable rather than loading an item that remains queued.
 
 ## Understand the session lifecycle
 

@@ -87,8 +87,15 @@ The loader accepts only schema version 1 with the matching session ID. It reject
 - unsafe directory, file type, link, or permissions.
 
 A rejected state is not truncated, migrated, reset, or overwritten. The TUI
-shows `Todo: unavailable`, and `/todo` reports a bounded error without including
-stored item text.
+shows the muted below-editor row `todo · unavailable`, and `/todo` reports a
+bounded error without including stored item text.
+
+## Indicator presentation
+
+Todo uses a muted below-editor widget rather than Pi's footer-status API. A
+non-empty queue renders `todo · N`; an unavailable queue renders
+`todo · unavailable`; an empty queue renders no row. Extension load order places
+Planning above Todo and Todo above the shared Guardian/CAF presentation.
 
 ## Editor behavior
 
@@ -97,8 +104,11 @@ is replaced directly. A non-empty editor requires an explicit Replace, Append,
 or Cancel selection.
 
 Append preserves both strings and adds only enough newline characters at their
-boundary to provide at least one blank line. The command then sets editor text
-and returns. It never submits the editor or deletes the item.
+boundary to provide at least one blank line. After the Replace/Append choice is
+resolved, the extension atomically saves the queue without the selected item,
+updates the status count, sets the editor text, and returns. It never submits the
+editor. Cancel leaves both the editor and queue unchanged. If the queue removal
+cannot be saved, the editor remains unchanged and Todo becomes unavailable.
 
 ## Authority boundary
 

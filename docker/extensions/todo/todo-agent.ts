@@ -22,6 +22,7 @@ const MAX_ITEMS = 100;
 const MAX_ITEM_BYTES = 16 * 1024;
 const MAX_STATE_BYTES = 2 * 1024 * 1024;
 const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const STATUS_ENTRY = "pi-run-todo";
 const stateDirectory = resolve(process.env.PI_RUN_PROFILE_DIR || "/profile", "todos");
 
 function missing(error: unknown): boolean {
@@ -112,15 +113,48 @@ export default function todoAgent(pi: ExtensionAPI): void {
     let activeSessionId: string | undefined;
     let state: TodoState | undefined;
     let stateError: string | undefined;
+    let statusRedraw: (() => void) | undefined;
 
-    function updateStatus(ctx: ExtensionContext): void {
-        ctx.ui.setStatus("todo", stateError ? "Todo: unavailable" : state?.items.length ? `Todo: ${state.items.length}` : undefined);
+    function statusText(): string | undefined {
+        return stateError ? "todo · unavailable" : state?.items.length ? `todo · ${state.items.length}` : undefined;
+    }
+
+    function updateStatus(_ctx: ExtensionContext): void {
+        statusRedraw?.();
+    }
+
+    function installStatus(ctx: ExtensionContext): void {
+        if (ctx.mode !== "tui") return;
+        try {
+            ctx.ui.setStatus("todo", undefined);
+            ctx.ui.setWidget(STATUS_ENTRY, (tui, theme) => {
+                statusRedraw = () => tui.requestRender();
+                return {
+                    render: () => {
+                        const text = statusText();
+                        return text ? [theme.fg("muted", text)] : [];
+                    },
+                    invalidate() {},
+                };
+            }, { placement: "belowEditor" });
+        } catch { statusRedraw = undefined; }
+    }
+
+    function clearStatus(ctx: ExtensionContext): void {
+        statusRedraw = undefined;
+        if (ctx.mode !== "tui") return;
+        try { ctx.ui.setWidget(STATUS_ENTRY, undefined, { placement: "belowEditor" }); } catch { /* UI only. */ }
     }
 
     async function activate(ctx: ExtensionContext): Promise<void> {
         const sessionId = ctx.sessionManager.getSessionId();
         if (sessionId === activeSessionId && (state || stateError)) return;
-        activeSessionId = sessionId;
+        if (sessionId !== activeSessionId) {
+            activeSessionId = sessionId;
+            state = undefined;
+            stateError = undefined;
+            updateStatus(ctx);
+        }
         try {
             state = await loadState(sessionId);
             stateError = undefined;
@@ -131,13 +165,13 @@ export default function todoAgent(pi: ExtensionAPI): void {
         updateStatus(ctx);
     }
 
-    async function persist(next: TodoState, ctx: ExtensionContext, message: string): Promise<boolean> {
+    async function persist(next: TodoState, ctx: ExtensionContext, message?: string): Promise<boolean> {
         try {
             await saveState(next);
             state = next;
             stateError = undefined;
             updateStatus(ctx);
-            ctx.ui.notify(message, "info");
+            if (message) ctx.ui.notify(message, "info");
             return true;
         } catch (error) {
             state = undefined;
@@ -148,7 +182,12 @@ export default function todoAgent(pi: ExtensionAPI): void {
         }
     }
 
-    pi.on("session_start", async (_event, ctx) => activate(ctx));
+    pi.on("session_start", async (_event, ctx) => {
+        const loading = activate(ctx);
+        installStatus(ctx);
+        await loading;
+    });
+    pi.on("session_shutdown", (_event, ctx) => clearStatus(ctx));
     pi.registerCommand("todo", {
         description: "Open the session Todo prompt queue",
         handler: async (args: string, ctx: ExtensionCommandContext) => {
@@ -195,8 +234,10 @@ export default function todoAgent(pi: ExtensionAPI): void {
                             prompt = `${current}${"\n".repeat(Math.max(0, 2 - trailingNewlines - leadingNewlines))}${item.text}`;
                         }
                     }
+                    const items = state.items.filter((_, candidate) => candidate !== index);
+                    if (!(await persist({ ...state, items }, ctx))) return;
                     ctx.ui.setEditorText(prompt);
-                    ctx.ui.notify("Todo prompt loaded into the editor", "info");
+                    ctx.ui.notify("Todo prompt loaded into the editor and removed from Todo", "info");
                     return;
                 }
                 if (action === "Edit") {
