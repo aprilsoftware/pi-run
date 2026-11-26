@@ -238,11 +238,28 @@ jq -e '.network.allow == [{cidr: "10.20.30.0/24", tcpPorts: [5432]}]' \
     "${default_config}" >/dev/null || fail "internet rule changes affected an unrelated CIDR"
 PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" network mode host --discard-rules >/dev/null
 
+printf '\nDefault-only instruction.\n' >> "${HOME_DIR}/profiles/default/AGENTS.md"
+printf '\nDefault-only CAF policy.\n' >> "${DEFAULT_CAF_POLICY}"
+mkdir -p "${HOME_DIR}/profiles/default/skills/default-only"
+cat > "${HOME_DIR}/profiles/default/skills/default-only/SKILL.md" <<'EOF'
+---
+name: default-only
+description: Exists only in the mutable default profile.
+---
+EOF
+PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" --profile default network mode offline >/dev/null
+
 PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" profile create development >/dev/null
 [[ "$(jq -r '.network.mode' "${HOME_DIR}/profiles/development/profile.json")" == host ]] \
-    || fail "created profile did not preserve its source network policy"
-cmp "${DEFAULT_CAF_POLICY}" "${HOME_DIR}/profiles/development/caf/caf.md" \
-    || fail "created profile did not copy its source CAF policy"
+    || fail "plain profile creation did not use the template network policy"
+cmp "${ROOT}/templates/profiles/default/AGENTS.md" \
+    "${HOME_DIR}/profiles/development/AGENTS.md" \
+    || fail "plain profile creation inherited mutable default instructions"
+cmp "${ROOT}/templates/profiles/default/caf/caf.md" \
+    "${HOME_DIR}/profiles/development/caf/caf.md" \
+    || fail "plain profile creation inherited the mutable default CAF policy"
+[[ ! -e "${HOME_DIR}/profiles/development/skills/default-only" ]] \
+    || fail "plain profile creation inherited a mutable default profile skill"
 [[ "$(stat -c %a "${HOME_DIR}/profiles/development/caf")" == 700 &&
    "$(stat -c %a "${HOME_DIR}/profiles/development/caf/caf.md")" == 600 ]] \
     || fail "created CAF policy permissions are not private"

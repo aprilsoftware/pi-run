@@ -50,6 +50,28 @@ if [[ "${ACTUAL_UID}" != "${HOST_UID}" || "${ACTUAL_GID}" != "${HOST_GID}" ]]; t
     exit 1
 fi
 
+# /knowledge is a stable model-facing path. The session knowledge extension
+# updates only the per-container indirection under /run after Pi selects a
+# session; persistent content remains in the mounted profile.
+KNOWLEDGE_RUNTIME_DIR=/run/pi-run-knowledge
+KNOWLEDGE_LINK=/knowledge
+KNOWLEDGE_TARGET=${KNOWLEDGE_RUNTIME_DIR}/current
+if [[ -e "${KNOWLEDGE_RUNTIME_DIR}" || -L "${KNOWLEDGE_RUNTIME_DIR}" ]]; then
+    if [[ ! -d "${KNOWLEDGE_RUNTIME_DIR}" || -L "${KNOWLEDGE_RUNTIME_DIR}" ]]; then
+        echo "ERROR: ${KNOWLEDGE_RUNTIME_DIR} must be a directory" >&2
+        exit 1
+    fi
+fi
+install -d -o "${HOST_UID}" -g "${HOST_GID}" -m 0700 "${KNOWLEDGE_RUNTIME_DIR}"
+if [[ -e "${KNOWLEDGE_LINK}" || -L "${KNOWLEDGE_LINK}" ]]; then
+    if [[ ! -L "${KNOWLEDGE_LINK}" || "$(readlink "${KNOWLEDGE_LINK}")" != "${KNOWLEDGE_TARGET}" ]]; then
+        echo "ERROR: ${KNOWLEDGE_LINK} must be a symbolic link to ${KNOWLEDGE_TARGET}" >&2
+        exit 1
+    fi
+else
+    ln -s "${KNOWLEDGE_TARGET}" "${KNOWLEDGE_LINK}"
+fi
+
 # The image builds /home/node for node:1000:1000. Only rewrite it when the
 # runtime UID/GID actually changed. DAC_READ_SEARCH + CHOWN are supplied by
 # pi-run so the bootstrap can traverse and re-own restrictive home contents.

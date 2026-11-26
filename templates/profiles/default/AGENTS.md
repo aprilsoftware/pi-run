@@ -92,6 +92,13 @@ Once such an effect is clearly authorized, do not demand redundant confirmation 
 
 On uncertain or failed non-idempotent operations, verify effects before retrying.
 
+## Session knowledge
+
+Persistent knowledge for the current Pi session is available at `/knowledge`.
+Always use that stable path; do not derive or depend on its backing profile path
+or the Pi session ID. Preserve durable conclusions rather than raw conversation,
+routine command output, or secrets.
+
 ## Environment
 
 Treat the workspace and other Pi-Run mounts as real data unless explicitly known to be disposable.

@@ -53,6 +53,21 @@ Inside Pi, give useful work a recognizable name and leave normally:
 Normal sessions save automatically. An explicitly ephemeral Pi run cannot be
 resumed, and saved sessions are not a backup.
 
+## Use session knowledge
+
+Every Pi session has a persistent profile-backed knowledge directory. Pi-Run
+selects it automatically when the session starts or changes and exposes it at:
+
+```text
+/knowledge
+```
+
+Use `/knowledge` from instructions, skills, and tools rather than constructing a
+path from the session ID. Resuming the same session selects the same directory;
+a new, forked, or cloned session receives its own directory. The backing content
+lives under `profiles/<profile>/knowledge/` and is included in complete encrypted
+snapshots because it is part of the profile.
+
 ## Understand the identities
 
 Pi-Run assigns each registered directory a stable workspace ID, so conversations

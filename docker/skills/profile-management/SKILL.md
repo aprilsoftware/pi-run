@@ -41,6 +41,8 @@ tell the user which host command to run for profile, skill, or SSH management.
 │   └── <workspace-id>/
 │       ├── guardian.jsonl*
 │       └── caf.jsonl*
+├── knowledge/
+│   └── <session-id>/
 └── sessions/
 ```
 
@@ -63,6 +65,8 @@ snapshots for backup and workstation transfer.
   shared config exists, but Pi-Run does not rewrite it as migration.
 - Pi owns `auth.json`, `settings.json`, `models.json`, and session data.
 - `credentials/` contains profile-specific configuration supplied by the user.
+- `knowledge/<session-id>/` stores persistent session knowledge exposed inside
+  Pi through the stable `/knowledge` path.
 - Every valid direct child of `skills/` is a writable profile-local skill that
   Pi-Run loads on the next start.
 
@@ -141,19 +145,22 @@ pi-run profile default <name>
 
 An explicit `--profile <name>` overrides the saved default for one invocation.
 Changing the launch default does not change profile creation: without `--from`,
-a new profile is copied from the neutral profile named `default`.
+a new profile is materialized from the installed clean templates and does not
+copy the mutable profile named `default`.
 
-Create a profile from that neutral definition or another profile definition:
+Create a clean profile or deliberately derive one from another profile:
 
 ```bash
 pi-run profile create <name>
 pi-run profile create <name> --from <source-profile>
 ```
 
-Creation copies only `profile.json`, `AGENTS.md`, `guardian/guardian.md`,
-`caf/caf.md` when present, and profile-local skills; private runtime state starts
-empty. It resets `skills` to `null`, so a new profile initially loads every
-global skill. Use encrypted
+Plain creation uses the installed profile policies, an empty local skills
+directory, and the minimal core-derived runtime Dockerfile. Explicit `--from`
+derivation copies only the source `profile.json`, `AGENTS.md`,
+`guardian/guardian.md`, `caf/caf.md` when present, profile-local skills, and
+runtime definition; private runtime state starts empty. Both forms reset
+`skills` to `null`, so a new profile initially loads every global skill. Use encrypted
 Pi-Run snapshots rather than copying complete profile directories for backup or
 workstation transfer.
 

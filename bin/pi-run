@@ -452,9 +452,9 @@ case "${COMMAND}" in
                 ;;
             create)
                 if [[ $# -eq 3 ]]; then
-                    create_profile "$3" default
+                    create_profile_from_template "$3"
                 elif [[ $# -eq 5 && "$4" == "--from" ]]; then
-                    create_profile "$3" "$5"
+                    create_profile_from_source "$3" "$5"
                 else
                     usage
                 fi
@@ -1081,6 +1081,7 @@ PI_ARGS=(
     --no-extensions
     --extension /usr/local/lib/node_modules/pi-web-access/index.ts
     --extension /usr/local/lib/node_modules/pi-okf/extensions/okf.ts
+    --extension /usr/local/lib/node_modules/pi-run-extensions/knowledge/knowledge-agent.ts
     --extension /usr/local/lib/node_modules/pi-run-extensions/plan/plan-agent.ts
     --extension /usr/local/lib/node_modules/pi-run-extensions/todo/todo-agent.ts
     --extension /usr/local/lib/node_modules/pi-run-extensions/guard/guard-runtime.ts

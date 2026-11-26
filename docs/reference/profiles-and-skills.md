@@ -70,19 +70,22 @@ special ranges fail before the profile is locked or changed.
 
 ## Profile creation semantics
 
-`profile create <name>` always derives from the profile literally named
-`default`. The configured launch default is irrelevant. `--from <profile>`
-selects another explicit source. The source configuration, definition files,
-local skills, and optional runtime context must validate before creation.
+`profile create <name>` materializes a clean profile from the installed default
+profile and base-runtime templates. It does not inspect or copy the mutable
+profile named `default`; the configured launch default is also irrelevant.
+`--from <profile>` deliberately selects an existing source whose configuration,
+definition files, local skills, and optional runtime context must validate.
 
 Creation stages a private directory and publishes it only after materializing:
 
 - `profile.json`, with `.name` changed and `.skills` reset to `null`;
 - `AGENTS.md`;
 - `guardian/guardian.md` and optional `caf/caf.md`;
-- validated profile-local skill packages;
-- a validated copy of `runtime/`, or the base runtime definition when the source
-  is a legacy profile without one; and
+- an empty profile-local skills directory for plain creation, or validated
+  profile-local skill packages for explicit `--from` derivation;
+- the base runtime definition for plain creation, or a validated copy of
+  `runtime/` for explicit derivation (falling back to the base definition for a
+  legacy source without one); and
 - empty `credentials/` and `sessions/` directories, with no copied Guard, CAF,
   or Guardian preferences or logs.
 
@@ -95,8 +98,9 @@ general credentials, SSH keys, sessions, shared Guard reviewer preferences,
 Guardian/CAF mode defaults, CAF friend preferences, or logs. It does not
 overwrite an existing profile or select the new one.
 
-Resource and network fields are copied as part of `profile.json`, so shared and
-network exposure remain as in the source. Resetting `skills` to `null` selects
+Plain creation receives resource and network fields from the installed template.
+Explicit derivation copies them from the selected source profile. Resetting
+`skills` to `null` selects
 all global skills, even if the source selected fewer.
 
 ## Profile file layout
@@ -131,6 +135,8 @@ profiles/<name>/
 │   └── <workspace-id>/
 │       ├── caf.jsonl*
 │       └── guardian.jsonl*
+├── knowledge/
+│   └── <session-id>/
 └── sessions/
     └── <workspace-id>/
 ```
@@ -140,6 +146,12 @@ non-symlink, singly linked files contained by the profile. The Guardian and skil
 directories must also be ordinary contained directories. When `caf/` is
 present, it receives the same directory checks; an optional `caf/caf.md`
 receives the same containment and link checks as other definition files.
+
+The knowledge extension creates `knowledge/<session-id>/` with private
+permissions when that Pi session first starts. `/knowledge` is a per-container
+symbolic link to the active directory, so instructions and tools do not need to
+track session identities. Session deletion does not automatically delete its
+knowledge directory.
 
 ## Runtime definition commands
 

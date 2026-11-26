@@ -53,6 +53,20 @@ cmp "${ROOT}/templates/runtime/.dockerignore" "${default_runtime}/.dockerignore"
    "$(stat -c %a "${default_runtime}/.dockerignore")" == 600 ]] \
     || fail "fresh default runtime permissions are not private"
 
+PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" runtime add all >/dev/null
+cmp "${ROOT}/templates/runtime/full-development.Dockerfile" "${default_runtime}/Dockerfile" \
+    || fail "default runtime did not receive all maintained bundles"
+PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" profile create clean-template >/dev/null
+cmp "${ROOT}/templates/runtime/Dockerfile" \
+    "${HOME_DIR}/profiles/clean-template/runtime/Dockerfile" \
+    || fail "plain profile creation inherited the default profile runtime"
+PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" \
+    profile create derived-runtime --from default >/dev/null
+cmp "${default_runtime}/Dockerfile" \
+    "${HOME_DIR}/profiles/derived-runtime/runtime/Dockerfile" \
+    || fail "explicit profile derivation did not copy the source runtime"
+[[ ! -e "${DOCKER_CALLED}" ]] || fail "profile runtime creation invoked Docker"
+
 PI_RUN_HOME="${HOME_DIR}" "${ROOT}/bin/pi-run" profile create legacy-init >/dev/null
 legacy_profile="${HOME_DIR}/profiles/legacy-init"
 rm -rf "${legacy_profile}/runtime"

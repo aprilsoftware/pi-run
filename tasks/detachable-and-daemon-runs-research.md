@@ -2,9 +2,9 @@
 
 ## Status and purpose
 
-This document records research into running Pi-Run independently of one attached host terminal and reconnecting later. It distinguishes a detachable interactive terminal from an unattended daemon worker, assesses implementation approaches, and records implications for the planned software factory.
+This document records research into running Pi-Run independently of one attached host terminal and reconnecting later. It distinguishes a detachable interactive terminal from an unattended daemon worker and assesses implementation approaches.
 
-This is research evidence, not an approved implementation plan, task, command contract, dependency decision, or authority to start background processes, agents, services, worktrees, or external operations. The saved Plan still contains the earlier private-tmux direction and must be amended before implementation. The current repository architecture is recorded in the [software-factory design](software-factory-design.md), and the broader factory comparison is in [software-factory research](software-factory-research.md).
+This is research evidence, not an approved implementation plan, task, command contract, dependency decision, or authority to start background processes, agents, services, worktrees, or external operations. The saved Plan still contains the earlier private-tmux direction and must be amended before implementation.
 
 ## Research conclusion
 
@@ -15,11 +15,11 @@ Pi-Run should distinguish two related but materially different capabilities:
 
 The initial research selected a private tmux layer as the safest mechanism Pi-Run could build itself. Subsequent evaluation of [Herdr](https://github.com/herdrdev/herdr) changes the build-versus-integrate decision: Herdr already provides persistent real terminal panes, detach and reattachment, global live-agent visibility, direct attachment, remote presentation, Pi detection, status aggregation, and optional Pi session reporting.
 
-Pi-Run should therefore use Herdr as an optional external terminal runtime rather than implement its own multiplexer, run registry, retained-exit lifecycle, selector, or stop/remove protocol. Pi-Run remains responsible for the launcher, containers, profiles, networking, worktrees, conversations, Guardian, CAF, snapshots, and factory authority. A later unattended software-factory worker should still use Pi's supported RPC interface rather than automate keystrokes in an interactive terminal.
+Pi-Run should therefore use Herdr as an optional external terminal runtime rather than implement its own multiplexer, run registry, retained-exit lifecycle, selector, or stop/remove protocol. Pi-Run remains responsible for the launcher, containers, profiles, networking, worktrees, conversations, Guardian, CAF, snapshots, and its normal runtime authority. A later unattended worker should still use Pi's supported RPC interface rather than automate keystrokes in an interactive terminal.
 
 ## Terminology
 
-Pi-Run already uses **session** for a persisted Pi conversation and **worktree task** for a named managed checkout. The factory design uses **live execution** for one ordinary launcher process without creating a new user-facing Pi-Run identity or registry.
+Pi-Run already uses **session** for a persisted Pi conversation and **worktree task** for a named managed checkout. This document uses **live execution** for one ordinary launcher process without creating a new user-facing Pi-Run identity or registry.
 
 “Foreground” and “background” may be friendly descriptions, but shell job-control terms have narrower meanings. Herdr attachment reconnects a client to an existing terminal; it does not invoke a shell's built-in `fg` operation or create a second Pi session.
 
@@ -219,7 +219,7 @@ Ordinary Pi-Run launches outside Herdr remain unchanged. Pi-Run does not auto-in
 
 ## Attachment, stop, and recovery
 
-Attachment is a Herdr client operation and changes no Pi-Run profile, runtime, conversation, tools, networking, Plan approval, factory task, or publication authority. Multiple writable-client and take-over behavior remains Herdr's visible terminal policy rather than a second Pi-Run protocol.
+Attachment is a Herdr client operation and changes no Pi-Run profile, runtime, conversation, tools, networking, Plan approval, or publication authority. Multiple writable-client and take-over behavior remains Herdr's visible terminal policy rather than a second Pi-Run protocol.
 
 Normal Pi exit lets the existing launcher perform sidecar, staging, snapshot, and lock cleanup. Deliberately stopping a Herdr pane or server may interrupt a model call, command, remote operation, file write, or cleanup. Pi-Run must not claim that Herdr termination is an orderly factory cancellation or rollback. Compatibility acceptance should exercise normal exit and abrupt client/server loss honestly.
 

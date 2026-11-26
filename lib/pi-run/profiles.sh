@@ -193,6 +193,8 @@ validate_profile_definition_files() {
 materialize_profile_definition() {
     local source_dir="$1"
     local name="$2"
+    local copy_skills="$3"
+    local copy_runtime="$4"
     local profiles_root target staging
     validate_profile_name "${name}"
     profiles_root="$(realpath "${PI_RUN_HOME_RESOLVED}/profiles")"
@@ -214,14 +216,33 @@ materialize_profile_definition() {
         mkdir -m 0700 "${staging}/caf"
         install -m 0600 "${source_dir}/caf/caf.md" "${staging}/caf/caf.md"
     fi
-    cp -a "${source_dir}/skills/." "${staging}/skills/"
-    chmod -R u+rwX,go-w "${staging}/skills"
-    materialize_profile_runtime "${source_dir}" "${staging}"
+    if [[ "${copy_skills}" == true ]]; then
+        cp -a "${source_dir}/skills/." "${staging}/skills/"
+        chmod -R u+rwX,go-w "${staging}/skills"
+    fi
+    if [[ "${copy_runtime}" == true ]]; then
+        materialize_profile_runtime "${source_dir}" "${staging}"
+    else
+        materialize_base_runtime "${staging}/runtime"
+    fi
     mv "${staging}" "${target}"
     trap - EXIT
 }
 
-create_profile() {
+create_profile_from_template() {
+    local name="$1"
+    local template_dir="${PROFILE_TEMPLATE_ROOT}/default"
+    validate_profile_name "${name}"
+    [[ -d "${template_dir}" && ! -L "${template_dir}" &&
+       "$(realpath "${template_dir}")" == "${template_dir}" ]] \
+        || fail "installed default profile template is missing or unsafe: ${template_dir}"
+    validate_profile_config "${template_dir}" default
+    validate_profile_definition_files "${template_dir}"
+    materialize_profile_definition "${template_dir}" "${name}" false false
+    printf 'Created profile %s from installed templates.\n' "${name}"
+}
+
+create_profile_from_source() {
     local name="$1"
     local source_name="$2"
     local source_dir source_lock_fd
@@ -236,7 +257,7 @@ create_profile() {
     validate_profile_definition_files "${source_dir}"
     validate_profile_skills_directory "${source_dir}"
     validate_optional_profile_runtime "${source_dir}"
-    materialize_profile_definition "${source_dir}" "${name}"
+    materialize_profile_definition "${source_dir}" "${name}" true true
     exec {source_lock_fd}>&-
     printf 'Created profile %s from %s.\n' "${name}" "${source_name}"
 }

@@ -142,7 +142,7 @@ RUN pkg-config --modversion alsa \
 
 # BEGIN PI-RUN BUNDLE flutter-development
 USER root
-ARG FLUTTER_VERSION=3.47.2
+ARG FLUTTER_VERSION=3.50.1
 RUN apt-get update \
     && apt-get install -y --no-install-recommends tar xz-utils \
     && rm -rf /var/lib/apt/lists/* \

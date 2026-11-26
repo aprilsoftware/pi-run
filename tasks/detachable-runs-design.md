@@ -4,11 +4,10 @@
 
 This document selects the v0.11 direction for keeping interactive Pi-Run sessions
 live after a terminal or SSH client disconnects. It refines the
-[detachable-run research](detachable-and-daemon-runs-research.md) and
-[software-factory design](software-factory-design.md).
+[detachable-run research](detachable-and-daemon-runs-research.md).
 
 It is not authority to install Herdr, start or stop processes, change Pi-Run,
-invoke Docker, execute factory tasks, commit, push, publish, or release. Herdr
+invoke Docker, execute unrelated tasks, commit, push, publish, or release. Herdr
 remains an optional external tool installed and operated explicitly by the user.
 
 ## Product outcome
@@ -32,14 +31,13 @@ Herdr owns terminal and process presentation:
 - workspaces, tabs, panes, live-agent inventory, status, and notifications;
 - optional remote presentation over SSH.
 
-Pi-Run owns agent execution and authority:
+Pi-Run owns agent execution and its normal authority boundaries:
 
 - profile, prepared image, container, mounts, credentials, and network policy;
-- Guardian, CAF, Planning, Todo, sessions, snapshots, and managed worktrees;
-- factory task approval, limits, evidence, review, and publication gates.
+- Guardian, CAF, Planning, Todo, sessions, snapshots, and managed worktrees.
 
-Herdr state, labels, panes, prompts, automation, or lifecycle events never approve
-a factory task or authorize effects.
+Herdr state, labels, panes, prompts, automation, or lifecycle events never
+authorize agent effects.
 
 ## Initial usage contract
 

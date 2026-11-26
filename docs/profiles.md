@@ -43,15 +43,16 @@ does not transfer either one or change a container that is already running.
 
 ## Create a profile
 
-Create a new context from the profile named `default`:
+Create a clean context from the installed profile and base-runtime templates:
 
 ```bash
 pi-run profile create development
 pi-run profile create operations
 ```
 
-Creation without `--from` always uses the profile literally named `default`, not
-the configured launch default. To derive definitions from another profile:
+Creation without `--from` does not inspect or copy the mutable profile named
+`default`, and the configured launch default is irrelevant. To deliberately
+derive definitions from an existing profile:
 
 ```bash
 pi-run profile create review --from development
@@ -60,25 +61,25 @@ pi-run profile create review --from development
 Creation refuses an existing name and does not select the new profile, connect
 to services, or copy credentials, logs, sessions, or generated image state.
 
-### What is copied
+### What is created or copied
 
-The new profile receives:
+Plain creation materializes:
 
-- `profile.json`, with the new name;
-- `AGENTS.md` instructions;
-- `guardian/guardian.md` review policy;
-- `caf/caf.md` disclosure policy, when the source has one;
-- validated profile-local skills; and
-- the validated `runtime/` Docker build context, or a base runtime definition
-  when deriving from a legacy profile without one.
+- `profile.json`, `AGENTS.md`, `guardian/guardian.md`, and `caf/caf.md` from the
+  installed default profile template;
+- an empty profile-local `skills/` directory; and
+- the minimal core-derived `runtime/Dockerfile` and `.dockerignore` templates.
+
+Explicit `--from` derivation instead copies the source profile's validated
+configuration, definition files, profile-local skills, and `runtime/` Docker
+build context. A legacy source without `runtime/` receives the base runtime
+definition. In both forms, `profile.json` gets the new name and its global skill
+filter resets to `null`.
 
 Provider authentication, SSH keys, settings, Git configuration, Guard/Guardian
 and CAF preferences and logs, and sessions are **not copied**. Authenticate and
-configure the new profile deliberately.
-
-Shared-folder and network configuration are inherited, so review both before
-first launch. The global skill filter resets to `null`, meaning all installed
-global skills are initially selected.
+configure the new profile deliberately. Review inherited shared-folder and
+network configuration after an explicit `--from` derivation.
 
 ## Compose the profile runtime
 

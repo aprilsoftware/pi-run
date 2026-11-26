@@ -232,9 +232,11 @@ alone does not authorize moving a dependency.
 ## Profile lifecycle
 
 A newly initialized home gives its default profile the core-derived runtime
-layout. `profile create --from` copies a source runtime context as portable
-definition data; a legacy source without one receives the same base definition.
-This creates reviewable source but never builds an image.
+layout. Plain `profile create` materializes that same clean installed runtime
+template without inheriting changes from the mutable default profile.
+`profile create --from` copies a source runtime context as portable definition
+data; a legacy source without one receives the same base definition. This
+creates reviewable source but never builds an image.
 
 Copied contexts permit directories, regular files, and un-followed symlinks.
 Regular files must have one hard link. Contexts are limited to 4,096 entries and

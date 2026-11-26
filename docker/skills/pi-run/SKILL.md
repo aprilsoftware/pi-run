@@ -29,6 +29,7 @@ Pi-Run exposes intentionally selected resources:
 | Selected profile | `/profile` | read-write base mount |
 | Profile configuration | `/profile/profile.json` | read-only nested over-mount |
 | Managed SSH credentials, when present | `/profile/credentials/ssh` | read-only nested over-mount |
+| Current session knowledge | `/knowledge` | read-write symbolic link into the selected profile |
 | Shared directory, when enabled | `/shared` | read-write |
 | Profile-local skill | `/profile/skills/<name>` | read-write |
 | Global skill | `/skills/<name>` | read-only |
@@ -240,6 +241,13 @@ required precursor to guided restored-session reconnection.
 
 Pi-Run validates session headers for discovery but does not rewrite session
 JSONL.
+
+Each persistent Pi session receives a profile-backed knowledge directory at
+`profiles/<profile>/knowledge/<session-id>/`. The runtime extension selects that
+directory whenever a session starts, resumes, forks, clones, or replaces the
+current session. Inside Pi, always use `/knowledge`; do not derive or depend on
+the backing profile path or session ID. Because knowledge is stored in the
+profile, encrypted complete snapshots include it with the rest of the profile.
 
 ## Automatic snapshots
 

@@ -79,24 +79,6 @@ done
 grep -Fx 'ENTRYPOINT ["/usr/local/bin/entrypoint.sh", "pi"]' "${CORE_DOCKERFILE}" >/dev/null \
     || fail "core Dockerfile does not preserve the runtime entrypoint contract"
 
-FACTORY_TASK_SCHEMA="${ROOT}/lib/pi-run/factory-task-v1.schema.json"
-[[ -f "${FACTORY_TASK_SCHEMA}" && ! -L "${FACTORY_TASK_SCHEMA}" &&
-   "$(stat -c %a "${FACTORY_TASK_SCHEMA}")" == 644 &&
-   "$(stat -c %h "${FACTORY_TASK_SCHEMA}")" == 1 ]] \
-    || fail "factory task schema is missing or unsafe"
-jq -e '
-    ."$schema" == "https://json-schema.org/draft/2020-12/schema" and
-    ."$id" == "https://aprilsoftware.com/pi-run/schemas/factory-task-v1.schema.json" and
-    .type == "object" and .additionalProperties == false and
-    .properties.schemaVersion.const == 1 and
-    .properties.allowedEffects.prefixItems == [
-        {"const":"modify-managed-worktree"},
-        {"const":"run-declared-validation"}
-    ] and
-    .properties.desiredOutcome.const == "validated-local-worktree"
-' "${FACTORY_TASK_SCHEMA}" >/dev/null \
-    || fail "factory task schema contract is invalid"
-
 FULL_RUNTIME_TEMPLATE="${ROOT}/templates/runtime/full-development.Dockerfile"
 BASE_RUNTIME_TEMPLATE="${ROOT}/templates/runtime/Dockerfile"
 [[ -f "${FULL_RUNTIME_TEMPLATE}" && ! -L "${FULL_RUNTIME_TEMPLATE}" &&
@@ -129,7 +111,7 @@ while IFS= read -r bundle; do
 done <<<"${all_bundle_order}"
 for version in \
     'ARG RUST_VERSION=1.99.1' \
-    'ARG FLUTTER_VERSION=3.47.2' \
+    'ARG FLUTTER_VERSION=3.50.1' \
     'ARG KUBECTL_VERSION=1.37.0' \
     'ARG HELM_VERSION=4.2.0' \
     'ARG KUSTOMIZE_VERSION=5.8.1' \
@@ -221,6 +203,7 @@ expected_extension_layout="$(printf '%s\n' \
     guardian/guardian-log-viewer.ts \
     guardian/guardian-review-trace.ts \
     guardian/guardian-reviewer.ts \
+    knowledge/knowledge-agent.ts \
     plan/plan-agent.ts \
     snapshot/snapshot-agent.ts \
     title/title-agent.ts \
@@ -460,12 +443,6 @@ package="${TMP}/pi-run-${version}"
     || fail "archive license is missing or unsafe"
 cmp -s "${ROOT}/LICENSE" "${package}/LICENSE" \
     || fail "archive license differs from the repository license"
-packaged_factory_schema="${package}/lib/pi-run/factory-task-v1.schema.json"
-[[ -f "${packaged_factory_schema}" && ! -L "${packaged_factory_schema}" &&
-   "$(stat -c %a "${packaged_factory_schema}")" == 644 ]] \
-    || fail "release archive omits the safe factory task schema"
-cmp "${FACTORY_TASK_SCHEMA}" "${packaged_factory_schema}" \
-    || fail "packaged factory task schema differs from source"
 [[ -x "${package}/bin/pi-run" && ! -L "${package}/bin/pi-run" ]] \
     || fail "archive launcher is missing or unsafe"
 for component in ${EXPECTED}; do

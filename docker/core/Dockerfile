@@ -64,6 +64,7 @@ COPY extensions/guard/guard-viewer.ts /usr/local/lib/node_modules/pi-run-extensi
 COPY extensions/guard/guard-journal.ts /usr/local/lib/node_modules/pi-run-extensions/guard/
 COPY extensions/guard/guard-evidence.ts /usr/local/lib/node_modules/pi-run-extensions/guard/
 COPY extensions/guard/guard-reviewer-agent.ts /usr/local/lib/node_modules/pi-run-extensions/guard/
+COPY extensions/knowledge/knowledge-agent.ts /usr/local/lib/node_modules/pi-run-extensions/knowledge/
 COPY extensions/guardian/guardian-log-safety.ts /usr/local/lib/node_modules/pi-run-extensions/guardian/
 COPY extensions/guardian/guardian-log-viewer.ts /usr/local/lib/node_modules/pi-run-extensions/guardian/
 COPY extensions/guardian/guardian-review-trace.ts /usr/local/lib/node_modules/pi-run-extensions/guardian/

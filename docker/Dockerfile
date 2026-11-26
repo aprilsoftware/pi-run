@@ -16,7 +16,7 @@ ARG PI_OKF_VERSION=0.4.0
 ARG RESTIC_VERSION=0.19.1
 ARG RESTIC_LINUX_AMD64_SHA256=f415415624dcc452f2a02b8c33641791a8c6d6d3b65bbb3543fcf9a25151585c
 
-ARG FLUTTER_VERSION=3.47.2
+ARG FLUTTER_VERSION=3.50.1
 ARG KUBECTL_VERSION=1.37.0
 ARG HELM_VERSION=4.2.0
 ARG KUSTOMIZE_VERSION=5.8.1
@@ -237,6 +237,7 @@ COPY extensions/guard/guard-viewer.ts /usr/local/lib/node_modules/pi-run-extensi
 COPY extensions/guard/guard-journal.ts /usr/local/lib/node_modules/pi-run-extensions/guard/
 COPY extensions/guard/guard-evidence.ts /usr/local/lib/node_modules/pi-run-extensions/guard/
 COPY extensions/guard/guard-reviewer-agent.ts /usr/local/lib/node_modules/pi-run-extensions/guard/
+COPY extensions/knowledge/knowledge-agent.ts /usr/local/lib/node_modules/pi-run-extensions/knowledge/
 COPY extensions/guardian/guardian-log-safety.ts /usr/local/lib/node_modules/pi-run-extensions/guardian/
 COPY extensions/guardian/guardian-log-viewer.ts /usr/local/lib/node_modules/pi-run-extensions/guardian/
 COPY extensions/guardian/guardian-review-trace.ts /usr/local/lib/node_modules/pi-run-extensions/guardian/

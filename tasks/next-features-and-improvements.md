@@ -27,39 +27,6 @@ warning suppression were released as immutable v0.10.13. The active development
 line is now local branch `experiment/v0.11`; branch publication, implementation,
 preview metadata, and release work remain separate decisions requiring approval.
 
-## Active product direction
-
-### Level 1 bounded local software factory
-
-v0.11 turns one exact human-approved task into a validated, freshly reviewed
-local worktree and branch. `/loop` is one wake-up source, not the controller,
-backlog authority, or a substitute for approval, evidence, review, or human
-publication gates.
-
-The architecture separates Pi sessions, live executions, factory tasks, and
-immutable attempts. Agent-inaccessible task authority and evidence belong under
-`<PI_RUN_HOME>/factory/`. External terminal state is presentation, not Pi-Run
-factory authority, and no `<PI_RUN_HOME>/runs/` registry is planned.
-
-The detachable-interaction direction uses optional user-operated Herdr as the
-outer terminal runtime. An ordinary Pi-Run launcher runs inside a Herdr pane, so
-detachment preserves locks, restricted networking, Pi state, snapshot bridging,
-and cleanup without Pi-Run implementing another multiplexer or lifecycle
-database. Ordinary Pi-Run remains independent of Herdr, and no work restarts
-automatically after Pi exit or host/WSL shutdown.
-
-The factory adds repository readiness, deterministic pass/fail/skip evidence, an
-attempt manifest, and fresh bounded Primary review. Results remain local and may
-remain dirty. RPC workers and typed safe outputs remain a later Level 2 direction.
-
-Work proceeds in separate approved phases: architecture reconciliation,
-disposable Herdr compatibility acceptance, bounded `/loop`, task/attempt control,
-verification/evidence, fresh review, and integrated acceptance. See the
-[factory design](software-factory-design.md),
-[detachable-runs design](detachable-runs-design.md),
-[factory research](software-factory-research.md), and
-[detachable-run research](detachable-and-daemon-runs-research.md).
-
 ## Delivered foundation
 
 ### Profile-owned runtime Dockerfiles
