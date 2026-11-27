@@ -19,11 +19,17 @@ Every snapshot has **complete** scope:
 | All profiles, including credentials, settings, Guardian logs, and sessions | Snapshot recovery password and S3 credentials |
 | Global and profile skills, plus shared files | Snapshot repository contents and restore staging |
 | Portable workspace identities and snapshot configuration | Workspace source trees and remote-system data |
+| Worker Role/session bindings | Live Worker processes, locks, and runtime images |
 
 A snapshot includes **every profile and its credentials**, regardless of a
 `--profile` option used for other commands. Profile-only snapshots are not
 supported. Keep workspace code in version control and back up databases or
 infrastructure through their own systems.
+
+[Worker](workers.md) bindings are restored alongside conversations, without
+starting any Worker. Source paths and prepared runtimes still need reconciliation;
+resume retains configuration-drift checks. Older snapshots without Worker bindings
+restore an empty binding set rather than retain mismatched live references.
 
 ## Configure storage
 

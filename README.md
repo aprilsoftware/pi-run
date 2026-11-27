@@ -114,6 +114,13 @@ resources, and other infrastructure need their own recovery mechanisms.
   over-mounted read-only. The host home, other profiles, and Docker socket are
   not mounted into a normal session.
 
+### Experimental controller interface
+
+[RPC Workers](docs/workers.md) let an external controller create worktrees without
+launching Pi and run foreground, multi-message Workers with fixed Role/session
+bindings, inspection, explicit resume, and bounded cleanup. Factory orchestration
+remains external; ordinary interactive use is unchanged.
+
 ## Why Pi?
 
 [Pi](https://github.com/earendil-works/pi) is an MIT-licensed, open-source agent

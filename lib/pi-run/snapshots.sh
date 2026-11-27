@@ -806,6 +806,7 @@ validate_complete_snapshot_sources() {
         validate_profile_definition_files "${profile_dir}"
         validate_profile_skills_directory "${profile_dir}"
     done
+    validate_worker_snapshot_sources "${home}/worker-sessions"
     read_home_default_profile >/dev/null \
         || fail "home configuration is missing, invalid, or unsafe: ${home}/config.json"
     jq -e '
@@ -856,6 +857,7 @@ run_complete_snapshot_backup() {
         --mount "type=bind,src=${home}/workspaces,dst=/input/workspaces,readonly" \
         --mount "type=bind,src=${root}/config.json,dst=/input/snapshot-config.json,readonly" \
         --mount "type=bind,src=${manifest},dst=/input/snapshot-manifest.json,readonly" \
+        --mount "type=bind,src=${home}/worker-sessions,dst=/input/worker-sessions,readonly" \
         --env RESTIC_REPOSITORY=/repository \
         --env RESTIC_PASSWORD_FILE=/secret \
         --env RESTIC_CACHE_DIR=/tmp/restic-cache \
@@ -864,7 +866,7 @@ run_complete_snapshot_backup() {
         --host "$(machine_id)" --tag pi-run --tag scope=complete --tag "request=${request_id}" \
         --tag "purpose=${purpose}" \
         /input/config.json /input/profiles /input/skills /input/shared /input/workspaces \
-        /input/snapshot-config.json /input/snapshot-manifest.json
+        /input/snapshot-config.json /input/snapshot-manifest.json /input/worker-sessions
 }
 
 s3_snapshot_connection() {
@@ -894,6 +896,7 @@ run_complete_s3_snapshot_backup() {
         --mount "type=bind,src=${home}/workspaces,dst=/input/workspaces,readonly" \
         --mount "type=bind,src=${root}/config.json,dst=/input/snapshot-config.json,readonly" \
         --mount "type=bind,src=${manifest},dst=/input/snapshot-manifest.json,readonly" \
+        --mount "type=bind,src=${home}/worker-sessions,dst=/input/worker-sessions,readonly" \
         --env "RESTIC_REPOSITORY=${repository}" \
         --env RESTIC_PASSWORD_FILE=/secret \
         --env AWS_SHARED_CREDENTIALS_FILE=/s3-credentials \
@@ -907,7 +910,7 @@ run_complete_s3_snapshot_backup() {
         --host "$(machine_id)" --tag pi-run --tag scope=complete --tag "request=${request_id}" \
         --tag "purpose=${purpose}" \
         /input/config.json /input/profiles /input/skills /input/shared /input/workspaces \
-        /input/snapshot-config.json /input/snapshot-manifest.json
+        /input/snapshot-config.json /input/snapshot-manifest.json /input/worker-sessions
 }
 
 verify_s3_created_snapshot() {
@@ -982,7 +985,7 @@ create_complete_snapshot() {
             profileSchemaVersion: 1,
             workspaceRegistrySchemaVersion: 1,
             snapshotConfigurationSchemaVersion: 1,
-            includedPaths: ["config.json", "profiles", "skills", "shared", "workspaces", "snapshots/config.json", "snapshots/metadata/\($requestId).json"],
+            includedPaths: ["config.json", "profiles", "skills", "shared", "workspaces", "worker-sessions", "snapshots/config.json", "snapshots/metadata/\($requestId).json"],
             excludedPaths: ["machines", "snapshots/secrets", "snapshots/s3-credentials", "snapshots/repository", "snapshots/restore-staging", "other snapshots/metadata entries", "temporary locks", "workspace source trees"]
         }' > "${manifest}"
     chmod 0600 "${manifest}"

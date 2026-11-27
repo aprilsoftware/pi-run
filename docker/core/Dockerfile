@@ -88,6 +88,7 @@ ENV PI_SKIP_VERSION_CHECK=1
 COPY entrypoint.sh ssh-credentials /usr/local/bin/
 COPY java-trust-store.sh /usr/local/bin/pi-run-java-trust-store
 COPY PiRunJavaTrustStore.java /usr/local/lib/pi-run/PiRunJavaTrustStore.java
+COPY worker-rpc.mjs /usr/local/lib/pi-run/worker-rpc.mjs
 COPY network-policy-resolver.mjs /usr/local/bin/pi-run-network-policy-resolver
 RUN chmod 0755 \
         /usr/local/bin/entrypoint.sh \

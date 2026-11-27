@@ -1,0 +1,7 @@
+{
+  "defaultProvider": "worker-fixture",
+  "defaultModel": "worker-fixture-model",
+  "defaultThinkingLevel": "off",
+  "cacheWarming": "off",
+  "retry": {"enabled": false}
+}

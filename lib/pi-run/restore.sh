@@ -61,6 +61,10 @@ validate_staged_restore() {
     local snapshot_config="${target}/input/snapshot-config.json" endpoint bucket prefix region
     local expected=$'config.json\nprofiles\nshared\nskills\nsnapshot-config.json\nsnapshot-manifest.json\nworkspaces'
     [[ -d "${input}" && ! -L "${input}" ]] || fail "restored snapshot is missing its input directory"
+    if [[ -e "${input}/worker-sessions" || -L "${input}/worker-sessions" ]]; then
+        expected=$'config.json\nprofiles\nshared\nskills\nsnapshot-config.json\nsnapshot-manifest.json\nworker-sessions\nworkspaces'
+        validate_worker_snapshot_sources "${input}/worker-sessions"
+    fi
     if [[ -e "${target}/stage.json" || -L "${target}/stage.json" ]]; then
         [[ "$(find "${target}" -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort)" == $'input\nstage.json' ]] \
             || fail "restored snapshot contains unexpected top-level content"
@@ -340,8 +344,8 @@ recover_interrupted_restore() {
     local root="${PI_RUN_HOME_RESOLVED}/snapshots/restore-staging"
     local pending="${root}/pending" applying="${root}/applying" rollback="${root}/applying/rollback"
     local transaction="${root}/apply-transaction.json" state index live staged saved
-    local -a keys=(home-config profiles skills shared workspaces snapshot-config)
-    local -a sources=(config.json profiles skills shared workspaces snapshot-config.json)
+    local -a keys=(home-config profiles skills shared workspaces snapshot-config worker-sessions)
+    local -a sources=(config.json profiles skills shared workspaces snapshot-config.json worker-sessions)
     local -a targets=(
         "${PI_RUN_HOME_RESOLVED}/config.json"
         "${PI_RUN_HOME_RESOLVED}/profiles"
@@ -349,6 +353,7 @@ recover_interrupted_restore() {
         "${PI_RUN_HOME_RESOLVED}/shared"
         "${PI_RUN_HOME_RESOLVED}/workspaces"
         "${PI_RUN_HOME_RESOLVED}/snapshots/config.json"
+        "${PI_RUN_HOME_RESOLVED}/worker-sessions"
     )
     [[ -d "${root}" && ! -L "${root}" && "$(realpath "${root}")" == "${root}" ]] \
         || fail "cannot recover an unsafe restore staging directory"
@@ -662,8 +667,8 @@ apply_staged_restore() {
     local transaction_tmp="${PI_RUN_HOME_RESOLVED}/snapshots/restore-staging/.apply-transaction.tmp.$$"
     local resolved snapshot_id request_id staged_at backend pre_output pre_snapshot_id started_at
     local current_config staged_config index live staged saved home_device
-    local -a keys=(home-config profiles skills shared workspaces snapshot-config)
-    local -a sources=(config.json profiles skills shared workspaces snapshot-config.json)
+    local -a keys=(home-config profiles skills shared workspaces snapshot-config worker-sessions)
+    local -a sources=(config.json profiles skills shared workspaces snapshot-config.json worker-sessions)
     local -a targets=(
         "${PI_RUN_HOME_RESOLVED}/config.json"
         "${PI_RUN_HOME_RESOLVED}/profiles"
@@ -671,6 +676,7 @@ apply_staged_restore() {
         "${PI_RUN_HOME_RESOLVED}/shared"
         "${PI_RUN_HOME_RESOLVED}/workspaces"
         "${PI_RUN_HOME_RESOLVED}/snapshots/config.json"
+        "${PI_RUN_HOME_RESOLVED}/worker-sessions"
     )
     [[ "${HOME_LOCK_MODE}" == exclusive && "${HOME_LOCK_ACQUIRED}" == true ]] \
         || fail "restore application requires an exclusive Pi-Run home lock"
@@ -688,6 +694,11 @@ apply_staged_restore() {
         || fail "staged snapshot configuration is invalid"
     [[ "${current_config}" == "${staged_config}" ]] \
         || fail "staged and active snapshot repository configurations do not match"
+    # Old snapshots have no Worker bindings. Replace live bindings with an empty
+    # directory rather than retain associations to conversations being replaced.
+    if [[ ! -e "${pending}/input/worker-sessions" ]]; then
+        mkdir -m 0700 "${pending}/input/worker-sessions"
+    fi
     home_device="$(stat -c %d "${PI_RUN_HOME_RESOLVED}")"
     for index in "${!keys[@]}"; do
         [[ "$(stat -c %d "${targets[index]}")" == "${home_device}" &&

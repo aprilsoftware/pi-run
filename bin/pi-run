@@ -31,6 +31,10 @@ Usage:
   pi-run [--home <path>] [--profile <name>] skill list
   pi-run [--home <path>] workspace list
   pi-run [--home <path>] workspace link <workspace-id> <path>
+  pi-run [--home <path>] worktree create <task-name> <repository> --json
+  pi-run [--home <path>] [--profile <name>] worker launch <workspace> --role-file <file>
+  pi-run [--home <path>] worker inspect <reference> --json
+  pi-run [--home <path>] worker resume <reference>
   pi-run [--home <path>] [--profile <name>] worktree start <task-name> <repository> [pi arguments...]
   pi-run [--home <path>] [--profile <name>] worktree open <task-name> <repository> [pi arguments...]
   pi-run [--home <path>] worktree finish <task-name>
@@ -150,6 +154,9 @@ source "${PI_RUN_LIB_ROOT}/restore.sh"
 validate_component "${PI_RUN_LIB_ROOT}/sessions.sh"
 # shellcheck source=lib/pi-run/sessions.sh
 source "${PI_RUN_LIB_ROOT}/sessions.sh"
+validate_component "${PI_RUN_LIB_ROOT}/workers.sh"
+# shellcheck source=lib/pi-run/workers.sh
+source "${PI_RUN_LIB_ROOT}/workers.sh"
 validate_component "${PI_RUN_LIB_ROOT}/doctor.sh"
 # shellcheck source=lib/pi-run/doctor.sh
 source "${PI_RUN_LIB_ROOT}/doctor.sh"
@@ -260,6 +267,7 @@ initialize_home() {
         "${home_dir}/skills" \
         "${home_dir}/shared" \
         "${home_dir}/workspaces" \
+        "${home_dir}/worker-sessions" \
         "${home_dir}/machines" \
         "${snapshots_dir}" \
         "${snapshots_dir}/metadata" \
@@ -275,6 +283,7 @@ initialize_home() {
         "${home_dir}/skills" \
         "${home_dir}/shared" \
         "${home_dir}/workspaces" \
+        "${home_dir}/worker-sessions" \
         "${home_dir}/machines" \
         "${home_dir}/snapshots/metadata" \
         "${home_dir}/snapshots/requests" \
@@ -576,8 +585,51 @@ case "${COMMAND}" in
         esac
         exit 0
         ;;
+    worker)
+        require_jq
+        case "${2:-}" in
+            inspect)
+                [[ $# -eq 4 && "$4" == --json && "${PROFILE_EXPLICIT}" == false ]] || usage
+                [[ -d "${PI_RUN_HOME_RESOLVED}" ]] || fail "Pi-Run home is missing"
+                acquire_home_lifecycle_lock
+                worker_inspect "$3"
+                exit 0
+                ;;
+            launch)
+                [[ $# -eq 5 && "$4" == --role-file ]] || usage
+                WORKER_MODE=true
+                WORKER_WORKSPACE_INPUT="$3"
+                WORKER_ROLE_INPUT="$(realpath -e "$5")"
+                [[ -f "${WORKER_ROLE_INPUT}" && ! -L "$5" && "$(stat -c %h "${WORKER_ROLE_INPUT}")" == 1 ]] \
+                    || fail "Role must be a single-link regular file"
+                (( $(stat -c %s "${WORKER_ROLE_INPUT}") > 0 && $(stat -c %s "${WORKER_ROLE_INPUT}") <= 262144 )) \
+                    || fail "Role must contain 1 through 262144 bytes"
+                ;;
+            resume)
+                [[ $# -eq 3 && "${PROFILE_EXPLICIT}" == false ]] || usage
+                initialize_home
+                worker_load_reference "$3"
+                WORKER_MODE=true
+                WORKER_RESUME=true
+                RESUME_LAUNCH=true
+                RESUME_WORKSPACE_ID="${WORKER_WORKSPACE_ID}"
+                RESUME_WORKSPACE_PATH="$(worker_workspace_path)"
+                [[ -n "${RESUME_WORKSPACE_PATH}" && -d "${RESUME_WORKSPACE_PATH}" ]] \
+                    || fail "Worker workspace is unavailable; explicitly reconnect with workspace link"
+                worker_transcript_valid || fail "Worker has no saved matching transcript; resume refused"
+                ;;
+            *) usage ;;
+        esac
+        ;;
     worktree)
         case "${2:-}" in
+            create)
+                [[ $# -eq 5 && "$5" == --json ]] || usage
+                initialize_home
+                require_jq
+                create_worktree_only "$3" "$4"
+                exit 0
+                ;;
             list)
                 [[ $# -eq 2 || ($# -eq 3 && "${3:-}" == --all) ]] || usage
                 initialize_home
@@ -727,7 +779,10 @@ case "${COMMAND}" in
         ;;
 esac
 
-if [[ "${RESUME_LAUNCH}" == true ]]; then
+if [[ "${WORKER_MODE}" == true ]]; then
+    WORKSPACE_INPUT="${WORKER_WORKSPACE_INPUT:-${RESUME_WORKSPACE_PATH:-}}"
+    EXTRA_PI_ARGS=()
+elif [[ "${RESUME_LAUNCH}" == true ]]; then
     WORKSPACE_INPUT="${RESUME_WORKSPACE_PATH}"
     EXTRA_PI_ARGS=(--resume)
 elif [[ "${WORKTREE_TASK_START}" == true ]]; then
@@ -841,10 +896,27 @@ else
         maybe_reconnect_direct_resume "${WORKSPACE}" "${WORKSPACE_ID}"
     fi
 fi
+if [[ "${WORKER_MODE}" == true && "${MANAGED_WORKTREE}" == false ]] && resolve_managed_workspace_launch "${WORKSPACE_ID}" "${WORKSPACE}"; then
+    MANAGED_WORKTREE_TASK_NAME="${RESOLVED_MANAGED_TASK_NAME}"
+    MANAGED_WORKTREE_BRANCH="${RESOLVED_MANAGED_BRANCH}"
+    MANAGED_WORKTREE_COMMON_DIR="${RESOLVED_MANAGED_COMMON_DIR}"
+    MANAGED_WORKTREE_BASE="${RESOLVED_MANAGED_HEAD}"
+    MANAGED_WORKTREE_CONTINUATION=true
+    MANAGED_WORKTREE=true
+fi
+if [[ "${WORKER_MODE}" == true ]]; then
+    if path_is_within "${PI_RUN_HOME_RESOLVED}/worker-sessions" "${WORKSPACE}" ||
+       path_is_within "${WORKSPACE}" "${PI_RUN_HOME_RESOLVED}/worker-sessions" || path_is_within /tmp "${WORKSPACE}"; then
+        fail "Worker workspace would expose private binding or control metadata"
+    fi
+fi
 if [[ "${RESUME_LAUNCH}" == true && "${WORKSPACE_ID}" != "${RESUME_WORKSPACE_ID}" ]]; then
     fail "workspace mapping changed during resume selection"
 fi
 
+if [[ "${WORKER_MODE}" == true ]]; then
+    worker_use_bounded_docker
+fi
 PROFILE_DIR="$(resolve_profile_directory)"
 PROFILE_CONFIG="${PROFILE_DIR}/profile.json"
 [[ -f "${PROFILE_DIR}/AGENTS.md" ]] \
@@ -860,7 +932,11 @@ validate_profile_definition_files "${PROFILE_DIR}"
 HOST_UID="$(id -u)"
 HOST_GID="$(id -g)"
 UTILITY_IMAGE="${PI_RUN_IMAGE:-${DEFAULT_IMAGE}}"
-IMAGE="$(select_profile_runtime_image)"
+if [[ "${WORKER_MODE}" == true ]]; then
+    IMAGE="$(select_profile_runtime_image id)"
+else
+    IMAGE="$(select_profile_runtime_image)"
+fi
 EGRESS_IMAGE="${PI_RUN_EGRESS_IMAGE:-${DEFAULT_EGRESS_IMAGE}}"
 NETWORK_MODE="$(jq -r '.network.mode // "host"' "${PROFILE_CONFIG}")"
 NETWORK_BACKEND="docker-${NETWORK_MODE}"
@@ -950,6 +1026,11 @@ fi
 
 SESSION_DIR_HOST="${PROFILE_DIR}/sessions/${WORKSPACE_ID}"
 SESSION_DIR_CONTAINER="/profile/sessions/${WORKSPACE_ID}"
+if [[ "${WORKER_MODE}" == true ]]; then
+    [[ -d "${PROFILE_DIR}/sessions" && ! -L "${PROFILE_DIR}/sessions" &&
+       "$(realpath -m "${SESSION_DIR_HOST}")" == "${SESSION_DIR_HOST}" && ! -L "${SESSION_DIR_HOST}" ]] \
+        || fail "Worker session directory is redirected or unsafe"
+fi
 mkdir -p "${SESSION_DIR_HOST}"
 prepare_snapshot_launch_request
 SIDECAR_NAME=""
@@ -958,13 +1039,20 @@ EGRESS_POLICY_DIR=""
 MANAGED_GIT_STAGING_DIR=""
 cleanup_launch_resources() {
     local cleanup_failed=false sidecar_id=""
+    if [[ "${WORKER_MODE}" == true ]] && ! worker_cleanup; then
+        return 1 # Retain worktree lock and sidecar until container absence is verified.
+    fi
     if [[ -n "${SIDECAR_ID_FILE}" && -s "${SIDECAR_ID_FILE}" ]]; then
         sidecar_id="$(< "${SIDECAR_ID_FILE}")"
         if [[ ! "${sidecar_id}" =~ ^[0-9a-f]{12,64}$ ]] ||
-           ! docker rm -f "${sidecar_id}" >/dev/null 2>&1; then
+           ! timeout -k 2 15 docker rm -f "${sidecar_id}" >/dev/null 2>&1; then
             echo "pi-run: warning: could not remove restricted egress sidecar: ${SIDECAR_NAME}" >&2
             cleanup_failed=true
         fi
+    fi
+    if [[ "${WORKER_MODE}" == true && "${cleanup_failed}" == true ]]; then
+        echo 'pi-run: sidecar cleanup incomplete; Worker launch lock retained' >&2
+        return 1
     fi
     if [[ -n "${EGRESS_POLICY_DIR}" ]]; then
         if rm -rf -- "${EGRESS_POLICY_DIR}"; then
@@ -990,8 +1078,12 @@ cleanup_launch_resources() {
     [[ "${cleanup_failed}" == false ]]
 }
 trap cleanup_launch_resources EXIT
-if [[ "${MANAGED_WORKTREE}" == true ]]; then
+if [[ "${MANAGED_WORKTREE}" == true || "${WORKER_MODE}" == true ]]; then
     acquire_managed_launch_lock "${WORKSPACE_ID}"
+    if [[ "${WORKER_MODE}" == true ]]; then
+        jq '.worker = true' "${MANAGED_LAUNCH_LOCK_DIR}/owner.json" > "${MANAGED_LAUNCH_LOCK_DIR}/owner.json.tmp"
+        mv "${MANAGED_LAUNCH_LOCK_DIR}/owner.json.tmp" "${MANAGED_LAUNCH_LOCK_DIR}/owner.json"
+    fi
 fi
 
 case "${NETWORK_MODE}" in
@@ -1018,9 +1110,11 @@ if [[ "${MANAGED_WORKTREE}" == true ]]; then
     chmod 0600 "${MANAGED_GIT_STAGING_DIR}/dot-git"
 fi
 
+DOCKER_TERMINAL=-it
+[[ "${WORKER_MODE}" == false ]] || DOCKER_TERMINAL=-i
 DOCKER_ARGS=(
     --rm
-    -it
+    "${DOCKER_TERMINAL}"
     --name "pi-${PROFILE}-$$"
     --cap-drop=ALL
     --cap-add=CHOWN
@@ -1146,8 +1240,12 @@ fi
 echo "pi-run: Guardian and CAF loaded; session modes resolve inside Pi" >&2
 [[ "${SHARED_MODE}" == "read-write" ]] && echo "pi-run: shared=/shared (read-write)" >&2
 
+if [[ "${WORKER_MODE}" == true ]]; then
+    worker_prepare_binding
+fi
+
 if [[ "${NETWORK_BACKEND}" == docker-restricted ]]; then
-    if ! docker run -d --name "${SIDECAR_NAME}" \
+    if ! docker run --pull never -d --name "${SIDECAR_NAME}" \
         --cidfile "${SIDECAR_ID_FILE}" \
         --env "PI_RUN_WORKLOAD_UID=${HOST_UID}" \
         --cap-add NET_ADMIN \
@@ -1160,13 +1258,32 @@ if [[ "${NETWORK_BACKEND}" == docker-restricted ]]; then
     [[ -s "${SIDECAR_ID_FILE}" ]] \
         || fail "restricted egress sidecar did not record its container ID"
     for _ in $(seq 1 50); do
-        docker exec "${SIDECAR_NAME}" test -f /tmp/pi-run-egress-ready >/dev/null 2>&1 && break
+        if docker exec "${SIDECAR_NAME}" test -f /tmp/pi-run-egress-ready >/dev/null 2>&1; then
+            break
+        else
+            readiness_status=$?
+            if [[ "${WORKER_MODE}" == true && ("${readiness_status}" == 124 || "${readiness_status}" == 137) ]]; then
+                fail "restricted egress readiness timed out"
+            fi
+        fi
         sleep 0.2
     done
     if ! docker exec "${SIDECAR_NAME}" test -f /tmp/pi-run-egress-ready >/dev/null 2>&1; then
         docker logs "${SIDECAR_NAME}" >&2 || true
         fail "restricted egress sidecar did not become ready"
     fi
+fi
+
+if [[ "${WORKER_MODE}" == true ]]; then
+    WORKER_STATUS=0
+    worker_run || WORKER_STATUS=$?
+    if ! cleanup_launch_resources; then WORKER_STATUS=1; fi
+    trap - EXIT TERM HUP INT
+    unset -f docker # Snapshot backups retain their normal (potentially long) lifetime.
+    if (( WORKER_STATUS == 0 )); then
+        create_automatic_snapshot_on_exit >&2
+    fi
+    exit "${WORKER_STATUS}"
 fi
 
 CURRENT_PI_ARGS=("${EXTRA_PI_ARGS[@]}")

@@ -15,6 +15,7 @@ profiles/
 skills/
 shared/
 workspaces/
+worker-sessions/
 snapshots/config.json
 current creation manifest
 ```
@@ -144,7 +145,8 @@ snapshots/recovered/<full-snapshot-id>/
 ```
 
 Configuration, profiles, sessions, skills, shared files, workspace metadata,
-snapshot configuration, and the manifest appear directly in that directory.
+Worker Role/session bindings, snapshot configuration, and the manifest appear
+directly in that directory.
 There is no exposed internal input directory. Existing recovery destinations are
 never overwritten. Safe temporary state is removed after ordinary failures.
 
@@ -152,6 +154,11 @@ Recovery does not replace live state and can run while sessions are open. The
 published files are decrypted, remain until deliberately removed, and are
 excluded from later snapshots. Copying selected recovered content into live
 state is a separate user action.
+
+Snapshots containing Worker bindings require a Worker-aware Pi-Run version to
+restore. Older snapshots without that directory remain accepted by the new
+version; applying one replaces live bindings with an empty set. Bindings are
+portable data, not authorization to restart a Worker or bypass resume checks.
 
 ## Live restore transaction
 

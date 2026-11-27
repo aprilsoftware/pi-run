@@ -16,6 +16,13 @@ temporary homes and use fake Docker, Restic, SSH, and network fixtures where
 appropriate; they must not use real profiles, credentials, repositories, or
 remote systems.
 
+Worker protocol details and opt-in offline Docker acceptance are in
+[RPC Workers](../workers.md). The default Worker tests use fake Docker/Pi peers
+and isolated installed-Pi checks, including a loopback mock-provider round trip,
+without live-provider calls. They do not replace host Docker acceptance or live
+Guardian/CAF validation. Host Worker tests require no host Node installation;
+the round-trip controller runs inside an offline utility container.
+
 ## Build and run a development profile runtime
 
 From the repository root, build the same small core used by releases, initialize
@@ -85,6 +92,8 @@ independent services.
 | `lib/pi-run/profiles.sh` | Profile lifecycle and SSH-key management containers |
 | `lib/pi-run/workspaces.sh` | Machine identity, workspace registration, and path mappings |
 | `lib/pi-run/sessions.sh` | Session discovery, resume selection, and workspace reconnection |
+| `lib/pi-run/workers.sh` | Worker binding, inspection, exact resume, creation-only worktrees, and supervised launch |
+| `docker/worker-rpc.mjs` | Container-side bounded RPC framing, allowed operations, readiness, and termination |
 | `lib/pi-run/skills.sh` | Global and profile-local skill validation and selection |
 | `lib/pi-run/snapshots.sh` | Snapshot repository configuration, backup, inspection, and deletion |
 | `lib/pi-run/restore.sh` | Recovery, staged restore, transactions, rollback, and crash recovery |

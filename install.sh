@@ -4,7 +4,7 @@
 set -eu
 umask 022
 
-PI_RUN_DEFAULT_VERSION=0.11.1
+PI_RUN_DEFAULT_VERSION=0.11.2
 REPOSITORY=aprilsoftware/pi-run
 
 fail() {
@@ -383,7 +383,7 @@ if [ ! -d "${PACKAGE_DIR}" ] || [ -L "${PACKAGE_DIR}" ]; then
     fail "release archive has no expected package directory"
 fi
 [ -x "${PACKAGE_DIR}/bin/pi-run" ] || fail "release archive has no executable launcher"
-for COMPONENT_NAME in doctor.sh profiles.sh restore.sh runtimes.sh sessions.sh skills.sh snapshots.sh upgrade.sh workspaces.sh; do
+for COMPONENT_NAME in doctor.sh profiles.sh restore.sh runtimes.sh sessions.sh skills.sh snapshots.sh upgrade.sh workers.sh workspaces.sh; do
     COMPONENT="${PACKAGE_DIR}/lib/pi-run/${COMPONENT_NAME}"
     if [ ! -f "${COMPONENT}" ] || [ -L "${COMPONENT}" ] || [ "$(stat -c %h "${COMPONENT}")" != 1 ]; then
         fail "release archive has no safe component: ${COMPONENT_NAME}"

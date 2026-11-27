@@ -330,7 +330,8 @@ validate_managed_launch_lock_owner() {
        "$(stat -c %h "${owner}")" == 1 && "$(stat -c %u "${owner}")" == "$(id -u)" &&
        "$(stat -c %a "${owner}")" == 600 ]] || return 1
     jq -e '
-        (keys | sort == ["createdAt","machineId","ownershipToken","pid","processStartToken","schemaVersion","workspaceId"]) and
+        ((keys - ["worker"]) | sort == ["createdAt","machineId","ownershipToken","pid","processStartToken","schemaVersion","workspaceId"]) and
+        ((has("worker") | not) or .worker == true) and
         .schemaVersion == 1 and
         (.machineId | type == "string" and test("^[0-9a-f]{16}$")) and
         (.pid | type == "number" and floor == . and . >= 1) and
@@ -399,6 +400,9 @@ acquire_managed_launch_lock() {
             fail "managed workspace is already active: ${workspace_id} (pid ${owner_pid})"
         elif (( status > 1 )); then
             fail "managed workspace launch lock owner cannot be verified safely: ${lock}"
+        fi
+        if [[ "$(jq -r '.worker // false' "${owner}")" == true ]]; then
+            fail "stale Worker lock requires host verification of container cleanup: ${lock}"
         fi
         stale="${root}/.stale-${workspace_id}-$(new_workspace_id)"
         if mv -T "${lock}" "${stale}" 2>/dev/null; then

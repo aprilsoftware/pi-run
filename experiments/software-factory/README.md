@@ -1,275 +1,243 @@
-# Software-factory worker experiment
+# Software-factory Worker support
 
-## Status
+## Status and scope
 
-This directory records an experimental direction for making Pi-Run a worker
-execution platform for a future software factory. It is not a product
-specification, approved command contract, implementation plan, or authority to
-add commands, persistent state, services, publication, deployment, or production
-access.
+This experiment records agreed principles for making Pi-Run an execution engine
+for a software factory. The initial Worker interface is now implemented in source;
+see [RPC Workers](../../docs/workers.md) for the concrete command, storage,
+protocol, and validation contract. The design discussion below records the
+principles and questions that preceded implementation, not release acceptance.
+Implementation does not authorize installation, live-provider calls, or publication.
 
-Earlier bounded-factory specifications, task contracts, schemas, and roadmap
-material have been removed. New work should begin from this smaller execution
-boundary and proceed through separately approved increments.
+Earlier bounded-factory specifications, task contracts, and schemas were removed.
+The current scope is Worker support in Pi-Run, not the factory control plane.
 
-## Direction
-
-The software factory is an end-to-end engineering production system. Pi-Run is
-not that control plane. Pi-Run supplies controlled agent Workers that a factory
-can launch and supervise.
+## Agreed responsibility boundary
 
 ```text
-Software Factory
-  ├── definitions and workflows
-  ├── orchestration and human decisions
-  ├── quality gates and evidence
-  ├── delivery and operations integrations
-  └── Worker manager
-          ↓
-       Pi-Run
-          ├── profiles
-          ├── prepared runtimes
-          ├── network and credentials
-          ├── managed worktrees
-          ├── sessions
-          ├── Guardian and CAF
-          └── Pi process lifecycle
-                  ↓
-                 Pi
+Factory coordinator and human interface
+    ↕ instructions, messages, interaction responses, execution events
+Pi-Run Worker interface
+    ↕ controlled environment and process lifecycle
+Pi agent in the selected profile and workspace
 ```
 
-The factory decides what work exists, which Worker Role is needed, when a Worker
-starts, whether a workflow advances, and what outcome is accepted. Pi-Run decides
-how one selected Worker runs in a controlled Pi-Run Environment.
+Factory instantiates Workers through Pi-Run. Factory owns workflows, work
+assignment, scheduling, retries, task state, human Decisions, quality Gates,
+logs, and history. It decides what happens after a Worker responds.
 
-## No subagent requirement
+Pi-Run validates the selected profile, prepared runtime, workspace, and session;
+launches and supervises the controlled Pi process; and exposes structured
+identity and execution events. It does not decide whether a factory task passed.
 
-Pi-Run does not need native subagent orchestration for this direction.
-Factory-level orchestration can start separate Pi-Run Workers when it needs
-planning, implementation, QA, Review, security analysis, or another Role.
+Ordinary interactive `pi-run .` remains independent of Factory.
 
-Optional within-session delegation may be investigated independently later, but
-it must not become the factory's task scheduler, authority system, or required
-Worker protocol.
+## Profiles, Role prompts, and work instructions
 
-## Worker concept
+A Worker launches with a selected profile and workspace. Factory supplies two
+kinds of instructions:
 
-A Pi-Run Worker is one Pi execution bound to an explicit:
+- **Role prompt:** dynamic instructions describing the Worker's responsibility
+  throughout the session, such as independent code review.
+- **Work instruction:** the concrete request to perform now, sent as a user
+  message through RPC. Further instructions or discussion may follow.
 
-- profile;
-- Workspace or managed worktree;
-- prepared runtime;
-- network and credential policy;
-- persistent Pi session;
-- interaction mode.
+A Role does not require a dedicated profile. The profile supplies existing
+runtime, model, network, credentials, tools, Guardian, CAF, and baseline
+instructions. The Role prompt guides behavior but cannot grant permissions or
+replace the profile's actual protections. A prompt saying "read-only reviewer"
+is not an enforced read-only environment.
 
-A Worker is not a factory task, workflow, Stage, queue item, or Role. The factory
-owns those semantic identities and records their relationship to the Pi-Run
-Worker.
+The agreed direction is to append the Role to Pi's system instructions at launch,
+without replacing the profile baseline. Pi supports
+`--append-system-prompt <text-or-file>`. Pi-Run should preserve a host-owned copy
+associated with the session and expose it read-only to the Worker. The proposed
+transport is a per-launch read-only file; exact storage and mount details remain
+for the implementation specification.
 
-## Candidate responsibility boundary
+"Trusted Role" describes its Factory/host provenance, not a security guarantee
+about the model's interpretation. The Worker must not be able to rewrite the
+host-owned Role. Resume reapplies that same Role; a different Role requires a new
+session.
 
-### Factory owns
+## Factory is the communication channel
 
-- Work Definitions and workflow state;
-- Worker Roles and scheduling;
-- human Decisions and effect authority;
-- retries, timeouts, and escalation;
-- quality Gates and Evidence interpretation;
-- publication, release, deployment, and operational policy;
-- Factory Run history and status.
+The initial Worker interface uses Pi RPC, not a second interactive TUI attached
+to the Worker. Factory forwards coordinator instructions and human messages to
+the same conversation, and consumes structured responses and events.
 
-### Pi-Run owns
+A Worker remains running after an instruction settles, available for multiple
+messages until Factory requests shutdown. "Agent finished responding" and
+"Worker stopped" are different conditions.
 
-- profile and prepared-image validation;
-- Workspace resolution and managed-worktree locking;
-- container construction and cleanup;
-- network and credential selection;
-- Pi session creation and exact resume;
-- Pi process launch and termination behavior;
-- structured Worker readiness and runtime identity;
-- existing Guardian, CAF, snapshot, and session semantics.
+The human interface belongs to Factory. Pi-Run must forward supported Pi
+interaction requests, such as extension confirmations or input dialogs, and wait
+for a response from Factory. It must not automatically approve them. Factory
+owns how it involves the human and records authority-changing Decisions.
 
-### Pi owns
+Messaging, progress, interaction responses, and abort use the supported Pi RPC
+connection. Process shutdown belongs to the controlled connection lifecycle;
+exact EOF, signal, timeout, and escalation mechanics remain to be specified.
 
-- model interaction;
-- conversation and context;
-- tool execution;
-- JSON or RPC events;
-- agent settling, cancellation, and session behavior.
+## Worktree creation and ownership
 
-## Existing foundation
+Factory may ask Pi-Run to create a managed worktree without launching an agent.
+Existing `worktree start` combines creation and launch; the new creation primitive
+should separate these operations while reusing existing managed-worktree rules.
 
-Pi already supports interactive, print, JSON, and RPC modes. JSON mode provides
-structured events for one invocation. RPC mode provides a long-lived,
-bidirectional process interface with prompts, events, cancellation, session
-operations, and shutdown.
+Successive Workers can reuse the same worktree. Initially, only one Worker may
+be active in a particular managed worktree at a time. The previous Worker must
+shut down before another takes ownership, even when it has finished responding.
+Independent Workers may run concurrently in different managed worktrees.
 
-Pi-Run already forwards Pi arguments through ordinary and managed-worktree
-launches. A factory can therefore experiment with RPC Workers through the normal
-Pi-Run launcher without terminal scraping.
+Stopping a Worker does not commit, integrate, or delete its worktree. Existing
+`worktree finish` is not disposable Worker cleanup: it has its own explicit
+commit, integration, and cleanup effects.
 
-The experiment should reuse Pi's supported JSON and RPC protocols rather than
-invent another agent protocol.
+## Agreed command surface
 
-## Candidate Pi-Run Worker commands
+Concrete arguments and output schemas are defined in [RPC Workers](../../docs/workers.md).
 
-Exact grammar remains open. A machine-facing namespace may eventually resemble:
+| Command | Intended responsibility |
+| --- | --- |
+| `pi-run worktree create` | Create a managed worktree without launching Pi. |
+| `pi-run worker launch` | Launch a foreground RPC Worker with profile, workspace, and dynamic Role. |
+| `pi-run worker resume` | Start a new Worker process for an exact saved session. |
+| `pi-run worker inspect` | Return bounded session binding and configuration metadata. |
 
-```text
-pi-run worker launch ...
-pi-run worker resume ...
-pi-run worker inspect ... --json
-```
+Existing worktree and session listing commands may gain machine-readable output
+where needed. Live Worker status, logs, orchestration, retries, and historical
+outcomes remain Factory responsibilities; no global live Worker registry is
+introduced.
 
-`launch` is preferred over `start` when the command remains a foreground process.
-It should validate and prepare the selected Pi-Run Environment, then run Pi in an
-explicit TUI, JSON, or RPC mode.
+## Session reference, inspection, and resume
 
-`resume` should launch an exact validated session through normal Pi-Run setup,
-without an interactive selector, newest-session guessing, or direct plain-Pi
-restore that bypasses Pi-Run.
+Launch returns an opaque session reference. Factory uses that reference for
+`inspect` and `resume`; it need not resupply the profile and workspace. Pi-Run
+resolves and validates their association rather than guessing the newest session
+or opening an interactive selector.
 
-`inspect` should return bounded machine-readable metadata needed by the factory,
-without exposing credentials, private policy, or unrelated profile state.
+The reference identifies the conversation binding, not a currently running process
+or a factory task. The implementation defines its opaque lookup and snapshot
+portability, including inspection of bindings whose transcript is not yet saved.
 
-The command names, arguments, output schema, and identity model are experimental.
+Resume is explicit and preserves:
 
-## Foreground ownership
+- the exact saved Pi conversation;
+- associated profile;
+- associated workspace;
+- original Role instructions.
 
-The preferred initial Worker process remains in the foreground. The factory
-starts it as a child process and owns its PID, event stream, live status,
-cancellation, retry policy, and historical result.
+A missing or moved workspace requires explicit reconnection. Changed execution
+configuration or prepared runtime refuses resume with an explanation; ordinary
+source edits and conversation history do not constitute configuration drift.
 
-This avoids adding a Pi-Run daemon, background Worker registry, retained exits,
-log service, scheduler, or second control plane. Herdr may host the factory's
-foreground terminal when detachment is needed.
+Resume starts a new process through normal Pi-Run setup. It is not process
+restoration, automatic replay of interrupted actions, or rollback of partial
+work. Factory must reconcile the saved results and source state before deciding
+what work to send next.
 
-A future requirement for independently managed background Workers would require a
-new design rather than being implied by the initial commands.
+Host-owned Role and session-binding metadata are needed for this contract. They
+are not a Factory task database, background Worker registry, or retained-exit
+service. The implementation stores private host bindings and includes them in
+encrypted snapshots, without automatic restart or automatic retention/deletion.
 
-## Structured readiness
+## Abort, shutdown, and connection loss
 
-A factory needs an unambiguous indication that:
+The interface distinguishes:
 
-- Pi-Run validation succeeded;
-- the expected profile and Workspace were selected;
-- the container and Pi process started;
-- the exact session identity is known;
-- RPC input may begin when RPC mode is selected.
+- **Abort:** interrupt current agent work, including tool execution where
+  cancellation is supported, while keeping the Worker available for messages.
+- **Shutdown:** end the Worker process while preserving its conversation and
+  worktree for explicit resume.
+- **Connection loss:** when the controlling Factory connection disappears,
+  attempt bounded shutdown rather than allow unsupervised continuation. Require
+  explicit resume afterward.
 
-RPC stdout must remain valid JSONL. Human diagnostics cannot be mixed into the
-protocol stream. Readiness may require a Pi-Run protocol event, a separately
-specified file descriptor, or another bounded machine channel.
+These operations do not undo completed effects, guarantee rollback of external
+actions, commit changes, or remove the worktree. Exact cancellation and cleanup
+behavior must be validated, including child processes and restricted-network
+sidecar cleanup.
 
-## Worker identity and resume
+Herdr is optional terminal hosting only. It is not required for Factory or RPC
+Worker operation and is not part of the Worker protocol. Connection loss means
+loss of the controlling Factory channel, not detachment of an unrelated terminal
+client.
 
-The experiment must distinguish:
+## Execution status is not task success
 
-- factory Run, Stage, and Role identity;
-- Pi-Run Worker execution identity;
-- stable Workspace identity;
-- managed-task name when applicable;
-- Pi session identity;
-- operating-system process identity.
+Pi-Run reports observable execution facts: readiness, agent settled, aborted or
+failed execution, and Worker exit, together with Pi's responses and events.
+Factory decides whether the assigned work succeeded using results, tests, and
+review.
 
-Factory identity must not be inferred from a terminal title, prompt, newest
-session, or worktree name alone.
+A successful prompt acknowledgment is not completion. `agent_settled` indicates
+that automatic agent work has settled, not that acceptance criteria passed. A
+zero process exit or a model's success claim is also not a quality Gate.
 
-Resume creates another live execution for the same validated Pi session and
-Workspace. It does not imply that a factory workflow may continue without its
-own revalidation and authority.
+## Existing foundations and integration work
 
-## Termination semantics
+Pi provides JSONL RPC commands, responses, execution events, and extension
+interaction requests. Pi-Run already supplies profiles, prepared runtimes,
+managed worktrees, persistent sessions, and network/credential controls.
 
-The Worker interface should distinguish:
+These foundations were not sufficient by themselves: ordinary argument
+forwarding used interactive Docker startup. The Worker path now implements
+non-TTY transport, readiness, stream separation, exact resume, and bounded
+termination, with deterministic tests and separate opt-in host acceptance.
 
-- agent settled while Pi remains available;
-- graceful RPC shutdown;
-- user exit;
-- cancellation;
-- Pi or provider failure;
-- Pi-Run launch failure;
-- external process termination;
-- forced termination after a bounded timeout.
+Readiness must establish the selected binding and usable Pi connection. RPC
+stdout must contain protocol records only; diagnostics must not corrupt it.
+The metadata channel, supported RPC operations, and treatment of session/model
+changes must preserve the agreed Worker binding.
 
-Worker exit alone is not proof that a factory Stage succeeded. The factory owns
-that interpretation.
+## Deferred and excluded
 
-## Machine-readable inspection
+- `pi-run exec` is deferred. It could later run deterministic checks without an
+  agent in a controlled environment. Initially, Workers can use their existing
+  tools to run tests; that does not establish independent validation.
+- No subagents or subagent framework are required.
+- No mandatory Herdr, daemon, web UI, global live Worker registry, automatic
+  reboot restart, or Pi-Run-owned Factory scheduling is introduced.
+- No separate Worker permission system replaces profile protections.
+- No automatic commit, worktree finish, push, PR, release, deployment, or
+  production access follows from Worker completion.
+- No Factory implementation or universal lifecycle-capability catalog is part of
+  this Pi-Run increment.
 
-Candidate inspection data may include:
+## Original implementation questions
 
-```json
-{
-  "profile": "development",
-  "workspaceId": "...",
-  "managedTask": "feature-x",
-  "sessionId": "...",
-  "mode": "rpc",
-  "networkMode": "restricted",
-  "runtimeImageId": "sha256:...",
-  "state": "inactive"
-}
-```
+The initial answers are documented in [RPC Workers](../../docs/workers.md).
+Bindings are snapshot-portable without automatic restart; changed execution
+configuration or prepared runtime refuses resume. The following list preserves
+the investigation scope:
 
-The final contract should expose only stable data required for integration.
-Internal host paths, credentials, reviewer policy, and unrelated identifiers
-should remain private.
+1. Command arguments, errors, readiness metadata, and clean protocol framing.
+2. Opaque session-reference resolution and safe host-owned Role/binding storage.
+3. Exact configuration-change detection and resume/reconnection handling.
+4. Supported RPC operations, interaction forwarding, and protection against
+   in-process session or Role changes that would invalidate the binding.
+5. Abort, shutdown, connection-loss detection, deadlines, process-tree cleanup,
+   and restricted-network sidecar lifecycle.
+6. Worktree creation-only behavior, lock ownership, and machine-readable listing.
+7. Guardian, CAF, snapshots, and session lifecycle behavior in noninteractive mode.
+8. Retention, portability, privacy, and snapshot treatment of new session metadata.
 
-## Deterministic execution
+## Validation direction
 
-A software factory also needs deterministic Checks that do not require an agent
-to run a command. This may justify a separate future Pi-Run primitive such as:
+Validation uses disposable resources to demonstrate:
 
-```text
-pi-run exec ... -- <exact argument array>
-```
+- worktree creation without an agent or model call;
+- foreground RPC launch and unambiguous session reference/readiness;
+- multiple messages and human interaction requests through Factory only;
+- preserved profile baseline and read-only dynamic Role instructions;
+- one active Worker per managed worktree and separate-worktree concurrency;
+- abort without shutdown, bounded shutdown, and connection-loss cleanup;
+- exact resume with the same Role/profile/workspace and changed-binding reporting;
+- execution status distinct from task success;
+- preservation of ordinary Pi-Run, runtime, profile, network, Guardian, CAF,
+  session, snapshot, and cleanup behavior.
 
-That primitive would execute a declared command in a prepared Pi-Run Environment
-against a selected Workspace. It is distinct from a Pi-Run Worker because no
-model or Pi session is involved.
-
-The Worker experiment should not silently implement this larger execution
-contract, but its Environment and Workspace identities should leave the later
-primitive possible.
-
-## Questions for the experiment
-
-1. Does Pi-Run own only Worker provisioning and foreground execution while the
-   factory owns scheduling, logs, retries, and history?
-2. Can the existing launcher safely expose Pi RPC without changing ordinary TUI
-   behavior?
-3. How should readiness metadata coexist with the JSONL RPC stream?
-4. What exact session reference permits safe noninteractive resume?
-5. Should worktree provisioning remain combined with launch or gain a separate
-   machine-oriented operation?
-6. Which metadata is stable enough for a public machine interface?
-7. How are exit, cancel, abort, settled, and forced termination represented?
-8. Which existing Pi-Run locks remain held for the complete Worker lifetime?
-9. How does restricted networking and its sidecar behave during RPC shutdown and
-   restart requests?
-10. Which Factory-specific extension, if any, is needed for structured Worker
-    result proposals?
-11. Can the experiment avoid all background state and still support the intended
-    factory control plane?
-12. Which behavior requires changes in Pi and which can remain entirely in
-    Pi-Run?
-
-## Initial experiment boundary
-
-A first proof should be disposable and demonstrate:
-
-1. launch one managed-worktree Worker through Pi-Run in RPC mode;
-2. receive bounded readiness and exact session identity;
-3. send one prompt and consume events through `agent_settled`;
-4. cancel or shut down predictably;
-5. relaunch through Pi-Run and resume the exact session;
-6. preserve normal profile, runtime, network, worktree, Guardian, CAF, snapshot,
-   and cleanup behavior;
-7. keep factory state and authority outside the Worker container;
-8. leave ordinary `pi-run .` behavior unchanged.
-
-The proof does not require subagents, parallel Workers, a daemon, a web UI,
-publication, release, deployment, production access, or a complete software
-factory.
+Deterministic Worker, offline native-Pi RPC, snapshot, and regression tests now
+cover the source implementation. Real-Docker and live-provider acceptance remain
+separate, explicit checks; simulated tests do not establish those results.

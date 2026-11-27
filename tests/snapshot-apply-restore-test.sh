@@ -384,9 +384,27 @@ for argument in '--network' bridge 'AWS_SHARED_CREDENTIALS_FILE=/s3-credentials'
 done
 if grep -E 'ACCESS_123|SECRET/456' "${DOCKER_LOG}" >/dev/null; then fail "S3 credentials leaked into Docker arguments"; fi
 
-for step in $(seq 1 13); do
+# Worker bindings are portable data, never live process state. Old snapshots
+# clear live bindings instead of associating them with replaced conversations.
+source "${ROOT}/tests/fixtures/worker-binding.sh"
+WORKER_HOME="${TMP}/worker-portability"
+cp -a "${LOCAL_BASE}" "${WORKER_HOME}"
+worker_binding_fixture "${WORKER_HOME}/snapshots/restore-fixture/input"
+run_pi_tty "${WORKER_HOME}" "${RESTORE_ID}\n" snapshot restore "${RESTORE_ID}" >/dev/null
+cmp "${WORKER_HOME}/worker-sessions/11111111-1111-4111-8111-111111111111/role.txt" \
+    "${WORKER_HOME}/snapshots/restore-fixture/input/worker-sessions/11111111-1111-4111-8111-111111111111/role.txt"
+[[ ! -d "${WORKER_HOME}/worktrees/.launch-locks" ]] || fail "restore recreated Worker locks"
+OLD_WORKER_HOME="${TMP}/worker-old-snapshot"
+cp -a "${LOCAL_BASE}" "${OLD_WORKER_HOME}"
+worker_binding_fixture "${OLD_WORKER_HOME}"
+run_pi_tty "${OLD_WORKER_HOME}" "${RESTORE_ID}\n" snapshot restore "${RESTORE_ID}" >/dev/null
+[[ -z "$(find "${OLD_WORKER_HOME}/worker-sessions" -mindepth 1 -print -quit)" ]] \
+    || fail "old snapshot retained live Worker bindings"
+
+for step in $(seq 1 15); do
     CRASH_HOME="${TMP}/crash-${step}"
     cp -a "${LOCAL_BASE}" "${CRASH_HOME}"
+    worker_binding_fixture "${CRASH_HOME}"
     MOVE_COUNT_FILE="${TMP}/move-count-${step}"
     MOVE_FAILED_FILE="${TMP}/move-failed-${step}"
     FAIL_MOVE_AFTER="${step}"
@@ -399,6 +417,8 @@ for step in $(seq 1 13); do
        ! -e "${CRASH_HOME}/shared/restored.txt" ]] || fail "crash recovery failed after move ${step}"
     [[ -z "$(find "${CRASH_HOME}/snapshots/restore-staging" -maxdepth 1 -name 'apply-transaction.json' -print -quit)" ]] \
         || fail "crash recovery left a transaction journal after move ${step}"
+    [[ -f "${CRASH_HOME}/worker-sessions/11111111-1111-4111-8111-111111111111/role.txt" ]] \
+        || fail "crash recovery lost Worker bindings after move ${step}"
     run_pi_tty "${CRASH_HOME}" "${RESTORE_ID}\n" snapshot restore "${RESTORE_ID}" >/dev/null
     [[ -f "${CRASH_HOME}/shared/restored.txt" &&
        -z "$(find "${CRASH_HOME}/snapshots/restore-staging" -mindepth 1 -print -quit)" ]] \

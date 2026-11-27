@@ -72,6 +72,7 @@ for component_copy in \
     'COPY entrypoint.sh ssh-credentials /usr/local/bin/' \
     'COPY java-trust-store.sh /usr/local/bin/pi-run-java-trust-store' \
     'COPY PiRunJavaTrustStore.java /usr/local/lib/pi-run/PiRunJavaTrustStore.java' \
+    'COPY worker-rpc.mjs /usr/local/lib/pi-run/worker-rpc.mjs' \
     'COPY network-policy-resolver.mjs /usr/local/bin/pi-run-network-policy-resolver'; do
     grep -Fx "${component_copy}" "${CORE_DOCKERFILE}" >/dev/null \
         || fail "core Dockerfile omits runtime component: ${component_copy}"
@@ -349,7 +350,7 @@ grep -Fx "            \"LICENSE\" \\" "${ROOT}/.github/workflows/release.yml" >/
 
 EXPECTED="$(printf '%s\n' \
     doctor.sh profiles.sh restore.sh runtimes.sh sessions.sh skills.sh snapshots.sh \
-    upgrade.sh workspaces.sh | LC_ALL=C sort)"
+    upgrade.sh workers.sh workspaces.sh | LC_ALL=C sort)"
 
 assert_component_set() {
     local label="$1" actual="$2"

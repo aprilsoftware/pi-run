@@ -1,0 +1,18 @@
+{
+  "providers": {
+    "worker-fixture": {
+      "baseUrl": "http://127.0.0.1:18888/v1",
+      "api": "openai-completions",
+      "apiKey": "worker-fixture-not-a-credential",
+      "models": [{
+        "id": "worker-fixture-model",
+        "name": "Offline Worker test fixture",
+        "reasoning": false,
+        "input": ["text"],
+        "contextWindow": 200000,
+        "maxTokens": 4096,
+        "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}
+      }]
+    }
+  }
+}

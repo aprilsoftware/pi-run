@@ -460,7 +460,13 @@ select_profile_runtime_image() {
        "${label_arch}" == "${architecture}" ]] \
         || fail "prepared profile runtime is stale or incompatible: ${prepared_tag}; run: ${rebuild_command}"
     exec {profile_lock_fd}>&-
-    printf '%s\n' "${prepared_tag}"
+    # Worker launch pins the identity already validated above, not a second
+    # lookup of a mutable tag. Ordinary interactive launch output is unchanged.
+    if [[ "${1:-tag}" == id ]]; then
+        printf '%s\n' "${prepared_id}"
+    else
+        printf '%s\n' "${prepared_tag}"
+    fi
 }
 
 new_runtime_stage_id() {

@@ -80,6 +80,8 @@ printf '1\nyes\n' | env PATH="${TMP}/fake-bin:${PATH}" PI_RUN_HOME="${HOME_DIR}"
     "${ROOT}/bin/pi-run" snapshot configure >/dev/null
 printf 'shared data\n' > "${HOME_DIR}/shared/example.txt"
 printf 'skill data\n' > "${HOME_DIR}/skills/example.txt"
+source "${ROOT}/tests/fixtures/worker-binding.sh"
+worker_binding_fixture "${HOME_DIR}"
 
 create_output="$(PATH="${TMP}/fake-bin:${PATH}" PI_RUN_HOME="${HOME_DIR}" \
     "${ROOT}/bin/pi-run" snapshot create)"
@@ -95,6 +97,7 @@ jq -e --arg version "${VERSION}" '
     .runtimeImage == ("ghcr.io/aprilsoftware/pi-run:" + $version) and
     (.requestId | test("^[0-9a-f-]{36}$")) and
     (.includedPaths | index("profiles")) and
+    (.includedPaths | index("worker-sessions")) and
     (.excludedPaths | index("machines")) and
     (.excludedPaths | index("snapshots/secrets")) and
     (.excludedPaths | index("snapshots/repository"))
@@ -114,6 +117,8 @@ assert_log_line /input/profiles
 assert_log_line /input/skills
 assert_log_line /input/shared
 assert_log_line /input/workspaces
+assert_log_line /input/worker-sessions
+assert_log_line "type=bind,src=${HOME_DIR}/worker-sessions,dst=/input/worker-sessions,readonly"
 assert_log_line /input/snapshot-config.json
 assert_log_line /input/snapshot-manifest.json
 for mount in \

@@ -130,6 +130,12 @@ guides to understand each boundary.
 - [Encrypted snapshots and recovery](snapshots.md): protect complete portable
   Pi-Run state without confusing it with workspace or infrastructure backup.
 
+## Machine-oriented execution
+
+- [RPC Workers](workers.md): foreground controller-owned execution, immutable Role
+  bindings, exact resume, worktree creation-only, and lifecycle/backup boundaries.
+  This experimental interface does not replace ordinary interactive Pi-Run.
+
 ## Maintain Pi-Run
 
 - [Build, test, architecture, and release maintenance](maintainers/development.md).

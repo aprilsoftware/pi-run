@@ -68,6 +68,11 @@ a new, forked, or cloned session receives its own directory. The backing content
 lives under `profiles/<profile>/knowledge/` and is included in complete encrypted
 snapshots because it is part of the profile.
 
+For a machine controller, [RPC Workers](workers.md) provide creation-only
+`worktree create … --json`, foreground RPC launch, and exact reference-based
+resume without opening an interactive session selector. Worker Role/binding
+metadata is included in snapshots, but Worker processes never restart on restore.
+
 ## Understand the identities
 
 Pi-Run assigns each registered directory a stable workspace ID, so conversations
